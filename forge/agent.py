@@ -1,0 +1,170 @@
+"""
+The agent loop — the actual engine.
+
+The shape is deliberately simple, because this is the part that has to be
+right:
+
+    you say something
+      -> model answers, maybe asking to use tools
+      -> we ask permission if the tool changes anything
+      -> we run the tools and hand the results back
+      -> repeat until the model stops asking for tools
+      -> its final words are the answer
+
+Everything else in this project (dashboard, multi-model routing, RAG) is
+scaffolding around this loop.
+
+The loop is a generator: it yields events as they happen rather than
+returning at the end, so the CLI can print things live and ask permission
+mid-run. That also means the same loop can drive a web UI or a phone app
+later without touching this file.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any, Iterator
+
+from .providers import Provider, ToolCall
+from .tools import Tool
+
+SYSTEM_PROMPT = """You are Forge, a coding agent working in a user's project directory.
+
+You have tools to read, write, and edit files, list directories, search file
+contents, and run shell commands. Use them to do real work — don't describe
+what you would do, do it, then say what happened.
+
+How to work:
+- Read before you write. Never edit a file you haven't looked at this session.
+- Prefer edit_file for changes to existing files; write_file replaces the
+  whole thing and loses anything you didn't include.
+- After changing code, verify it: run the tests, the build, or the file
+  itself. If you can't verify, say so plainly.
+- Use run_command for anything real: git, builds, tests, package managers.
+- If a tool returns an error, read it and adapt. Don't repeat the same call
+  and hope.
+
+How to talk:
+- The user is not a programmer by trade. Explain in plain language, skip the
+  jargon, and never dump raw code or long output at them unless they ask.
+- Lead with what happened or what you found. Detail after.
+- Be honest about failures and uncertainty. If a command failed, say it
+  failed and show the relevant part of the error.
+- Keep it conversational and short. No headers or bullet-point walls for
+  simple answers.
+"""
+
+
+@dataclass
+class Event:
+    """Something the loop wants the interface to know about."""
+    kind: str          # "text" | "tool_request" | "tool_result" | "done" | "error"
+    text: str = ""
+    tool: str = ""
+    args: dict | None = None
+    summary: str = ""
+    usage: dict | None = None
+
+
+class PermissionDenied(Exception):
+    pass
+
+
+class Agent:
+    def __init__(self, provider: Provider, tools: list[Tool], *,
+                 max_steps: int = 40, permission_mode: str = "ask",
+                 system_prompt: str = SYSTEM_PROMPT):
+        self.provider = provider
+        self.tools = {t.name: t for t in tools}
+        self.max_steps = max_steps
+        self.permission_mode = permission_mode
+        self.system_prompt = system_prompt
+        self.history: list[dict] = []
+
+    @property
+    def tool_schemas(self) -> list[dict]:
+        return [{"name": t.name, "description": t.description, "parameters": t.parameters}
+                for t in self.tools.values()]
+
+    def _needs_ask(self, tool: Tool) -> bool:
+        if self.permission_mode == "auto":
+            return False
+        if self.permission_mode == "deny":
+            return True   # asked, but the CLI will refuse on its behalf
+        return tool.needs_permission
+
+    def run(self, user_message: str, ask: Any = None) -> Iterator[Event]:
+        """
+        Handle one user message to completion.
+
+        `ask` is a callable (tool_name, args, summary) -> bool, used when a
+        tool needs permission. If it's None, permission-needing tools are
+        refused — safer than assuming yes.
+        """
+        self.history.append({"role": "user", "content": user_message})
+
+        for _ in range(self.max_steps):
+            try:
+                reply = self.provider.complete(
+                    self.system_prompt, self.history, self.tool_schemas
+                )
+            except Exception as e:
+                yield Event(kind="error", text=f"Model call failed: {e}")
+                return
+
+            if reply.text:
+                yield Event(kind="text", text=reply.text, usage=reply.usage)
+
+            if not reply.wants_tools:
+                self.history.append({"role": "assistant", "content": reply.text or ""})
+                yield Event(kind="done", usage=reply.usage)
+                return
+
+            self.history.append({
+                "role": "tool_use", "calls": reply.tool_calls, "text": reply.text,
+            })
+
+            for call in reply.tool_calls:
+                yield from self._run_one(call, ask)
+
+        yield Event(
+            kind="error",
+            text=f"Stopped after {self.max_steps} steps without finishing. "
+                 f"The task may be too big for one message, or the model may be stuck.",
+        )
+
+    def _run_one(self, call: ToolCall, ask: Any) -> Iterator[Event]:
+        tool = self.tools.get(call.name)
+        if tool is None:
+            self.history.append({
+                "role": "tool_result", "id": call.id,
+                "content": f"No such tool: {call.name}", "is_error": True,
+            })
+            yield Event(kind="tool_result", tool=call.name,
+                        text=f"No such tool: {call.name}")
+            return
+
+        summary = tool.summarize(call.args) if tool.summarize else call.name
+        yield Event(kind="tool_request", tool=call.name, args=call.args, summary=summary)
+
+        if self._needs_ask(tool):
+            allowed = False if (ask is None or self.permission_mode == "deny") \
+                else bool(ask(call.name, call.args, summary))
+            if not allowed:
+                msg = ("The user declined this action. Don't retry it — "
+                       "ask them what they'd prefer, or continue without it.")
+                self.history.append({
+                    "role": "tool_result", "id": call.id, "content": msg, "is_error": True,
+                })
+                yield Event(kind="tool_result", tool=call.name, text="declined")
+                return
+
+        try:
+            result = tool.run(**call.args)
+        except TypeError as e:
+            result = f"Error: wrong arguments for {call.name}: {e}"
+        except Exception as e:
+            result = f"Error running {call.name}: {e}"
+
+        self.history.append({"role": "tool_result", "id": call.id, "content": str(result)})
+        yield Event(kind="tool_result", tool=call.name, text=str(result))
