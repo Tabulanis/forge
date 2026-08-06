@@ -55,9 +55,13 @@ def make_agent(cfg: dict, workspace: Path) -> Agent:
 
 
 def ask_permission(tool_name: str, args: dict, summary: str) -> bool:
-    console.print(f"\n[yellow]▸ wants to {summary}[/yellow]")
+    # For a command, the box IS the description — repeating it in the header
+    # just makes the same string appear twice on screen.
     if tool_name == "run_command":
+        console.print("\n[yellow]▸ wants to run this command:[/yellow]")
         console.print(Panel(args.get("command", ""), border_style="yellow", expand=False))
+    else:
+        console.print(f"\n[yellow]▸ wants to {summary}[/yellow]")
     try:
         answer = console.input("[bold]allow?[/bold] [dim](y/n)[/dim] ").strip().lower()
     except (EOFError, KeyboardInterrupt):
@@ -73,7 +77,10 @@ def print_events(agent: Agent, message: str) -> None:
                 console.print()
                 console.print(Markdown(ev.text))
             elif ev.kind == "tool_request":
-                console.print(f"[dim]  · {ev.summary}[/dim]")
+                # A permission prompt is about to describe this action in
+                # full — no need to also whisper it here first.
+                if not ev.will_ask:
+                    console.print(f"[dim]  · {ev.summary}[/dim]")
             elif ev.kind == "tool_result":
                 first = (ev.text or "").strip().splitlines()
                 preview = first[0][:110] if first else ""

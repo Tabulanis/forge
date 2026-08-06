@@ -64,6 +64,10 @@ class Event:
     args: dict | None = None
     summary: str = ""
     usage: dict | None = None
+    # True when a permission prompt is about to appear for this tool. The
+    # interface uses it to avoid announcing the same action twice — the
+    # prompt itself is the announcement.
+    will_ask: bool = False
 
 
 class PermissionDenied(Exception):
@@ -145,9 +149,11 @@ class Agent:
             return
 
         summary = tool.summarize(call.args) if tool.summarize else call.name
-        yield Event(kind="tool_request", tool=call.name, args=call.args, summary=summary)
+        will_ask = self._needs_ask(tool)
+        yield Event(kind="tool_request", tool=call.name, args=call.args,
+                    summary=summary, will_ask=will_ask)
 
-        if self._needs_ask(tool):
+        if will_ask:
             allowed = False if (ask is None or self.permission_mode == "deny") \
                 else bool(ask(call.name, call.args, summary))
             if not allowed:
