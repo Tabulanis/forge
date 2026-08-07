@@ -15,6 +15,7 @@ from pathlib import Path
 
 from rich.console import Console
 from rich.markdown import Markdown
+from rich.markup import escape
 from rich.panel import Panel
 
 from .agent import Agent
@@ -80,16 +81,21 @@ def print_events(agent: Agent, message: str) -> None:
                 # A permission prompt is about to describe this action in
                 # full — no need to also whisper it here first.
                 if not ev.will_ask:
-                    console.print(f"[dim]  · {ev.summary}[/dim]")
+                    console.print(f"[dim]  · {escape(ev.summary)}[/dim]")
             elif ev.kind == "tool_result":
-                first = (ev.text or "").strip().splitlines()
-                preview = first[0][:110] if first else ""
                 if ev.text == "declined":
                     console.print("[red]  · declined[/red]")
-                elif preview:
-                    console.print(f"[dim]    {preview}[/dim]")
+                    continue
+                lines = (ev.text or "").strip().splitlines()
+                # Show a couple of lines of real output, not just the first —
+                # for a command, line one is "[exit 0]" and the interesting
+                # part is what follows.
+                for ln in lines[:3]:
+                    console.print(f"[dim]    {escape(ln[:110])}[/dim]")
+                if len(lines) > 3:
+                    console.print(f"[dim]    … {len(lines) - 3} more line(s)[/dim]")
             elif ev.kind == "error":
-                console.print(f"[red]{ev.text}[/red]")
+                console.print(f"[red]{escape(ev.text)}[/red]")
             elif ev.kind == "done" and ev.usage:
                 u = ev.usage
                 if u.get("input_tokens") or u.get("output_tokens"):
