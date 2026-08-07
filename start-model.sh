@@ -18,8 +18,21 @@ case "${1:-big}" in
   coder14)
     MODEL=~/llmmodels/Qwen2.5-Coder-14B-Instruct-abliterated-Q8_0.gguf
     PORT=8082; CTX=8192; NGL=99 ;;
-  *) echo "unknown model: $1  (try: big, tiny, coder14)"; exit 1 ;;
+  vision)
+    # The eyes. Needs BOTH files: the language model and the mmproj, which
+    # is the part that turns pixels into something the model can read.
+    # A few GPU layers only — the big coder model owns most of the VRAM.
+    MODEL=~/forge/models/qwen2.5-vl-7b-q4.gguf
+    MMPROJ=~/forge/models/qwen2.5-vl-7b-mmproj.gguf
+    PORT=8090; CTX=8192; NGL=12 ;;
+  *) echo "unknown model: $1  (try: big, tiny, coder14, vision)"; exit 1 ;;
 esac
+
+if [ -n "${MMPROJ:-}" ]; then
+  echo "starting $(basename "$MODEL") with vision on port $PORT ..."
+  exec "$LLAMA" -m "$MODEL" --mmproj "$MMPROJ" --host 127.0.0.1 --port "$PORT" \
+    -ngl "$NGL" -c "$CTX" --jinja
+fi
 
 echo "starting $(basename "$MODEL") on port $PORT ..."
 # --jinja is what makes tool calling work: it uses the model's own chat

@@ -21,9 +21,10 @@ from rich.panel import Panel
 from .agent import Agent
 from .config import (CONFIG_PATH, active_model_config, load_config,
                      load_pipelines, save_config)
+from .media import capabilities, load_media_config
 from .pipeline import Pipeline
 from .providers import build_provider
-from .tools import Workspace, build_tools
+from .tools import Workspace, build_media_tools, build_tools
 
 console = Console()
 
@@ -40,6 +41,7 @@ HELP = """[bold]Commands[/bold]
   [cyan]/clear[/cyan]           forget the conversation so far (fresh context)
   [cyan]/config[/cyan]          where the config file lives
   [cyan]/tools[/cyan]           what the agent can do
+  [cyan]/media[/cyan]           what the agent can see and hear
   [cyan]/flows[/cyan]           list orchestration recipes
   [cyan]/run[/cyan] <flow> <task>  run a recipe (multi-model loop)
   [cyan]/quit[/cyan]            exit
@@ -51,9 +53,10 @@ def make_agent(cfg: dict, workspace: Path) -> Agent:
     mcfg = active_model_config(cfg)
     provider = build_provider(mcfg)
     ws = Workspace(workspace)
+    mc = load_media_config(cfg)
     return Agent(
         provider=provider,
-        tools=build_tools(ws),
+        tools=build_tools(ws) + build_media_tools(ws, mc),
         max_steps=int(cfg["agent"].get("max_steps", 40)),
         permission_mode=cfg["agent"].get("permission_mode", "ask"),
     )
@@ -160,6 +163,12 @@ def handle_command(line: str, cfg: dict, workspace: Path, agent: Agent) -> tuple
             cfg["agent"]["permission_mode"] = args[0]
             save_config(cfg)
             console.print(f"[green]permissions: {args[0]}[/green]")
+
+    elif cmd == "/media":
+        caps = capabilities(load_media_config(cfg))
+        for name, c in caps.items():
+            mark = "[green]●[/green]" if c["ok"] else "[dim]○[/dim]"
+            console.print(f"  {mark} [cyan]{name}[/cyan] — {escape(c['detail'])}")
 
     elif cmd == "/flows":
         flows = load_pipelines()

@@ -154,3 +154,80 @@ pipelines:
           {survey}
 
           Now do this: {input}
+
+  # ---------------------------------------------------------------
+  # EYES. The loop this replaces: you see something wrong on screen,
+  # translate it into words, the agent works from your translation
+  # and sometimes gets it wrong. Here the vision model looks at the
+  # actual pixels and the coding model works from what's really there.
+  #
+  # Needs:  ./start-model.sh vision
+  # ---------------------------------------------------------------
+  fix-what-you-see:
+    description: Look at a screenshot, work out what's visually wrong, then fix the code.
+    steps:
+      - name: capture
+        kind: command
+        command: "echo ${FORGE_SHOT:-/tmp/forge-screenshot.png}"
+      - name: observe
+        kind: agent
+        model: qwen30b
+        max_steps: 6
+        system: |
+          You inspect images. Use look_at_image on the path given, then report
+          only what you actually saw. Do not speculate about code yet.
+        prompt: |
+          Look at the image at {capture} and describe what is visually wrong
+          or notable, in the context of: {input}
+
+          Be concrete: what's misplaced, mis-coloured, overlapping, cut off,
+          or missing.
+      - name: repair
+        kind: agent
+        model: qwen30b
+        prompt: |
+          Someone looked at the running app and reported this:
+
+          {observe}
+
+          The original complaint was: {input}
+
+          Find the code responsible and fix it. Verify your change.
+
+  # ---------------------------------------------------------------
+  # EARS. Talk at it, it works. Point this at a voice memo and the
+  # spoken task becomes a real task — no typing in the loop at all.
+  #
+  # Needs whisper built:  ~/whisper.cpp
+  # Set FORGE_AUDIO to your recording, or pass the path in your task.
+  # ---------------------------------------------------------------
+  do-what-i-said:
+    description: Transcribe a voice recording, then carry out the spoken instruction.
+    steps:
+      - name: transcribe
+        kind: agent
+        model: qwen30b
+        max_steps: 4
+        system: |
+          Use transcribe_audio on the given file and reply with the
+          transcription only — no commentary, no preamble.
+        prompt: "Transcribe this recording: {input}"
+      - name: carry_out
+        kind: agent
+        model: qwen30b
+        prompt: |
+          The user said this out loud:
+
+          "{transcribe}"
+
+          Do what they asked. If it is ambiguous, do the most obvious
+          reasonable thing and say what you assumed.
+      - name: tell_them
+        kind: agent
+        model: qwen30b
+        max_steps: 3
+        system: You have a say_aloud tool. Keep spoken messages under 20 words.
+        prompt: |
+          Say aloud a one-sentence summary of what was just done:
+
+          {carry_out}

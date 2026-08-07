@@ -64,6 +64,105 @@ class Workspace:
             return str(p)
 
 
+def build_media_tools(ws: Workspace, mc) -> list[Tool]:
+    """
+    Eyes and ears, offered only when they actually work.
+
+    A tool the model can see but that always fails is worse than no tool —
+    it burns turns and teaches the model bad habits. So each of these is
+    attached only if the underlying capability reports ready.
+    """
+    from . import media
+
+    caps = media.capabilities(mc)
+    tools: list[Tool] = []
+
+    if caps["vision"]["ok"]:
+        def look_at(image: str, question: str = "Describe this image in detail.") -> str:
+            path = image
+            try:
+                path = str(ws.resolve(image))
+            except PermissionError:
+                # An absolute path outside the workspace is fine for *reading*
+                # an image the user pointed at (a screenshot in /tmp, say) —
+                # this tool never writes, so the sandbox isn't at risk.
+                pass
+            return media.see(path, question, mc)
+
+        tools.append(Tool(
+            name="look_at_image",
+            description="Look at an image file and answer a question about it. "
+                        "Use for screenshots, mockups, diagrams, photos of "
+                        "whiteboards, or anything you need to SEE rather than read.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "image": {"type": "string", "description": "Path to the image"},
+                    "question": {"type": "string",
+                                 "description": "What you want to know about it"},
+                },
+                "required": ["image"],
+            },
+            run=look_at,
+        ))
+
+    if caps["screenshot"]["ok"]:
+        def grab(region: str = "") -> str:
+            path = media.screenshot(region=region or None)
+            if path.startswith("Error"):
+                return path
+            if caps["vision"]["ok"]:
+                return f"Screenshot saved to {path} — use look_at_image to see it."
+            return f"Screenshot saved to {path} (no vision model running to read it)."
+
+        tools.append(Tool(
+            name="take_screenshot",
+            description="Capture the current screen to a PNG file. Pair with "
+                        "look_at_image to actually see what's on screen.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "region": {"type": "string",
+                               "description": "Optional 'x,y,w,h' to grab part of the screen"},
+                },
+            },
+            run=grab,
+            needs_permission=True,
+            summarize=lambda a: "take a screenshot of your screen",
+        ))
+
+    if caps["speech_in"]["ok"]:
+        tools.append(Tool(
+            name="transcribe_audio",
+            description="Turn a recording of speech into text. Use when the user "
+                        "points at a voice memo or any audio file.",
+            parameters={
+                "type": "object",
+                "properties": {"audio": {"type": "string", "description": "Path to the audio file"}},
+                "required": ["audio"],
+            },
+            run=lambda audio: media.listen(audio, mc),
+        ))
+
+    if caps["speech_out"]["ok"]:
+        tools.append(Tool(
+            name="say_aloud",
+            description="Speak a short message out loud through the speakers. "
+                        "Good for telling the user something finished while "
+                        "they're looking elsewhere.",
+            parameters={
+                "type": "object",
+                "properties": {"text": {"type": "string"}},
+                "required": ["text"],
+            },
+            run=lambda text: media.speak(text, mc),
+            needs_permission=True,
+            summarize=lambda a: f"say out loud: {str(a.get('text',''))[:60]}",
+        ))
+
+    return tools
+
+
 def build_tools(ws: Workspace) -> list[Tool]:
     """Construct the toolset bound to one workspace."""
 

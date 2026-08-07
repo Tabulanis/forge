@@ -56,6 +56,17 @@ DEFAULT_CONFIG: dict[str, Any] = {
     },
 
     "server": {"host": "127.0.0.1", "port": 8770},
+
+    # Eyes and ears. Every one of these is optional — Forge runs fine
+    # without any of them, and tools only appear when they actually work.
+    "media": {
+        "vision_url": "http://127.0.0.1:8090/v1",
+        "vision_model": "qwen2.5-vl",
+        "whisper_bin": "~/whisper.cpp/build/bin/whisper-cli",
+        "whisper_model": "~/whisper.cpp/models/ggml-small.en.bin",
+        "tts_command": "spd-say",
+        "record_seconds": 8,
+    },
 }
 
 
