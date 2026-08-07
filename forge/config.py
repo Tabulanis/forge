@@ -55,7 +55,10 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "permission_mode": "ask",
     },
 
-    "server": {"host": "127.0.0.1", "port": 8770},
+    # host 127.0.0.1 keeps this machine-only. Set 0.0.0.0 to reach it from a
+    # phone or tablet on the same network — but then set a token too, because
+    # this thing runs shell commands and anyone on the LAN could reach it.
+    "server": {"host": "127.0.0.1", "port": 8770, "token": ""},
 
     # Eyes and ears. Every one of these is optional — Forge runs fine
     # without any of them, and tools only appear when they actually work.

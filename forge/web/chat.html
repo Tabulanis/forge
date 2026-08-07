@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#0f1117">
+<title>Forge</title>
+<style>
+  :root {
+    --bg:#0f1117; --panel:#171a23; --line:#262b38; --ink:#e6e9f0;
+    --dim:#8a92a6; --accent:#6fd3ff; --good:#67e39b; --bad:#ff6b6b;
+    --gold:#ffd86b; --user:#1e3a4d;
+  }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html, body { height:100%; margin:0; overscroll-behavior-y:contain; }
+  body {
+    background:var(--bg); color:var(--ink);
+    font:15.5px/1.55 ui-sans-serif, system-ui, -apple-system, sans-serif;
+    display:flex; flex-direction:column;
+  }
+
+  header {
+    display:flex; align-items:center; gap:10px; padding:10px 14px;
+    padding-top:calc(10px + env(safe-area-inset-top));
+    border-bottom:1px solid var(--line); background:var(--panel);
+    position:sticky; top:0; z-index:10;
+  }
+  .brand { font-weight:700; letter-spacing:.14em; font-size:14px; }
+  .brand span { color:var(--accent); }
+  .meta { color:var(--dim); font-size:11.5px; margin-left:auto; text-align:right; line-height:1.3; }
+  .meta b { color:var(--ink); font-weight:600; }
+  header button {
+    background:#222736; border:1px solid var(--line); color:var(--ink);
+    border-radius:8px; padding:7px 11px; font-size:13px; font-family:inherit;
+  }
+
+  #log { flex:1; overflow-y:auto; padding:14px; -webkit-overflow-scrolling:touch; }
+  .msg { margin-bottom:14px; max-width:92%; }
+  .msg.me { margin-left:auto; background:var(--user); border-radius:14px 14px 4px 14px;
+            padding:10px 13px; }
+  .msg.bot { white-space:pre-wrap; }
+  .msg.bot code { background:#0d0f16; padding:2px 5px; border-radius:4px; font-size:13px; }
+  .msg.bot pre { background:#0d0f16; padding:10px; border-radius:8px; overflow-x:auto;
+                 font-size:12.5px; border:1px solid var(--line); }
+
+  .step { color:var(--dim); font-size:12.5px; padding:3px 0 3px 12px;
+          border-left:2px solid var(--line); margin:5px 0; }
+  .step b { color:var(--accent); font-weight:500; }
+  .out { color:var(--dim); font-size:12px; font-family:ui-monospace, monospace;
+         white-space:pre-wrap; word-break:break-word; padding-left:14px;
+         max-height:8em; overflow:hidden; }
+  .err { color:var(--bad); font-size:13.5px; }
+  .note { color:var(--gold); font-size:13px; font-style:italic; }
+
+  /* the permission card — big targets, impossible to tap by accident */
+  .perm {
+    background:#2a2418; border:1px solid var(--gold); border-radius:12px;
+    padding:14px; margin:12px 0;
+  }
+  .perm .what { font-weight:600; margin-bottom:4px; }
+  .perm .detail {
+    font-family:ui-monospace, monospace; font-size:12.5px; color:var(--dim);
+    background:#0d0f16; padding:9px; border-radius:7px; margin:8px 0;
+    white-space:pre-wrap; word-break:break-all; max-height:9em; overflow:auto;
+  }
+  .perm .row { display:flex; gap:10px; margin-top:10px; }
+  .perm button { flex:1; padding:14px; border-radius:10px; border:none;
+                 font-size:16px; font-weight:600; font-family:inherit; }
+  .perm .yes { background:var(--good); color:#07130c; }
+  .perm .no  { background:#3a2020; color:var(--bad); border:1px solid var(--bad); }
+  .perm.done { opacity:.5; }
+  .perm.done .row { display:none; }
+
+  footer {
+    border-top:1px solid var(--line); background:var(--panel);
+    padding:10px; padding-bottom:calc(10px + env(safe-area-inset-bottom));
+    display:flex; gap:8px; align-items:flex-end;
+  }
+  #box {
+    flex:1; background:#0d0f16; color:var(--ink); border:1px solid var(--line);
+    border-radius:12px; padding:12px; font-size:16px; font-family:inherit;
+    resize:none; max-height:34vh; min-height:46px; line-height:1.4;
+  }
+  #box:focus { outline:none; border-color:var(--accent); }
+  #send {
+    background:var(--accent); color:#06131a; border:none; border-radius:12px;
+    width:52px; height:46px; font-size:20px; font-weight:700; flex-shrink:0;
+  }
+  #send:disabled { opacity:.4; }
+
+  .working { color:var(--accent); font-size:13px; padding:6px 0; }
+  .dots::after { content:'·'; animation:d 1.2s infinite; }
+  @keyframes d { 0%{content:'·'} 33%{content:'··'} 66%{content:'···'} }
+
+  #setup { padding:20px; }
+  #setup input { width:100%; background:#0d0f16; color:var(--ink);
+    border:1px solid var(--line); border-radius:10px; padding:12px; font-size:16px;
+    margin:8px 0 14px; font-family:inherit; }
+  #setup button { width:100%; background:var(--accent); color:#06131a; border:none;
+    border-radius:10px; padding:14px; font-size:16px; font-weight:600; }
+  #setup label { font-size:13px; color:var(--dim); }
+  .hint { color:var(--dim); font-size:12.5px; margin-top:14px; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand">FOR<span>GE</span></div>
+  <button id="newBtn">New</button>
+  <div class="meta">
+    <div id="mModel">—</div>
+    <div id="mWs" style="max-width:44vw; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"></div>
+  </div>
+</header>
+
+<div id="log"></div>
+
+<footer>
+  <textarea id="box" rows="1" placeholder="Tell it what to do…" enterkeyhint="send"></textarea>
+  <button id="send">↑</button>
+</footer>
+
+<script>
+const $ = id => document.getElementById(id);
+const log = $('log');
+let SESSION = localStorage.getItem('forge-session') || null;
+let TOKEN = new URLSearchParams(location.search).get('token')
+            || localStorage.getItem('forge-token') || '';
+if (new URLSearchParams(location.search).get('token')) {
+  localStorage.setItem('forge-token', TOKEN);
+  history.replaceState({}, '', location.pathname);   // keep it out of the URL bar
+}
+let WORKSPACE = localStorage.getItem('forge-workspace') || '';
+let es = null, working = false, cursor = 0;
+
+const q = p => p + (p.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(TOKEN);
+const api = (p, opts) => fetch(q(p), opts).then(r => {
+  if (r.status === 401) { badToken(); throw new Error('unauthorized'); }
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+  return r.json();
+});
+
+function badToken() {
+  localStorage.removeItem('forge-token');
+  log.innerHTML = '<div class="err">Wrong or missing token. Open the link the server printed, '
+    + 'the one ending in <code>?token=…</code></div>';
+}
+
+function el(cls, html) {
+  const d = document.createElement('div');
+  d.className = cls;
+  if (html !== undefined) d.innerHTML = html;
+  log.appendChild(d);
+  log.scrollTop = log.scrollHeight;
+  return d;
+}
+const esc = s => String(s ?? '').replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+
+// tiny markdown: fenced code, inline code, bold. Enough for an agent's replies.
+function md(t) {
+  return esc(t)
+    .replace(/```(\w*)\n([\s\S]*?)```/g, (m, l, c) => '<pre>' + c + '</pre>')
+    .replace(/`([^`\n]+)`/g, '<code>$1</code>')
+    .replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>');
+}
+
+function render(e) {
+  // the server guarantees each event arrives once, in order — the cursor
+  // just tells a reconnecting page where to resume
+  if (typeof e.seq === 'number') cursor = Math.max(cursor, e.seq + 1);
+
+  if (e.kind === 'user')        el('msg me', esc(e.text));
+  else if (e.kind === 'text')   el('msg bot', md(e.text));
+  else if (e.kind === 'tool')   el('step', '<b>' + esc(e.tool) + '</b> ' + esc(e.summary || ''));
+  else if (e.kind === 'result') {
+    if ((e.text || '').trim()) el('out', esc(e.text.split('\n').slice(0, 6).join('\n')));
+  }
+  else if (e.kind === 'error')  el('err', esc(e.text));
+  else if (e.kind === 'note')   el('note', esc(e.text));
+  else if (e.kind === 'permission') permission(e);
+  else if (e.kind === 'done')   { working = false; setWorking(false); }
+}
+
+function permission(e) {
+  const card = el('perm');
+  const detail = e.args && (e.args.command || e.args.path || e.args.text || '');
+  card.innerHTML =
+    '<div class="what">Can I ' + esc(e.summary || e.tool) + '?</div>' +
+    (detail ? '<div class="detail">' + esc(detail) + '</div>' : '') +
+    '<div class="row"><button class="no">No</button><button class="yes">Yes</button></div>';
+  const answer = allow => {
+    card.classList.add('done');
+    card.querySelector('.what').textContent = (allow ? '✓ allowed: ' : '✗ refused: ')
+      + (e.summary || e.tool);
+    api('/api/permission', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ session: SESSION, id: e.id, allow })
+    }).catch(() => {});
+  };
+  card.querySelector('.yes').onclick = () => answer(true);
+  card.querySelector('.no').onclick  = () => answer(false);
+  log.scrollTop = log.scrollHeight;
+}
+
+function setWorking(on) {
+  working = on;
+  $('send').disabled = on;
+  const old = document.querySelector('.working');
+  if (old) old.remove();
+  if (on) el('working dots', 'working');
+}
+
+function connect() {
+  if (es) es.close();
+  es = new EventSource(q('/api/stream/' + SESSION + '?since=' + cursor));
+  es.onmessage = m => { try { render(JSON.parse(m.data)); } catch (_) {} };
+  es.onerror = () => { /* EventSource retries on its own — that's why we use it */ };
+}
+
+async function send() {
+  const text = $('box').value.trim();
+  if (!text || working) return;
+  $('box').value = '';
+  $('box').style.height = 'auto';
+  setWorking(true);
+  try {
+    const r = await api('/api/chat', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ message:text, session:SESSION, workspace:WORKSPACE })
+    });
+    if (r.session !== SESSION) {
+      SESSION = r.session;
+      localStorage.setItem('forge-session', SESSION);
+      connect();
+    }
+    $('mModel').textContent = r.model;
+    $('mWs').textContent = r.workspace;
+  } catch (err) {
+    el('err', 'Could not send: ' + err.message);
+    setWorking(false);
+  }
+}
+
+$('send').onclick = send;
+$('box').addEventListener('input', function () {
+  this.style.height = 'auto';
+  this.style.height = Math.min(this.scrollHeight, window.innerHeight * 0.34) + 'px';
+});
+$('box').addEventListener('keydown', e => {
+  // Enter sends on a real keyboard; on a phone the return key inserts a newline
+  if (e.key === 'Enter' && !e.shiftKey && !matchMedia('(pointer: coarse)').matches) {
+    e.preventDefault(); send();
+  }
+});
+$('newBtn').onclick = () => {
+  if (!confirm('Start a fresh conversation?')) return;
+  SESSION = null;
+  localStorage.removeItem('forge-session');
+  log.innerHTML = '';
+  cursor = 0;
+  if (es) es.close();
+  askWorkspace();
+};
+
+async function askWorkspace() {
+  let cur = WORKSPACE || '';
+  try {
+    const b = await api('/api/browse?path=' + encodeURIComponent(cur));
+    cur = b.path;
+  } catch (_) {}
+  const picked = prompt('Which folder should it work in?', cur);
+  if (picked) {
+    WORKSPACE = picked;
+    localStorage.setItem('forge-workspace', WORKSPACE);
+    $('mWs').textContent = WORKSPACE;
+  }
+}
+
+(async function init() {
+  try {
+    const cfg = await api('/api/config');
+    $('mModel').textContent = cfg.active_model;
+    if (!WORKSPACE) { WORKSPACE = ''; }
+    $('mWs').textContent = WORKSPACE || '(pick a folder)';
+    if (SESSION) {
+      connect();
+    } else {
+      el('note', 'Ready. Tell it what to do — it works in ' +
+         (WORKSPACE || 'your home folder') + '. Tap New to change that.');
+    }
+  } catch (err) {
+    if (err.message !== 'unauthorized') el('err', 'Cannot reach Forge: ' + err.message);
+  }
+})();
+</script>
+</body>
+</html>

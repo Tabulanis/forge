@@ -12,18 +12,45 @@ typing a name exactly right.
 
 from __future__ import annotations
 
+import asyncio
+import json
+import queue
+import secrets
+import threading
 from pathlib import Path
 
 import httpx
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from .config import CONFIG_PATH, load_config, save_config
+from .media import capabilities, load_media_config
+from .session import SessionStore
 
-app = FastAPI(title="Forge Dashboard")
+app = FastAPI(title="Forge")
 WEB_DIR = Path(__file__).parent / "web"
+STORE = SessionStore()
+
+
+def require_token(request: Request,
+                  x_forge_token: str | None = Header(default=None)) -> None:
+    """
+    Gate every route when a token is configured.
+
+    No token set means machine-only use (host stays 127.0.0.1), so nothing to
+    protect against. The moment a token exists — which is what you set before
+    binding to the network — every request must carry it. The token may ride
+    in a header or a ?token= query param, because a phone opening a link can
+    only do the latter.
+    """
+    want = (load_config().get("server", {}) or {}).get("token", "")
+    if not want:
+        return
+    got = x_forge_token or request.query_params.get("token", "")
+    if not secrets.compare_digest(str(got), str(want)):
+        raise HTTPException(401, "Bad or missing token")
 
 
 class ModelSpec(BaseModel):
@@ -44,7 +71,7 @@ class AgentSpec(BaseModel):
     permission_mode: str | None = None
 
 
-@app.get("/api/config")
+@app.get("/api/config", dependencies=[Depends(require_token)])
 def get_config():
     cfg = load_config()
     # Never ship secrets to the browser — just whether one is set.
@@ -56,7 +83,7 @@ def get_config():
     return safe
 
 
-@app.post("/api/active")
+@app.post("/api/active", dependencies=[Depends(require_token)])
 def set_active(spec: ActiveSpec):
     cfg = load_config()
     if spec.name not in cfg["models"]:
@@ -66,7 +93,7 @@ def set_active(spec: ActiveSpec):
     return {"ok": True, "active_model": spec.name}
 
 
-@app.post("/api/models")
+@app.post("/api/models", dependencies=[Depends(require_token)])
 def upsert_model(spec: ModelSpec):
     cfg = load_config()
     entry = {
@@ -86,7 +113,7 @@ def upsert_model(spec: ModelSpec):
     return {"ok": True, "models": list(cfg["models"])}
 
 
-@app.delete("/api/models/{name}")
+@app.delete("/api/models/{name}", dependencies=[Depends(require_token)])
 def delete_model(name: str):
     cfg = load_config()
     if name not in cfg["models"]:
@@ -98,7 +125,7 @@ def delete_model(name: str):
     return {"ok": True}
 
 
-@app.post("/api/agent")
+@app.post("/api/agent", dependencies=[Depends(require_token)])
 def set_agent(spec: AgentSpec):
     cfg = load_config()
     if spec.max_steps is not None:
@@ -165,9 +192,114 @@ def health():
         return {"model": name, "reachable": False, "detail": f"{type(e).__name__}"}
 
 
+# ------------------------------------------------------------------ chat
+# The part that makes Forge usable from a phone: a real conversation with the
+# agent, streamed as it happens.
+
+
+class ChatSpec(BaseModel):
+    message: str
+    session: str | None = None
+    workspace: str | None = None
+
+
+class PermissionSpec(BaseModel):
+    session: str
+    id: str
+    allow: bool
+
+
+@app.post("/api/chat", dependencies=[Depends(require_token)])
+def chat(spec: ChatSpec):
+    """Start a turn. Returns immediately; watch /api/stream for what happens."""
+    sess = STORE.get_or_create(spec.session, spec.workspace)
+    sess.emit("user", {"text": spec.message})
+    threading.Thread(target=sess.run_message, args=(spec.message,),
+                     daemon=True).start()
+    return {"session": sess.id, "workspace": str(sess.workspace),
+            "model": sess.model_name}
+
+
+@app.get("/api/stream/{session_id}", dependencies=[Depends(require_token)])
+async def stream(session_id: str, since: int = 0):
+    """
+    Server-sent events: the agent's work as it happens.
+
+    SSE rather than websockets — it reconnects on its own when a phone drops
+    to sleep or switches networks, which is exactly the failure mode here, and
+    it needs nothing special from the browser.
+    """
+    sess = STORE.get(session_id)
+    if not sess:
+        raise HTTPException(404, "No such session")
+
+    async def gen():
+        # `since` lets a reconnecting phone say what it already has, so it
+        # gets exactly what it missed — no gap, no duplicates.
+        cursor = since
+        while True:
+            items, cursor = await asyncio.to_thread(sess.since, cursor, 20.0)
+            if not items:
+                # a comment line keeps proxies and phone radios from
+                # deciding the connection is dead
+                yield ": keepalive\n\n"
+                continue
+            for item in items:
+                yield f"data: {json.dumps(item)}\n\n"
+
+    return StreamingResponse(gen(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache",
+                                      "X-Accel-Buffering": "no"})
+
+
+@app.post("/api/permission", dependencies=[Depends(require_token)])
+def permission(spec: PermissionSpec):
+    """The allow/deny tap coming back from the browser."""
+    sess = STORE.get(spec.session)
+    if not sess:
+        raise HTTPException(404, "No such session")
+    if not sess.answer_permission(spec.id, spec.allow):
+        raise HTTPException(409, "That request is no longer waiting")
+    return {"ok": True}
+
+
+@app.get("/api/sessions", dependencies=[Depends(require_token)])
+def sessions():
+    return {"sessions": STORE.listing()}
+
+
+@app.delete("/api/sessions/{session_id}", dependencies=[Depends(require_token)])
+def drop_session(session_id: str):
+    return {"ok": STORE.drop(session_id)}
+
+
+@app.get("/api/browse", dependencies=[Depends(require_token)])
+def browse(path: str = ""):
+    """Folder picker for choosing a workspace from a phone."""
+    base = Path(path).expanduser() if path else Path.home()
+    if not base.is_dir():
+        base = Path.home()
+    try:
+        dirs = sorted([d.name for d in base.iterdir()
+                       if d.is_dir() and not d.name.startswith(".")])[:200]
+    except PermissionError:
+        dirs = []
+    return {"path": str(base), "parent": str(base.parent), "dirs": dirs}
+
+
+@app.get("/api/media", dependencies=[Depends(require_token)])
+def media_status():
+    return capabilities(load_media_config(load_config()))
+
+
 @app.get("/")
 def index():
     return FileResponse(WEB_DIR / "index.html")
+
+
+@app.get("/chat")
+def chat_page():
+    return FileResponse(WEB_DIR / "chat.html")
 
 
 if WEB_DIR.exists():
@@ -175,12 +307,76 @@ if WEB_DIR.exists():
 
 
 def serve() -> None:
+    """
+    Entry point for `forge-dash`.
+
+    Flags exist because the network decision deserves a deliberate act, not a
+    config file people edit once and forget. Turning it on tells you what the
+    tradeoff is, right there in the terminal.
+    """
+    import argparse
+    import socket
     import uvicorn
 
+    ap = argparse.ArgumentParser(prog="forge-dash",
+                                 description="Forge's web interface.")
+    ap.add_argument("--network", action="store_true",
+                    help="Reachable from phones/tablets on your network (implies a token)")
+    ap.add_argument("--local", action="store_true",
+                    help="This machine only (the default)")
+    ap.add_argument("--new-token", action="store_true",
+                    help="Mint a fresh token, invalidating the old one")
+    ap.add_argument("--port", type=int, help="Port to listen on")
+    args = ap.parse_args()
+
     cfg = load_config()
-    host = cfg["server"].get("host", "127.0.0.1")
-    port = int(cfg["server"].get("port", 8770))
-    print(f"\n  Forge dashboard → http://{host}:{port}\n")
+    srv = cfg.setdefault("server", {})
+    changed = False
+
+    if args.port:
+        srv["port"] = args.port
+        changed = True
+    if args.local:
+        srv["host"] = "127.0.0.1"
+        changed = True
+    if args.network:
+        srv["host"] = "0.0.0.0"
+        changed = True
+    # Exposing this without a token would put a shell on the network for
+    # anyone who can reach the machine, so one is minted rather than offered.
+    if args.new_token or (srv.get("host") == "0.0.0.0" and not srv.get("token")):
+        srv["token"] = secrets.token_urlsafe(18)
+        changed = True
+        print(f"\n  new token: {srv['token']}")
+    if changed:
+        save_config(cfg)
+        cfg = load_config()
+    srv = cfg.get("server", {})
+    host = srv.get("host", "127.0.0.1")
+    port = int(srv.get("port", 8770))
+    token = srv.get("token", "")
+
+    print()
+    if host in ("0.0.0.0", "::"):
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect(("8.8.8.8", 80))
+            lan = s.getsockname()[0]
+            s.close()
+        except Exception:
+            lan = "your-ip"
+        suffix = f"?token={token}" if token else ""
+        print(f"  Forge on this machine → http://127.0.0.1:{port}/chat{suffix}")
+        print(f"  Forge from your phone → http://{lan}:{port}/chat{suffix}")
+        if not token:
+            print()
+            print("  WARNING: bound to the network with NO TOKEN set.")
+            print("  Anyone who can reach this machine can run commands on it.")
+            print("  Set one:  forge-dash --new-token")
+    else:
+        print(f"  Forge → http://{host}:{port}/chat")
+        print("  (machine-only. To reach it from a phone: forge-dash --network)")
+    print()
     uvicorn.run(app, host=host, port=port, log_level="warning")
 
 
