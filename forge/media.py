@@ -82,6 +82,11 @@ def see(image_path: str, question: str, mc: MediaConfig,
     if p.stat().st_size > 20_000_000:
         return f"Error: image is very large ({p.stat().st_size} bytes)."
 
+    # Downscale before sending. A 3840x1080 desktop grab costs a lot of
+    # encoder memory and tokens for detail no vision model resolves anyway;
+    # 1600px on the long edge keeps UI text legible while staying cheap.
+    p = _shrink(p, 1600)
+
     suffix = p.suffix.lower().lstrip(".") or "png"
     mime = {"jpg": "jpeg", "jpeg": "jpeg", "png": "png",
             "webp": "webp", "gif": "gif"}.get(suffix, "png")
@@ -100,8 +105,10 @@ def see(image_path: str, question: str, mc: MediaConfig,
         }],
     }
     try:
+        # CPU vision is minutes, not seconds. A short timeout here just
+        # turns "slow" into "broken", which is a worse failure to debug.
         r = httpx.post(f"{mc.vision_url.rstrip('/')}/chat/completions",
-                       json=body, timeout=300.0)
+                       json=body, timeout=900.0)
         r.raise_for_status()
         return r.json()["choices"][0]["message"]["content"].strip()
     except httpx.ConnectError:
@@ -171,6 +178,23 @@ def screenshot(out_path: str | None = None, region: str | None = None) -> str:
         except Exception as e:
             errors.append(f"{cmd[0]}: {type(e).__name__}")
     return "Error: every screenshot tool failed —\n  " + "\n  ".join(errors)
+
+
+def _shrink(path: Path, max_edge: int) -> Path:
+    """Return a path to a copy no larger than max_edge on its long side."""
+    try:
+        from PIL import Image
+        with Image.open(path) as im:
+            if max(im.size) <= max_edge:
+                return path
+            scale = max_edge / max(im.size)
+            small = im.resize((int(im.width * scale), int(im.height * scale)),
+                              Image.LANCZOS)
+            out = Path(tempfile.gettempdir()) / f"forge-shrunk-{path.stem}.png"
+            small.convert("RGB").save(out)
+            return out
+    except Exception:
+        return path
 
 
 def _crop(path: Path, region: str) -> None:
