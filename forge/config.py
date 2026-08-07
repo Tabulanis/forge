@@ -96,3 +96,36 @@ def active_model_config(cfg: dict) -> dict:
             f"Available: {', '.join(models) or '(none)'}"
         )
     return models[name]
+
+# --- pipelines ------------------------------------------------------
+
+PIPELINES_PATH = CONFIG_DIR / "pipelines.yaml"
+
+
+def load_pipelines() -> dict:
+    """
+    Orchestration recipes, from the user's copy in ~/.forge.
+
+    On first run the shipped examples are copied there, so editing them is
+    safe — a package upgrade can't overwrite the user's own recipes.
+    """
+    if not PIPELINES_PATH.exists():
+        shipped = Path(__file__).parent / "pipelines.yaml"
+        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        if shipped.exists():
+            PIPELINES_PATH.write_text(shipped.read_text(encoding="utf-8"), encoding="utf-8")
+        else:
+            PIPELINES_PATH.write_text("pipelines: {}\n", encoding="utf-8")
+    try:
+        data = yaml.safe_load(PIPELINES_PATH.read_text(encoding="utf-8")) or {}
+    except yaml.YAMLError as e:
+        raise SystemExit(f"pipelines.yaml is not valid YAML: {PIPELINES_PATH}\n{e}")
+    return data.get("pipelines", {}) or {}
+
+
+def save_pipelines(pipelines: dict) -> None:
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    PIPELINES_PATH.write_text(
+        yaml.safe_dump({"pipelines": pipelines}, sort_keys=False, allow_unicode=True),
+        encoding="utf-8",
+    )

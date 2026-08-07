@@ -10,8 +10,11 @@ case "${1:-big}" in
     MODEL=~/llama-agent/Huihui-Qwen3-30B-A3B-Instruct-2507-abliterated-Q4_K_M.gguf
     PORT=8080; CTX=16384; NGL=99 ;;
   tiny)
+    # -ngl 0 keeps this one entirely in system RAM on the CPU, leaving the
+    # whole GPU for the big model. That's the point of a small router model:
+    # it costs nothing the big one needs.
     MODEL=~/aidojo/models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf
-    PORT=8081; CTX=4096; NGL=99 ;;
+    PORT=8081; CTX=4096; NGL=0 ;;
   coder14)
     MODEL=~/llmmodels/Qwen2.5-Coder-14B-Instruct-abliterated-Q8_0.gguf
     PORT=8082; CTX=8192; NGL=99 ;;

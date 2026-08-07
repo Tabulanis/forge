@@ -47,7 +47,8 @@ class Provider:
 
     name = "base"
 
-    def complete(self, system: str, messages: list[dict], tools: list[dict]) -> Reply:
+    def complete(self, system: str, messages: list[dict], tools: list[dict],
+                 grammar: str | None = None) -> Reply:
         raise NotImplementedError
 
     # Providers speak different dialects for conversation history. Each one
@@ -71,7 +72,10 @@ class AnthropicProvider(Provider):
         # api_key=None lets the SDK fall back to ANTHROPIC_API_KEY itself
         self.client = anthropic.Anthropic(api_key=api_key) if api_key else anthropic.Anthropic()
 
-    def complete(self, system: str, messages: list[dict], tools: list[dict]) -> Reply:
+    def complete(self, system: str, messages: list[dict], tools: list[dict],
+                 grammar: str | None = None) -> Reply:
+        # grammar is a llama.cpp feature; the hosted API has no equivalent, so
+        # it's accepted and ignored rather than making callers special-case.
         payload = []
         for m in messages:
             if m["role"] == "tool_result":
@@ -155,7 +159,15 @@ class OpenAICompatProvider(Provider):
             timeout=timeout,
         )
 
-    def complete(self, system: str, messages: list[dict], tools: list[dict]) -> Reply:
+    def complete(self, system: str, messages: list[dict], tools: list[dict],
+                 grammar: str | None = None) -> Reply:
+        """
+        `grammar` is a llama.cpp GBNF grammar. When given, the server can only
+        emit text the grammar allows — a small model that would otherwise
+        ramble is made *incapable* of answering in the wrong shape. This is
+        the single most useful trick for getting reliable structured answers
+        out of a local model, and it has no equivalent in the hosted APIs.
+        """
         payload = [{"role": "system", "content": system}]
         for m in messages:
             if m["role"] == "tool_result":
@@ -180,6 +192,8 @@ class OpenAICompatProvider(Provider):
             "messages": payload,
             "max_tokens": self.max_tokens,
         }
+        if grammar:
+            body["grammar"] = grammar
         if tools:
             body["tools"] = [{
                 "type": "function",

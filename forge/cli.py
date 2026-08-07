@@ -19,7 +19,9 @@ from rich.markup import escape
 from rich.panel import Panel
 
 from .agent import Agent
-from .config import CONFIG_PATH, active_model_config, load_config, save_config
+from .config import (CONFIG_PATH, active_model_config, load_config,
+                     load_pipelines, save_config)
+from .pipeline import Pipeline
 from .providers import build_provider
 from .tools import Workspace, build_tools
 
@@ -38,6 +40,8 @@ HELP = """[bold]Commands[/bold]
   [cyan]/clear[/cyan]           forget the conversation so far (fresh context)
   [cyan]/config[/cyan]          where the config file lives
   [cyan]/tools[/cyan]           what the agent can do
+  [cyan]/flows[/cyan]           list orchestration recipes
+  [cyan]/run[/cyan] <flow> <task>  run a recipe (multi-model loop)
   [cyan]/quit[/cyan]            exit
 
 [bold]Anything else[/bold] you type is a message to the agent."""
@@ -157,10 +161,65 @@ def handle_command(line: str, cfg: dict, workspace: Path, agent: Agent) -> tuple
             save_config(cfg)
             console.print(f"[green]permissions: {args[0]}[/green]")
 
+    elif cmd == "/flows":
+        flows = load_pipelines()
+        if not flows:
+            console.print("[dim]no recipes defined[/dim]")
+        for name, spec in flows.items():
+            console.print(f"  [cyan]{name}[/cyan] — {spec.get('description', '')}")
+            for st in spec.get("steps", []):
+                k = st.get("kind", "agent")
+                extra = (f" ×{st.get('max_rounds', 3)} until {st.get('until_ok') or st.get('until_text')}"
+                         if k == "loop" else f" [{st.get('model', st.get('command', ''))[:40]}]")
+                console.print(f"      [dim]{k}: {st.get('name')}{extra}[/dim]")
+
+    elif cmd == "/run":
+        flows = load_pipelines()
+        if not args:
+            console.print("[dim]usage: /run <recipe> <what you want done>[/dim]")
+        elif args[0] not in flows:
+            console.print(f"[red]No recipe {args[0]!r}. Try /flows.[/red]")
+        elif len(args) < 2:
+            console.print("[dim]tell it what to do: /run <recipe> <task>[/dim]")
+        else:
+            run_pipeline(args[0], flows[args[0]], " ".join(args[1:]), cfg, workspace)
+
     else:
         console.print(f"[red]Unknown command {cmd}. /help for the list.[/red]")
 
     return True, agent
+
+
+def run_pipeline(name: str, spec: dict, task: str, cfg: dict, workspace: Path) -> None:
+    """Run one orchestration recipe, printing progress as it goes."""
+    spec = {**spec, "name": name}
+    try:
+        pipe = Pipeline(spec, cfg["models"], workspace,
+                        permission_mode=cfg["agent"].get("permission_mode", "ask"))
+    except Exception as e:
+        console.print(f"[red]{escape(str(e))}[/red]")
+        return
+
+    console.print(f"\n[bold cyan]▶ {name}[/bold cyan] [dim]{spec.get('description','')}[/dim]")
+    try:
+        for ev in pipe.run(task, ask=ask_permission):
+            if ev.kind == "step_start":
+                console.print(f"\n[bold]· {ev.step}[/bold] [dim]({ev.text})[/dim]")
+            elif ev.kind == "loop_round":
+                console.print(f"\n[yellow]  ↻ {ev.step} — round {ev.round}[/yellow]")
+            elif ev.kind == "step_done":
+                mark = "[green]✓[/green]" if ev.ok else "[red]✗[/red]"
+                first = (ev.text or "").strip().splitlines()
+                console.print(f"  {mark} [dim]{escape(first[0][:100]) if first else ''}[/dim]")
+            elif ev.kind == "error":
+                console.print(f"[red]{escape(ev.text)}[/red]")
+            elif ev.kind == "done":
+                mark = "[green]finished[/green]" if ev.ok else "[yellow]finished with problems[/yellow]"
+                console.print(f"\n{mark}")
+                if ev.text.strip():
+                    console.print(Markdown(ev.text[:1500]))
+    except KeyboardInterrupt:
+        console.print("\n[yellow]interrupted[/yellow]")
 
 
 def main() -> None:

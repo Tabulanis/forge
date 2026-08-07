@@ -1,0 +1,156 @@
+# Orchestration recipes — chains of model calls that do real work.
+#
+# These are the starting examples. The visual brick editor reads and writes
+# this same file, so anything built here can be built there and vice versa.
+#
+# Step kinds:
+#   agent    a model with tools — reads, writes, runs things
+#   ask      one model call, no tools — analysis, critique, routing
+#   command  a shell command, no model — the honest referee
+#   loop     repeat inner steps until a check passes
+#
+# {input} is what you typed. {step_name} is any earlier step's output.
+
+pipelines:
+
+  # ---------------------------------------------------------------
+  # The workhorse. Build it, run the real check, and if the check
+  # fails feed the actual error back and try again. The exit
+  # condition is a command's exit code — not the model's opinion of
+  # its own work, which is exactly the thing a smaller model gets
+  # wrong.
+  # ---------------------------------------------------------------
+  build-until-it-works:
+    description: Build something, then keep fixing until the check command passes.
+    steps:
+      - name: build
+        kind: agent
+        model: qwen30b
+        prompt: |
+          {input}
+
+          Write the code and any tests needed. Work in the current directory.
+      - name: fixloop
+        kind: loop
+        max_rounds: 4
+        until_ok: check
+        steps:
+          - name: check
+            kind: command
+            command: "python3 -m pytest -q 2>&1 | tail -25"
+          - name: fix
+            kind: agent
+            model: qwen30b
+            prompt: |
+              The tests did not pass. Here is the real output:
+
+              {check}
+
+              Fix the cause. Read the failing file first, then make the
+              smallest change that makes the test pass. Do not rewrite
+              working code.
+
+  # ---------------------------------------------------------------
+  # Two models, different jobs: one writes, a second reviews with
+  # fresh eyes, then the first addresses the notes. A reviewer that
+  # didn't write the code catches things the author is blind to,
+  # even when it's the same model behind both roles.
+  # ---------------------------------------------------------------
+  write-and-review:
+    description: One model writes it, another reviews it, the first fixes what's raised.
+    steps:
+      - name: draft
+        kind: agent
+        model: qwen30b
+        prompt: "{input}"
+      - name: review
+        kind: ask
+        model: qwen30b
+        system: |
+          You are a code reviewer. You did not write this code. Be specific
+          and concrete — name files and lines. If the work is genuinely fine,
+          reply with exactly: APPROVED
+        prompt: |
+          Someone was asked to do this:
+
+          {input}
+
+          They reported:
+
+          {draft}
+
+          Look at the actual files in the project and review the work. List
+          real problems only — no style nitpicking, no praise. If it's good,
+          reply APPROVED.
+      - name: address
+        kind: agent
+        model: qwen30b
+        prompt: |
+          A reviewer looked at your work and said:
+
+          {review}
+
+          If that's just APPROVED, reply "nothing to do" and stop. Otherwise
+          fix each real problem raised, then verify by running the code.
+
+  # ---------------------------------------------------------------
+  # Cheap-first routing: the little 1.1B model sits in RAM and only
+  # decides how hard the job is. Easy work stays on the small fast
+  # model; real work goes to the 30B. This is the pattern that makes
+  # a multi-model rig worth having.
+  #
+  # Needs the tiny model running:  ./start-model.sh tiny
+  # ---------------------------------------------------------------
+  route-by-difficulty:
+    description: A small model triages, then sends the job to the right size model.
+    # `choices:` compiles to a llama.cpp grammar, which makes any other answer
+    # literally impossible to generate. Without it a 1.1B model ignores
+    # "answer in one word" and starts writing code instead — measured, not
+    # guessed. Note the honest limit: the grammar fixes the SHAPE of the
+    # answer, not the judgment behind it. A 1.1B still mis-rates hard tasks
+    # as simple; for routing you actually trust, use a 3B+ here.
+    steps:
+      - name: triage
+        kind: ask
+        model: tiny
+        choices: [SIMPLE, COMPLEX]
+        system: |
+          You sort programming tasks by difficulty.
+          SIMPLE: renaming, formatting, one-line edits, reading files.
+          COMPLEX: new logic, multiple files, anything needing design.
+        prompt: "Task: {input}\n\nOne word, SIMPLE or COMPLEX:"
+      - name: work
+        kind: agent
+        model: qwen30b
+        prompt: |
+          {input}
+
+          (A triage model rated this: {triage})
+
+  # ---------------------------------------------------------------
+  # Look before you leap. Understand the codebase first, then act on
+  # what was actually found rather than what the model assumed.
+  # ---------------------------------------------------------------
+  explore-then-change:
+    description: Survey the code first, then make the change with real context.
+    steps:
+      - name: survey
+        kind: agent
+        model: qwen30b
+        max_steps: 12
+        prompt: |
+          Do not change anything yet. Explore this project and report what
+          matters for this task:
+
+          {input}
+
+          List the relevant files and what each does. Be brief.
+      - name: change
+        kind: agent
+        model: qwen30b
+        prompt: |
+          Here is what the project looks like:
+
+          {survey}
+
+          Now do this: {input}
