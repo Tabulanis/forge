@@ -25,8 +25,10 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from .config import CONFIG_PATH, load_config, save_config
+from .config import (CONFIG_PATH, load_config, load_pipelines, save_config,
+                     save_pipelines)
 from .media import capabilities, load_media_config
+from .pipeline import Pipeline
 from .session import SessionStore
 
 app = FastAPI(title="Forge")
@@ -292,9 +294,96 @@ def media_status():
     return capabilities(load_media_config(load_config()))
 
 
+# -------------------------------------------------------------- pipelines
+# The brick editor reads and writes these. They are the same recipes the CLI
+# runs, so anything built in the browser works from the terminal and back.
+
+
+class PipelineSpec(BaseModel):
+    name: str
+    description: str = ""
+    steps: list
+
+
+class RunSpec(BaseModel):
+    name: str
+    task: str
+    workspace: str | None = None
+
+
+@app.get("/api/pipelines", dependencies=[Depends(require_token)])
+def get_pipelines():
+    return {"pipelines": load_pipelines()}
+
+
+@app.post("/api/pipelines", dependencies=[Depends(require_token)])
+def save_pipeline(spec: PipelineSpec):
+    if not spec.name.strip():
+        raise HTTPException(400, "A recipe needs a name")
+    flows = load_pipelines()
+    flows[spec.name] = {"description": spec.description, "steps": spec.steps}
+    save_pipelines(flows)
+    return {"ok": True, "pipelines": list(flows)}
+
+
+@app.delete("/api/pipelines/{name}", dependencies=[Depends(require_token)])
+def delete_pipeline(name: str):
+    flows = load_pipelines()
+    if name not in flows:
+        raise HTTPException(404, f"No recipe named {name!r}")
+    del flows[name]
+    save_pipelines(flows)
+    return {"ok": True}
+
+
+@app.post("/api/pipelines/run", dependencies=[Depends(require_token)])
+def run_pipeline(spec: RunSpec):
+    """
+    Run a recipe, reporting progress through a normal chat session so the
+    browser watches it the same way it watches everything else — one stream,
+    one set of permission cards, no second mechanism to build or learn.
+    """
+    flows = load_pipelines()
+    if spec.name not in flows:
+        raise HTTPException(404, f"No recipe named {spec.name!r}")
+    sess = STORE.get_or_create(None, spec.workspace)
+    cfg = load_config()
+
+    def go():
+        sess.emit("user", {"text": f"▶ {spec.name}: {spec.task}"})
+        try:
+            pipe = Pipeline({**flows[spec.name], "name": spec.name},
+                            cfg["models"], sess.workspace,
+                            permission_mode=cfg["agent"].get("permission_mode", "ask"))
+            for ev in pipe.run(spec.task, ask=sess.ask_permission):
+                if ev.kind == "step_start":
+                    sess.emit("tool", {"tool": ev.step, "summary": f"({ev.text})"})
+                elif ev.kind == "loop_round":
+                    sess.emit("note", {"text": f"{ev.step} — round {ev.round}"})
+                elif ev.kind == "step_done":
+                    sess.emit("result", {"tool": ev.step,
+                                         "text": ("ok: " if ev.ok else "failed: ") + (ev.text or "")[:600]})
+                elif ev.kind == "error":
+                    sess.emit("error", {"text": ev.text})
+                elif ev.kind == "done":
+                    sess.emit("text", {"text": ev.text or "(finished)"})
+                    sess.emit("done", {"usage": {}})
+        except Exception as e:
+            sess.emit("error", {"text": f"{type(e).__name__}: {e}"})
+            sess.emit("done", {"usage": {}})
+
+    threading.Thread(target=go, daemon=True).start()
+    return {"session": sess.id, "workspace": str(sess.workspace)}
+
+
 @app.get("/")
 def index():
     return FileResponse(WEB_DIR / "index.html")
+
+
+@app.get("/bricks")
+def bricks_page():
+    return FileResponse(WEB_DIR / "bricks.html")
 
 
 @app.get("/chat")
