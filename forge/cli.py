@@ -21,6 +21,8 @@ from rich.panel import Panel
 from .agent import Agent
 from .config import (CONFIG_PATH, active_model_config, load_config,
                      load_pipelines, save_config)
+from .doctor import FAIL, OK, WARN, report, run_checks
+from .help_content import ORDER, TOPICS, WELCOME, search, topic
 from .media import capabilities, load_media_config
 from .pipeline import Pipeline
 from .providers import build_provider
@@ -32,21 +34,64 @@ BANNER = """[bold cyan]FORGE[/bold cyan] — your own coding agent
 workspace: [dim]{ws}[/dim]
 model: [bold]{model}[/bold] [dim]({provider})[/dim]   permissions: [bold]{perm}[/bold]
 
-[dim]/help for commands · /model to switch · Ctrl-C to interrupt · Ctrl-D to quit[/dim]"""
+[dim]/help  anything you're unsure about · /doctor  if something's broken
+/model  switch brains · Ctrl-D  quit[/dim]"""
 
-HELP = """[bold]Commands[/bold]
-  [cyan]/help[/cyan]            this list
-  [cyan]/model[/cyan]           list models, or [cyan]/model <name>[/cyan] to switch
-  [cyan]/perm[/cyan] <mode>     permission mode: ask · auto · deny
-  [cyan]/clear[/cyan]           forget the conversation so far (fresh context)
-  [cyan]/config[/cyan]          where the config file lives
-  [cyan]/tools[/cyan]           what the agent can do
-  [cyan]/media[/cyan]           what the agent can see and hear
-  [cyan]/flows[/cyan]           list orchestration recipes
-  [cyan]/run[/cyan] <flow> <task>  run a recipe (multi-model loop)
-  [cyan]/quit[/cyan]            exit
+def show_help(arg: str = "") -> None:
+    """`/help`, `/help models`, or `/help why is it slow` — all one door."""
+    if not arg:
+        console.print("\n[bold cyan]Forge help[/bold cyan]  "
+                      "[dim]— /help <topic>, or just ask: /help why is it slow[/dim]\n")
+        for key in ORDER:
+            console.print(f"  [cyan]{key:<11}[/cyan] {TOPICS[key]['blurb']}")
+        console.print("\n[dim]Stuck right now? [cyan]/doctor[/cyan] checks your setup "
+                      "and names the fix.[/dim]")
+        return
 
-[bold]Anything else[/bold] you type is a message to the agent."""
+    found = topic(arg)
+    if found:
+        _print_topic(found[1])
+        return
+
+    # not a topic name — treat it as a question
+    hits = search(arg)
+    if not hits:
+        console.print(f"[dim]Nothing about {arg!r}. Topics:[/dim] "
+                      + ", ".join(f"[cyan]{k}[/cyan]" for k in ORDER))
+    elif len(hits) == 1:
+        _print_topic(hits[0][1])
+    else:
+        console.print(f"\n[dim]{len(hits)} topics mention that:[/dim]")
+        for key, t in hits:
+            console.print(f"  [cyan]{key:<11}[/cyan] {t['blurb']}")
+        console.print("\n[dim]Read one with /help <name>[/dim]")
+
+
+def _print_topic(t: dict) -> None:
+    console.print(f"\n[bold cyan]{t['title']}[/bold cyan]\n")
+    console.print(escape(t["body"]))
+
+
+def show_doctor() -> None:
+    """Check everything, and name the fix for whatever is broken."""
+    console.print("\n[bold cyan]Checking your setup...[/bold cyan]\n")
+    checks = run_checks()
+    mark = {OK: "[green] OK [/green]", WARN: "[yellow]MEH [/yellow]",
+            FAIL: "[red]BAD [/red]"}
+    for c in checks:
+        console.print(f"  {mark[c.status]} [bold]{c.name}[/bold] — {escape(c.detail)}")
+        if c.fix:
+            console.print(f"        [dim]fix:[/dim] [cyan]{escape(c.fix)}[/cyan]")
+    bad, meh = report(checks)
+    console.print()
+    if bad:
+        console.print(f"[red]{bad} thing(s) need fixing[/red] — run the "
+                      f"[cyan]fix:[/cyan] line shown under each.")
+    elif meh:
+        console.print("[green]Nothing is broken.[/green] "
+                      f"[dim]{meh} optional extra(s) not set up — that's fine.[/dim]")
+    else:
+        console.print("[green]Everything's working.[/green]")
 
 
 def make_agent(cfg: dict, workspace: Path) -> Agent:
@@ -103,6 +148,12 @@ def print_events(agent: Agent, message: str) -> None:
                     console.print(f"[dim]    … {len(lines) - 3} more line(s)[/dim]")
             elif ev.kind == "error":
                 console.print(f"[red]{escape(ev.text)}[/red]")
+                # A dead model server is the single most common failure, and
+                # the raw exception says nothing useful to someone new.
+                if "connect" in ev.text.lower() or "refused" in ev.text.lower():
+                    console.print("[dim]The model doesn't seem to be running. Try:[/dim] "
+                                  "[cyan]~/forge/start-model.sh big[/cyan]  "
+                                  "[dim]or run[/dim] [cyan]/doctor[/cyan]")
             elif ev.kind == "done" and ev.usage:
                 u = ev.usage
                 if u.get("input_tokens") or u.get("output_tokens"):
@@ -123,7 +174,10 @@ def handle_command(line: str, cfg: dict, workspace: Path, agent: Agent) -> tuple
         return False, agent
 
     if cmd == "/help":
-        console.print(HELP)
+        show_help(" ".join(args))
+
+    elif cmd == "/doctor":
+        show_doctor()
 
     elif cmd == "/config":
         console.print(f"[dim]{CONFIG_PATH}[/dim]")
@@ -222,6 +276,12 @@ def run_pipeline(name: str, spec: dict, task: str, cfg: dict, workspace: Path) -
                 console.print(f"  {mark} [dim]{escape(first[0][:100]) if first else ''}[/dim]")
             elif ev.kind == "error":
                 console.print(f"[red]{escape(ev.text)}[/red]")
+                # A dead model server is the single most common failure, and
+                # the raw exception says nothing useful to someone new.
+                if "connect" in ev.text.lower() or "refused" in ev.text.lower():
+                    console.print("[dim]The model doesn't seem to be running. Try:[/dim] "
+                                  "[cyan]~/forge/start-model.sh big[/cyan]  "
+                                  "[dim]or run[/dim] [cyan]/doctor[/cyan]")
             elif ev.kind == "done":
                 mark = "[green]finished[/green]" if ev.ok else "[yellow]finished with problems[/yellow]"
                 console.print(f"\n{mark}")
@@ -232,14 +292,34 @@ def run_pipeline(name: str, spec: dict, task: str, cfg: dict, workspace: Path) -
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(prog="forge", description="Your own coding agent.")
-    ap.add_argument("message", nargs="*", help="Run one message and exit")
+    ap = argparse.ArgumentParser(
+        prog="forge",
+        description="Your own coding agent. Try:  forge help",
+        epilog="forge help          what everything does\n"
+               "forge doctor        check your setup and name the fixes",
+        formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("message", nargs="*",
+                    help="Run one message and exit, or: help / doctor")
     ap.add_argument("-w", "--workspace", default=".", help="Project directory")
     ap.add_argument("-m", "--model", help="Model config to use for this run")
     ap.add_argument("--auto", action="store_true", help="Skip permission prompts")
     args = ap.parse_args()
 
+    # `forge help` and `forge doctor` must work even when nothing else does —
+    # they're what you reach for precisely when the setup is broken, so they
+    # run before any model or workspace is touched.
+    if args.message and args.message[0].lower() in ("help", "--topics"):
+        show_help(" ".join(args.message[1:]))
+        return
+    if args.message and args.message[0].lower() == "doctor":
+        show_doctor()
+        return
+
+    first_run = not CONFIG_PATH.exists()
     cfg = load_config()
+    if first_run:
+        console.print(Panel(WELCOME, title="[bold cyan]Welcome to Forge[/bold cyan]",
+                            border_style="cyan", expand=False))
     if args.model:
         if args.model not in cfg["models"]:
             console.print(f"[red]No model named {args.model!r}[/red]")

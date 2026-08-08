@@ -90,7 +90,14 @@ def load_config() -> dict:
         loaded = yaml.safe_load(CONFIG_PATH.read_text(encoding="utf-8")) or {}
     except yaml.YAMLError as e:
         raise SystemExit(f"Config file is not valid YAML: {CONFIG_PATH}\n{e}")
-    return _deep_merge(DEFAULT_CONFIG, loaded)
+    merged = _deep_merge(DEFAULT_CONFIG, loaded)
+    # `models` is the user's list, not a set of defaults to top up. Merging it
+    # meant a deleted model came straight back on the next load — and worse,
+    # a stale default could be suggested as a fix when it points at something
+    # that was never running here.
+    if isinstance(loaded.get("models"), dict):
+        merged["models"] = loaded["models"]
+    return merged
 
 
 def save_config(cfg: dict) -> None:

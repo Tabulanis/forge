@@ -27,6 +27,8 @@ from pydantic import BaseModel
 
 from .config import (CONFIG_PATH, load_config, load_pipelines, save_config,
                      save_pipelines)
+from .doctor import run_checks
+from .help_content import ORDER, TOPICS, VERSION
 from .media import capabilities, load_media_config
 from .pipeline import Pipeline
 from .session import SessionStore
@@ -374,6 +376,30 @@ def run_pipeline(spec: RunSpec):
 
     threading.Thread(target=go, daemon=True).start()
     return {"session": sess.id, "workspace": str(sess.workspace)}
+
+
+# ------------------------------------------------------------------- help
+# Same words as the terminal — help_content.py is the only copy.
+
+
+@app.get("/api/help", dependencies=[Depends(require_token)])
+def get_help():
+    return {"version": VERSION,
+            "order": ORDER,
+            "topics": {k: TOPICS[k] for k in ORDER}}
+
+
+@app.get("/api/doctor", dependencies=[Depends(require_token)])
+def get_doctor():
+    """Live diagnosis, so the help page can say what's wrong right now."""
+    checks = run_checks()
+    return {"checks": [{"name": c.name, "status": c.status,
+                        "detail": c.detail, "fix": c.fix} for c in checks]}
+
+
+@app.get("/help")
+def help_page():
+    return FileResponse(WEB_DIR / "help.html")
 
 
 @app.get("/")
