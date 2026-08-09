@@ -46,6 +46,8 @@ NOTES_LIMIT_CHARS = 4000  # a notebook longer than this gets tail-truncated
 # models don't error when the window overflows — llama.cpp silently drops
 # the oldest tokens, and the model just starts forgetting. Compacting on
 # purpose, with a summary, beats forgetting at random.
+MAX_RED_BOUNCES = 3        # times we refuse "done" while the last run failed
+
 COMPACT_AT = 0.70          # start compacting at 70% full
 COMPACT_KEEP = 0.25        # after compacting, recent turns may fill 25%
 _CHARS_PER_TOKEN = 4       # rough estimate for sizing the kept tail
@@ -75,6 +77,10 @@ How to work:
   whole thing and loses anything you didn't include.
 - After changing code, verify it: run the tests, the build, or the file
   itself. If you can't verify, say so plainly.
+- Don't stop while it's broken. If a run fails, read the error, fix the
+  cause, run again — repeat until it passes or you can say precisely why
+  the failure is expected. Finishing with a known failure and no
+  explanation is not an option.
 - Use run_command for anything real: git, builds, tests, package managers.
 - If a tool returns an error, read it and adapt. Don't repeat the same call
   and hope.
@@ -117,7 +123,7 @@ class PermissionDenied(Exception):
 
 class Agent:
     def __init__(self, provider: Provider, tools: list[Tool], *,
-                 max_steps: int = 40, permission_mode: str = "ask",
+                 max_steps: int = 80, permission_mode: str = "ask",
                  system_prompt: str = SYSTEM_PROMPT,
                  notes_path: Path | None = None):
         self.provider = provider
@@ -173,8 +179,10 @@ class Agent:
         self._last_failed_call = None
         self._tools_ran = False
         self._unverified_change = False
+        self._last_run_failed = False
         nudged = False
         verify_nudged = False
+        red_bounces = 0
 
         for _ in range(self.max_steps):
             note = self._maybe_compact()
@@ -228,6 +236,27 @@ class Agent:
                                    "run_command, or read the changed file back — "
                                    "then give your final answer. If it truly "
                                    "can't be verified, say so plainly.",
+                    })
+                    continue
+                # Don't finish while the work is red. If the most recent
+                # command this message FAILED, "done" is not on the menu —
+                # keep fixing. Capped, and the model can overrule by saying
+                # why the failure is expected: MAX_RED_BOUNCES exists for
+                # tasks whose failing state is the honest answer (a bug
+                # report, a broken third-party dependency), not as a way
+                # for the model to shrug.
+                if self._last_run_failed and red_bounces < MAX_RED_BOUNCES:
+                    red_bounces += 1
+                    self.history.append({
+                        "role": "user",
+                        "content": "Automatic harness check: the most recent "
+                                   "command you ran FAILED, and you're about "
+                                   "to finish anyway. Don't stop while it's "
+                                   "broken — read the error, fix the cause, "
+                                   "and run it again until it passes. If the "
+                                   "failure is genuinely expected or outside "
+                                   "this task, say exactly why in your answer."
+                                   f" (Reminder {red_bounces} of {MAX_RED_BOUNCES}.)",
                     })
                     continue
                 yield Event(kind="done", usage=reply.usage)
@@ -408,6 +437,10 @@ class Agent:
                 self._unverified_change = True
             elif call.name in ("run_command", "read_file"):
                 self._unverified_change = False
+        # Red/green tracking: only actual command runs count. A failed file
+        # read shouldn't block finishing; a failed test run should.
+        if call.name == "run_command":
+            self._last_run_failed = failed
 
         self.history.append({"role": "tool_result", "id": call.id, "content": result})
         yield Event(kind="tool_result", tool=call.name, text=result)

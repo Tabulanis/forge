@@ -54,7 +54,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "agent": {
         # Hard stop on tool-call rounds per message, so a confused model
         # can't spin forever burning tokens.
-        "max_steps": 40,
+        "max_steps": 80,
         # "ask"  — prompt before every world-changing tool (default, safest)
         # "auto" — run everything without asking (fast, for throwaway dirs)
         # "deny" — read-only; refuse all writes and commands
