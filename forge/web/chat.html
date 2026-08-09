@@ -213,7 +213,24 @@ function setWorking(on) {
   $('send').disabled = on;
   const old = document.querySelector('.working');
   if (old) old.remove();
-  if (on) el('working dots', 'working');
+  if (on) {
+    const w = el('working dots', 'working ');
+    const stop = document.createElement('button');
+    stop.textContent = 'Stop';
+    stop.className = 'stopbtn';
+    stop.style.cssText = 'margin-left:10px;padding:2px 14px;border-radius:8px;'
+      + 'border:1px solid var(--gold,#caa64a);background:transparent;'
+      + 'color:inherit;font:inherit;font-size:13px;';
+    stop.onclick = () => {
+      stop.disabled = true;
+      stop.textContent = 'stopping…';
+      api('/api/stop', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ session: SESSION })
+      }).catch(() => { stop.disabled = false; stop.textContent = 'Stop'; });
+    };
+    w.appendChild(stop);
+  }
 }
 
 let reconnectTimer = null;
@@ -328,7 +345,7 @@ async function askWorkspace() {
       connect();
     } else {
       el('note', 'Ready. Tell it what to do — it works in ' +
-         (WORKSPACE || 'your home folder') + '. Tap New to change that.');
+         (WORKSPACE || 'the Playground folder') + '. Tap New to change that.');
     }
   } catch (err) {
     if (err.message !== 'unauthorized') el('err', 'Cannot reach Forge: ' + err.message);

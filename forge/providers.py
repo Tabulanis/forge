@@ -316,21 +316,28 @@ class OpenAICompatProvider(Provider):
             r.raise_for_status()
         except httpx.ConnectError:
             raise RuntimeError(
-                f"Nothing is answering at {self.base_url}. Start the model "
-                f"server first (~/forge/start-model.sh big) and wait ~40 "
-                f"seconds, or switch models with /model."
+                "The model isn't running right now. It normally starts "
+                "itself when the computer boots — wait a minute and send "
+                "your message again. If it keeps happening, someone at the "
+                "computer can run: forge doctor"
             ) from None
         except httpx.TimeoutException:
             raise RuntimeError(
-                f"The model server at {self.base_url} took too long to answer. "
-                f"It may still be loading the model — wait a minute and retry. "
-                f"forge doctor can tell you what's running."
+                "The model is taking too long to answer. Big models need a "
+                "minute or two to wake up after a restart — wait a bit and "
+                "send your message again."
             ) from None
         except httpx.HTTPStatusError as e:
+            code = e.response.status_code
+            if code == 503:
+                raise RuntimeError(
+                    "The model is still waking up (big ones take a minute "
+                    "or two). Wait a little and send your message again."
+                ) from None
             raise RuntimeError(
-                f"The model server at {self.base_url} replied with an error "
-                f"({e.response.status_code}). It may have crashed or be mid-"
-                f"restart — check it with: forge doctor"
+                f"The model server hit a problem (error {code}). Try again "
+                f"in a moment; if it keeps happening, someone at the "
+                f"computer can run: forge doctor"
             ) from None
         data = r.json()
         choice = data["choices"][0]["message"]

@@ -256,6 +256,20 @@ async def stream(session_id: str, since: int = 0):
                                       "X-Accel-Buffering": "no"})
 
 
+class StopSpec(BaseModel):
+    session: str
+
+
+@app.post("/api/stop", dependencies=[Depends(require_token)])
+def stop(spec: StopSpec):
+    """The panic button: end the current turn cleanly, keep the session."""
+    sess = STORE.get(spec.session)
+    if not sess:
+        raise HTTPException(404, "No such session")
+    sess.stop()
+    return {"ok": True}
+
+
 @app.post("/api/permission", dependencies=[Depends(require_token)])
 def permission(spec: PermissionSpec):
     """The allow/deny tap coming back from the browser."""

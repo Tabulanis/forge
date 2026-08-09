@@ -118,6 +118,16 @@ class Session:
             return False
         return req.allowed
 
+    def stop(self) -> None:
+        """The Stop button. Ends the turn at the next safe boundary; if the
+        agent is blocked waiting on a permission card, that wait is answered
+        'no' so the stop lands now instead of minutes from now."""
+        self.agent.stop_requested = True
+        req = self.pending
+        if req:
+            req.allowed = False
+            req.answered.set()
+
     def answer_permission(self, request_id: str, allowed: bool) -> bool:
         req = self.pending
         if not req or req.id != request_id:
@@ -209,9 +219,19 @@ class SessionStore:
             # carrying a new id is how the page knows to reconnect its
             # event stream.
             sid = uuid.uuid4().hex[:12]
-            ws = Path(workspace or Path.home()).expanduser()
-            if not ws.is_dir():
-                ws = Path.home()
+            # No folder chosen means the Playground, not the whole home
+            # directory. The agent's file tools are fenced to its workspace —
+            # defaulting that fence to everything-you-own was fine for the
+            # owner, and wrong for the ten-year-old borrowing the tablet.
+            # Anyone can still pick any folder deliberately via New.
+            if workspace:
+                ws = Path(workspace).expanduser()
+                if not ws.is_dir():
+                    ws = Path.home() / "Playground"
+            else:
+                ws = Path.home() / "Playground"
+            if ws == Path.home() / "Playground":
+                ws.mkdir(exist_ok=True)
             s = Session(sid, ws, cfg)
             self.sessions[sid] = s
             return s

@@ -158,6 +158,11 @@ class Agent:
         # Tokens the whole conversation occupied at the last model call,
         # straight from the provider's usage report — not an estimate.
         self._ctx_used = 0
+        # Set from another thread (the dashboard's Stop button) to end the
+        # current turn at the next safe boundary. Checked between model
+        # calls and between tool calls — a blocking model call finishes
+        # first, then the stop lands.
+        self.stop_requested = False
 
     def _system(self) -> str:
         """System prompt plus the project notebook, re-read every turn so a
@@ -206,6 +211,12 @@ class Agent:
         red_bounces = 0
 
         for _ in range(self.max_steps):
+            if self.stop_requested:
+                self.stop_requested = False
+                yield Event(kind="note", text="Stopped — ready for your next message.")
+                yield Event(kind="done")
+                return
+
             note = self._maybe_compact()
             if note:
                 yield Event(kind="note", text=note)
@@ -324,7 +335,21 @@ class Agent:
                 "assistant_blocks": reply.assistant_blocks,
             })
 
-            for call in reply.tool_calls:
+            for i, call in enumerate(reply.tool_calls):
+                if self.stop_requested:
+                    # Every remaining call still needs a result entry — a
+                    # tool_use without its tool_result breaks history
+                    # replay on every provider. Cancel them explicitly.
+                    for rest in reply.tool_calls[i:]:
+                        self.history.append({
+                            "role": "tool_result", "id": rest.id,
+                            "content": "Cancelled — the user pressed Stop.",
+                            "is_error": True,
+                        })
+                    self.stop_requested = False
+                    yield Event(kind="note", text="Stopped — ready for your next message.")
+                    yield Event(kind="done")
+                    return
                 yield from self._run_one(call, ask)
 
         yield Event(
