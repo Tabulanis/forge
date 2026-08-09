@@ -59,6 +59,10 @@ class Tool:
     # A one-line human summary shown in the permission prompt, so the user
     # sees "write to config.py" rather than a wall of JSON.
     summarize: Callable[[dict], str] | None = None
+    # Ask even in auto mode. For actions whose effect lands somewhere the
+    # user might not be — sound comes out of the server's speakers, and the
+    # user may be on a tablet in another room.
+    always_ask: bool = False
 
 
 class Workspace:
@@ -172,9 +176,10 @@ def build_media_tools(ws: Workspace, mc) -> list[Tool]:
     if caps["speech_out"]["ok"]:
         tools.append(Tool(
             name="say_aloud",
-            description="Speak a short message out loud through the speakers. "
-                        "Good for telling the user something finished while "
-                        "they're looking elsewhere.",
+            description="Speak a short message out loud — through the speakers "
+                        "of the machine Forge runs on, which may not be where "
+                        "the user is sitting. Only use it when the user "
+                        "explicitly asked to be told out loud.",
             parameters={
                 "type": "object",
                 "properties": {"text": {"type": "string"}},
@@ -182,6 +187,7 @@ def build_media_tools(ws: Workspace, mc) -> list[Tool]:
             },
             run=lambda text: media.speak(text, mc),
             needs_permission=True,
+            always_ask=True,
             summarize=lambda a: f"say out loud: {str(a.get('text',''))[:60]}",
         ))
 

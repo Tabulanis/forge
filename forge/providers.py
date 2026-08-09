@@ -58,6 +58,10 @@ class Provider:
                  grammar: str | None = None) -> Reply:
         raise NotImplementedError
 
+    def context_limit(self) -> int:
+        """How many tokens fit in this model's window. 0 = unknown."""
+        return 0
+
     # Providers speak different dialects for conversation history. Each one
     # converts our neutral history into its own format inside complete(), so
     # the agent loop only ever deals with the neutral form:
@@ -84,6 +88,9 @@ class AnthropicProvider(Provider):
         self.max_tokens = max_tokens
         # api_key=None lets the SDK fall back to ANTHROPIC_API_KEY itself
         self.client = anthropic.Anthropic(api_key=api_key) if api_key else anthropic.Anthropic()
+
+    def context_limit(self) -> int:
+        return 200_000   # every current Claude model
 
     def complete(self, system: str, messages: list[dict], tools: list[dict],
                  grammar: str | None = None) -> Reply:
@@ -214,17 +221,48 @@ class OpenAICompatProvider(Provider):
     name = "openai-compat"
 
     def __init__(self, model: str, base_url: str, api_key: str = "not-needed",
-                 max_tokens: int = 4096, timeout: float = 300.0):
+                 max_tokens: int = 4096, timeout: float = 300.0,
+                 context: int = 0):
         import httpx
 
         self.model = model
         self.max_tokens = max_tokens
         self.base_url = base_url.rstrip("/")
+        self._context = int(context)   # explicit config beats probing
+        self._probed: int | None = None
         self.client = httpx.Client(
             base_url=self.base_url,
             headers={"Authorization": f"Bearer {api_key}"},
             timeout=timeout,
         )
+
+    def context_limit(self) -> int:
+        """
+        The window size, from config if given, else asked of the server.
+
+        llama.cpp answers /props at the server root (not under /v1) with the
+        n_ctx it was actually started with — the ground truth, since the
+        window is set by the -c flag at launch, not by the model file.
+        Runners without /props (Ollama, LM Studio) get a conservative 8k
+        default rather than an optimistic one: compacting a bit early is
+        cheap, overflowing is not.
+        """
+        if self._context > 0:
+            return self._context
+        if self._probed is None:
+            import httpx
+            self._probed = 0
+            root = self.base_url[:-3] if self.base_url.endswith("/v1") \
+                else self.base_url
+            try:
+                r = httpx.get(f"{root}/props", timeout=3.0)
+                if r.status_code == 200:
+                    d = r.json()
+                    self._probed = int(
+                        d.get("default_generation_settings", {}).get("n_ctx", 0))
+            except Exception:
+                pass
+        return self._probed or 8192
 
     def complete(self, system: str, messages: list[dict], tools: list[dict],
                  grammar: str | None = None) -> Reply:
@@ -337,5 +375,6 @@ def build_provider(cfg: dict) -> Provider:
             base_url=cfg.get("base_url", "http://localhost:8080/v1"),
             api_key=cfg.get("api_key") or "not-needed",
             max_tokens=int(cfg.get("max_tokens", 4096)),
+            context=int(cfg.get("context", 0)),
         )
     raise ValueError(f"Unknown provider: {kind!r}")

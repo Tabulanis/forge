@@ -41,6 +41,22 @@ _CLAIMS_ACTION = re.compile(
 
 NOTES_LIMIT_CHARS = 4000  # a notebook longer than this gets tail-truncated
 
+# Memory compaction: when the conversation has eaten this fraction of the
+# model's context window, the older part is condensed into a summary. Local
+# models don't error when the window overflows — llama.cpp silently drops
+# the oldest tokens, and the model just starts forgetting. Compacting on
+# purpose, with a summary, beats forgetting at random.
+COMPACT_AT = 0.70          # start compacting at 70% full
+COMPACT_KEEP = 0.25        # after compacting, recent turns may fill 25%
+_CHARS_PER_TOKEN = 4       # rough estimate for sizing the kept tail
+
+SUMMARY_PROMPT = """You are condensing an agent work session to free memory.
+Write a compact briefing the agent can work from, covering: what the user
+wants overall; decisions made; files created or changed and their current
+state; what was tried and failed; anything the user corrected or insisted on;
+what remains to be done. Concrete names and paths matter, prose style does
+not. 300 words maximum. Reply with the briefing only."""
+
 SYSTEM_PROMPT = """You are Forge, a coding agent working in a user's project directory.
 
 You have tools to read, write, and edit files, list directories, search file
@@ -114,6 +130,9 @@ class Agent:
         # Harness bookkeeping, reset per user message (see run()).
         self._last_failed_call: str | None = None
         self._tools_ran = False
+        # Tokens the whole conversation occupied at the last model call,
+        # straight from the provider's usage report — not an estimate.
+        self._ctx_used = 0
 
     def _system(self) -> str:
         """System prompt plus the project notebook, re-read every turn so a
@@ -137,7 +156,7 @@ class Agent:
 
     def _needs_ask(self, tool: Tool) -> bool:
         if self.permission_mode == "auto":
-            return False
+            return tool.always_ask
         if self.permission_mode == "deny":
             return True   # asked, but the CLI will refuse on its behalf
         return tool.needs_permission
@@ -158,6 +177,10 @@ class Agent:
         verify_nudged = False
 
         for _ in range(self.max_steps):
+            note = self._maybe_compact()
+            if note:
+                yield Event(kind="note", text=note)
+
             try:
                 reply = self.provider.complete(
                     self._system(), self.history, self.tool_schemas
@@ -165,6 +188,12 @@ class Agent:
             except Exception as e:
                 yield Event(kind="error", text=f"Model call failed: {e}")
                 return
+
+            u = reply.usage or {}
+            used = (u.get("prompt_tokens") or u.get("input_tokens") or 0) \
+                 + (u.get("completion_tokens") or u.get("output_tokens") or 0)
+            if used:
+                self._ctx_used = used
 
             if reply.text:
                 yield Event(kind="text", text=reply.text, usage=reply.usage)
@@ -219,6 +248,99 @@ class Agent:
             text=f"Stopped after {self.max_steps} steps without finishing. "
                  f"The task may be too big for one message, or the model may be stuck.",
         )
+
+    # -- memory compaction --------------------------------------------
+
+    @staticmethod
+    def _entry_chars(m: dict) -> int:
+        """Rough size of one history entry, for choosing where to cut."""
+        if m.get("role") == "tool_use":
+            calls = m.get("calls") or []
+            args = "".join(str(getattr(c, "args", "")) for c in calls)
+            return len(m.get("text") or "") + len(args) + 40 * len(calls)
+        return len(str(m.get("content") or ""))
+
+    def _maybe_compact(self) -> str | None:
+        """
+        Condense older history when the context window is filling up.
+
+        Returns a short human-readable note when compaction happened, else
+        None. The cut always lands at the start of a user turn, so a
+        tool_use never gets separated from its tool_results — that pairing
+        is load-bearing for every provider's replay format.
+        """
+        limit = 0
+        try:
+            limit = int(self.provider.context_limit())
+        except Exception:
+            pass
+        if limit <= 0 or self._ctx_used < limit * COMPACT_AT:
+            return None
+
+        keep_chars = int(limit * COMPACT_KEEP * _CHARS_PER_TOKEN)
+        user_idxs = [i for i, m in enumerate(self.history)
+                     if m.get("role") == "user"]
+        cut = None
+        for i in user_idxs:
+            tail = sum(self._entry_chars(m) for m in self.history[i:])
+            if tail <= keep_chars:
+                cut = i
+                break
+        if cut is None and user_idxs:
+            cut = user_idxs[-1]          # keep at least the current turn
+        if not cut:                       # nothing older than the cut point
+            return None
+
+        old, kept = self.history[:cut], self.history[cut:]
+
+        lines = []
+        for m in old:
+            role = m.get("role")
+            if role == "user":
+                lines.append(f"User: {m.get('content','')}")
+            elif role == "assistant":
+                lines.append(f"Agent: {m.get('content','')}")
+            elif role == "tool_use":
+                for c in (m.get("calls") or []):
+                    lines.append(f"Agent ran {getattr(c, 'name', '?')}"
+                                 f"({str(getattr(c, 'args', ''))[:200]})")
+            elif role == "tool_result":
+                lines.append(f"  -> {str(m.get('content',''))[:400]}")
+        transcript = "\n".join(lines)
+        # The summarization call must itself fit in the window.
+        max_transcript = int(limit * 0.5 * _CHARS_PER_TOKEN)
+        if len(transcript) > max_transcript:
+            transcript = ("(earliest part omitted)\n"
+                          + transcript[-max_transcript:])
+
+        try:
+            reply = self.provider.complete(
+                SUMMARY_PROMPT,
+                [{"role": "user", "content": transcript}],
+                [],   # no tools — this is a straight writing task
+            )
+            summary = (reply.text or "").strip()
+        except Exception:
+            summary = ""
+        if not summary:
+            summary = ("(The summary could not be produced; earlier details "
+                       "were dropped to free memory. Re-read files rather "
+                       "than trusting recollection.)")
+
+        self.history = [
+            {"role": "user",
+             "content": "[Automatic memory note: the conversation was getting "
+                        "too long, so everything before this point was "
+                        "condensed into this briefing.]\n\n" + summary},
+            {"role": "assistant",
+             "content": "Understood — continuing from that briefing."},
+        ] + kept
+        # Real usage comes back with the next model call; until then a
+        # rough estimate keeps us from immediately re-triggering.
+        self._ctx_used = sum(self._entry_chars(m) for m in self.history) \
+            // _CHARS_PER_TOKEN
+        return (f"Memory was {int(100 * COMPACT_AT)}% full — condensed the "
+                f"earlier conversation into a briefing so nothing degrades.")
 
     def _run_one(self, call: ToolCall, ask: Any) -> Iterator[Event]:
         tool = self.tools.get(call.name)

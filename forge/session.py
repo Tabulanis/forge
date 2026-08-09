@@ -164,6 +164,8 @@ class Session:
                 elif ev.kind == "tool_result":
                     self.emit("result", {"tool": ev.tool,
                                          "text": (ev.text or "")[:2000]})
+                elif ev.kind == "note":
+                    self.emit("note", {"text": ev.text})
                 elif ev.kind == "error":
                     self.emit("error", {"text": ev.text})
                 elif ev.kind == "done":

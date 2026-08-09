@@ -147,6 +147,8 @@ def print_events(agent: Agent, message: str) -> None:
                     console.print(f"[dim]    {escape(ln[:110])}[/dim]")
                 if len(lines) > 3:
                     console.print(f"[dim]    … {len(lines) - 3} more line(s)[/dim]")
+            elif ev.kind == "note":
+                console.print(f"[yellow italic]  {escape(ev.text)}[/yellow italic]")
             elif ev.kind == "error":
                 console.print(f"[red]{escape(ev.text)}[/red]")
                 # A dead model server is the single most common failure, and
