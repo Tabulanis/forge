@@ -22,6 +22,7 @@ never leave a half-finished edit hanging forever.
 
 from __future__ import annotations
 
+import json
 import threading
 import time
 import uuid
@@ -31,11 +32,62 @@ from pathlib import Path
 from .agent import Agent
 from .config import active_model_config, load_config
 from .media import load_media_config
-from .providers import build_provider
+from .providers import ToolCall, build_provider
 from .tools import Workspace, build_media_tools, build_tools
 
 # How long the agent waits for a human to tap allow/deny before giving up.
 PERMISSION_TIMEOUT = 300
+
+# Conversations live here and survive restarts. One JSON file per session,
+# written after every completed turn; the newest KEEP_SESSIONS are kept.
+SESS_DIR = Path.home() / ".forge" / "sessions"
+KEEP_SESSIONS = 20
+
+
+def _jsonable_blocks(blocks):
+    """Provider-native assistant blocks → plain data.
+
+    Anthropic's SDK objects (thinking blocks included) all model_dump() to
+    dicts, and the API accepts those dicts back verbatim on replay — so a
+    Claude session survives a restart with its thinking chain intact.
+    Anything unserializable is dropped rather than poisoning the save; the
+    provider rebuilds history from text + calls in that case, which is the
+    same degradation as switching models mid-session.
+    """
+    if blocks is None:
+        return None
+    out = []
+    for b in blocks:
+        if isinstance(b, dict):
+            out.append(b)
+        elif hasattr(b, "model_dump"):
+            try:
+                out.append(b.model_dump())
+            except Exception:
+                return None
+        else:
+            return None
+    return out
+
+
+def _ser_entry(m: dict) -> dict:
+    if m.get("role") == "tool_use":
+        return {
+            "role": "tool_use",
+            "text": m.get("text") or "",
+            "calls": [{"id": c.id, "name": c.name, "args": c.args}
+                      for c in (m.get("calls") or [])],
+            "assistant_blocks": _jsonable_blocks(m.get("assistant_blocks")),
+        }
+    return {k: v for k, v in m.items() if k != "_trimmed"} | (
+        {"_trimmed": True} if m.get("_trimmed") else {})
+
+
+def _de_entry(m: dict) -> dict:
+    if m.get("role") == "tool_use":
+        m = dict(m)
+        m["calls"] = [ToolCall(**c) for c in (m.get("calls") or [])]
+    return m
 
 
 @dataclass
@@ -118,6 +170,54 @@ class Session:
             return False
         return req.allowed
 
+    # -- persistence --------------------------------------------------
+
+    def save(self) -> None:
+        """Write this conversation to disk. Failure to save must never
+        break a working chat — worst case the restart loses one turn."""
+        try:
+            SESS_DIR.mkdir(parents=True, exist_ok=True)
+            data = {
+                "id": self.id,
+                "workspace": str(self.workspace),
+                "created": self.created,
+                "last_used": self.last_used,
+                "model": self.model_name,
+                "log": self.log,
+                "log_base": self.log_base,
+                "history": [_ser_entry(m) for m in self.agent.history],
+            }
+            tmp = SESS_DIR / f".{self.id}.tmp"
+            tmp.write_text(json.dumps(data), encoding="utf-8")
+            tmp.replace(SESS_DIR / f"{self.id}.json")
+            # retention: newest KEEP_SESSIONS stay, the rest go
+            files = sorted(SESS_DIR.glob("*.json"),
+                           key=lambda p: p.stat().st_mtime, reverse=True)
+            for old in files[KEEP_SESSIONS:]:
+                old.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+    @classmethod
+    def load(cls, path: Path, cfg: dict) -> "Session | None":
+        """Rebuild a saved conversation. A corrupt file is set aside as
+        .broken instead of taking the dashboard down with it."""
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            s = cls(data["id"], Path(data["workspace"]), cfg)
+            s.created = data.get("created", time.time())
+            s.last_used = data.get("last_used", time.time())
+            s.log = data.get("log", [])
+            s.log_base = data.get("log_base", 0)
+            s.agent.history = [_de_entry(m) for m in data.get("history", [])]
+            return s
+        except Exception:
+            try:
+                path.replace(path.with_suffix(".broken"))
+            except OSError:
+                pass
+            return None
+
     def stop(self) -> None:
         """The Stop button. Ends the turn at the next safe boundary; if the
         agent is blocked waiting on a permission card, that wait is answered
@@ -196,6 +296,7 @@ class Session:
         finally:
             self.busy = False
             self.last_used = time.time()
+            self.save()
 
 
 class SessionStore:
@@ -204,6 +305,14 @@ class SessionStore:
     def __init__(self):
         self.sessions: dict[str, Session] = {}
         self.lock = threading.Lock()
+        # Restart? Reboot? Doesn't matter — saved conversations come back,
+        # and a page holding its session id just reconnects and continues.
+        if SESS_DIR.is_dir():
+            cfg = load_config()
+            for f in sorted(SESS_DIR.glob("*.json")):
+                s = Session.load(f, cfg)
+                if s:
+                    self.sessions[s.id] = s
 
     def get_or_create(self, session_id: str | None, workspace: str | None) -> Session:
         cfg = load_config()
@@ -234,6 +343,7 @@ class SessionStore:
                 ws.mkdir(exist_ok=True)
             s = Session(sid, ws, cfg)
             self.sessions[sid] = s
+            s.save()
             return s
 
     def get(self, session_id: str) -> Session | None:
@@ -252,4 +362,7 @@ class SessionStore:
 
     def drop(self, session_id: str) -> bool:
         with self.lock:
-            return self.sessions.pop(session_id, None) is not None
+            gone = self.sessions.pop(session_id, None) is not None
+        if gone:
+            (SESS_DIR / f"{session_id}.json").unlink(missing_ok=True)
+        return gone
