@@ -82,6 +82,10 @@ How to work:
   the failure is expected. Finishing with a known failure and no
   explanation is not an option.
 - Use run_command for anything real: git, builds, tests, package managers.
+- run_command has no screen or keyboard. Interactive or full-screen
+  programs (games, editors, TUIs) will fail with terminal errors there —
+  that's the sandbox, not a bug in the code. Verify them another way and
+  tell the user how to launch them in a real terminal.
 - If a tool returns an error, read it and adapt. Don't repeat the same call
   and hope.
 

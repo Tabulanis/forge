@@ -491,7 +491,13 @@ def build_tools(ws: Workspace) -> list[Tool]:
         Tool(
             name="run_command",
             description="Run a shell command in the workspace root. Use for builds, tests, "
-                        "git, and any other real work. Returns exit code and output.",
+                        "git, and any other real work. Returns exit code and output. "
+                        "There is NO screen or keyboard attached: full-screen or "
+                        "interactive programs (curses games, editors, anything that "
+                        "draws a UI or waits for keypresses) cannot run here and fail "
+                        "with terminal errors. Verify those differently — import "
+                        "check, syntax check, unit-testable pieces — and tell the "
+                        "user to launch the program in a real terminal themselves.",
             parameters={
                 "type": "object",
                 "properties": {
