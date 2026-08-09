@@ -36,6 +36,13 @@ class Reply:
     tool_calls: list[ToolCall] = field(default_factory=list)
     raw: Any = None
     usage: dict = field(default_factory=dict)
+    # The provider's own untranslated assistant content, when replaying it
+    # verbatim matters. Claude's newer models (Opus 5, Fable 5) think before
+    # they answer, and the API requires those thinking blocks passed back
+    # unchanged when a tool loop continues — a history rebuilt from just
+    # text + calls silently drops them. Other providers leave this None and
+    # ignore it when it belongs to someone else.
+    assistant_blocks: Any = None
 
     @property
     def wants_tools(self) -> bool:
@@ -57,6 +64,12 @@ class Provider:
     #   {"role": "user"|"assistant", "content": str}
     #   {"role": "tool_result", "id": str, "content": str, "is_error": bool}
     #   {"role": "tool_use", "calls": [ToolCall, ...], "text": str}
+
+
+# Models whose safety classifiers can decline a request outright; for these
+# we opt into Anthropic's server-side fallback so a decline gets retried on
+# a substitute model automatically.
+SAFETY_FALLBACK_MODELS = {"claude-fable-5", "claude-mythos-5", "claude-opus-5"}
 
 
 class AnthropicProvider(Provider):
@@ -89,6 +102,14 @@ class AnthropicProvider(Provider):
                     }],
                 })
             elif m["role"] == "tool_use":
+                if m.get("assistant_blocks") is not None:
+                    # Replay Claude's own blocks untouched — thinking blocks
+                    # included. Blocks from a different Claude model are
+                    # dropped server-side, so a mid-session model switch is
+                    # still safe.
+                    payload.append({"role": "assistant",
+                                    "content": m["assistant_blocks"]})
+                    continue
                 blocks: list[dict] = []
                 if m.get("text"):
                     blocks.append({"type": "text", "text": m["text"]})
@@ -113,7 +134,32 @@ class AnthropicProvider(Provider):
                 "input_schema": t["parameters"],
             } for t in tools]
 
-        resp = self.client.messages.create(**kwargs)
+        if self.model in SAFETY_FALLBACK_MODELS:
+            # These models run safety classifiers that can decline a benign
+            # request. fallbacks="default" re-runs a declined request on
+            # Anthropic's recommended substitute model inside the same call,
+            # so the user gets an answer instead of silence.
+            resp = self.client.beta.messages.create(
+                **kwargs,
+                betas=["server-side-fallback-2026-07-01"],
+                fallbacks="default",
+            )
+        else:
+            resp = self.client.messages.create(**kwargs)
+
+        usage = {
+            "input_tokens": resp.usage.input_tokens,
+            "output_tokens": resp.usage.output_tokens,
+        }
+
+        if resp.stop_reason == "refusal":
+            return Reply(
+                text="Claude declined this request (safety filters). This is "
+                     "sometimes a false positive — rephrasing the ask usually "
+                     "clears it.",
+                raw=resp,
+                usage=usage,
+            )
 
         text_parts, calls = [], []
         for block in resp.content:
@@ -126,10 +172,8 @@ class AnthropicProvider(Provider):
             text="".join(text_parts),
             tool_calls=calls,
             raw=resp,
-            usage={
-                "input_tokens": resp.usage.input_tokens,
-                "output_tokens": resp.usage.output_tokens,
-            },
+            usage=usage,
+            assistant_blocks=list(resp.content),
         )
 
 
@@ -239,7 +283,7 @@ def build_provider(cfg: dict) -> Provider:
     kind = cfg.get("provider", "anthropic")
     if kind == "anthropic":
         return AnthropicProvider(
-            model=cfg.get("model", "claude-sonnet-4-5"),
+            model=cfg.get("model", "claude-opus-5"),
             api_key=cfg.get("api_key") or None,
             max_tokens=int(cfg.get("max_tokens", 8000)),
         )

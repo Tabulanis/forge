@@ -115,6 +115,12 @@
       <div>
         <label>Model name</label>
         <input id="f-model" placeholder="qwen2.5-coder:14b">
+        <datalist id="claude-models">
+          <option value="claude-opus-5">best for coding — recommended</option>
+          <option value="claude-fable-5">most capable, priciest</option>
+          <option value="claude-sonnet-5">fast + smart, cheaper</option>
+          <option value="claude-haiku-4-5">fastest, cheapest</option>
+        </datalist>
       </div>
       <div>
         <label>Max tokens out</label>
@@ -233,6 +239,16 @@ function syncFormKind() {
   const isAnthropic = $('f-provider').value === 'anthropic';
   $('local-row').style.display = isAnthropic ? 'none' : '';
   $('key-row').style.display = isAnthropic ? '' : 'none';
+  // Claude model names are easy to get wrong — offer the current ones.
+  const f = $('f-model');
+  if (isAnthropic) {
+    f.setAttribute('list', 'claude-models');
+    f.placeholder = 'claude-opus-5';
+    if (!f.value) f.value = 'claude-opus-5';
+  } else {
+    f.removeAttribute('list');
+    f.placeholder = 'qwen2.5-coder:14b';
+  }
 }
 
 $('f-provider').onchange = syncFormKind;

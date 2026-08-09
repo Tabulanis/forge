@@ -132,6 +132,9 @@ class Agent:
 
             self.history.append({
                 "role": "tool_use", "calls": reply.tool_calls, "text": reply.text,
+                # Provider's untranslated blocks, so Claude's thinking blocks
+                # survive the replay. None for local models — harmless.
+                "assistant_blocks": reply.assistant_blocks,
             })
 
             for call in reply.tool_calls:

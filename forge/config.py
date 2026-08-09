@@ -30,10 +30,16 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "models": {
         "claude": {
             "provider": "anthropic",
-            "model": "claude-sonnet-4-5",
+            "model": "claude-opus-5",
             "max_tokens": 8000,
             # Leave api_key empty to use the ANTHROPIC_API_KEY environment
             # variable instead of storing a secret in a plain text file.
+            "api_key": "",
+        },
+        "fable": {
+            "provider": "anthropic",
+            "model": "claude-fable-5",
+            "max_tokens": 8000,
             "api_key": "",
         },
         "local": {
