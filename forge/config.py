@@ -94,8 +94,24 @@ def load_config() -> dict:
         return dict(DEFAULT_CONFIG)
     try:
         loaded = yaml.safe_load(CONFIG_PATH.read_text(encoding="utf-8")) or {}
+        if not isinstance(loaded, dict):
+            raise yaml.YAMLError(f"expected a mapping, got {type(loaded).__name__}")
     except yaml.YAMLError as e:
-        raise SystemExit(f"Config file is not valid YAML: {CONFIG_PATH}\n{e}")
+        # A hand-edit gone wrong shouldn't brick every Forge tool at once.
+        # Keep the broken file for repair, start fresh, and say so loudly.
+        import sys
+        broken = CONFIG_PATH.with_name("config.yaml.broken")
+        try:
+            CONFIG_PATH.replace(broken)
+        except OSError:
+            broken = None
+        save_config(DEFAULT_CONFIG)
+        print(f"WARNING: {CONFIG_PATH} was not valid YAML ({e}).\n"
+              + (f"Your old file is saved at {broken} — " if broken else "")
+              + "Forge regenerated a default config so it can keep working. "
+                "Your model list will need re-adding (dashboard → Add a model).",
+              file=sys.stderr)
+        return dict(DEFAULT_CONFIG)
     merged = _deep_merge(DEFAULT_CONFIG, loaded)
     # `models` is the user's list, not a set of defaults to top up. Merging it
     # meant a deleted model came straight back on the next load — and worse,

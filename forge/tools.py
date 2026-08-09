@@ -27,6 +27,27 @@ MAX_READ_BYTES = 400_000     # a huge file would blow the context window
 MAX_OUTPUT_CHARS = 30_000    # same, for command output
 DEFAULT_TIMEOUT = 120
 
+# Commands refused even in auto mode. Deliberately a short list of
+# machine-killers, not a nanny filter — deleting a project folder is the
+# user's right; wiping the disk or the home directory is not a judgment
+# call any model should get to make.
+import re as _re
+_MACHINE_KILLERS: list[tuple[str, _re.Pattern]] = [
+    ("deletes / or your home directory",
+     _re.compile(r"\brm\s+(?:-[a-zA-Z]+\s+)*(?:/|~|\$HOME)\*?(?:\s|$)")),
+    ("formats a disk", _re.compile(r"\bmkfs(\.|\s|$)")),
+    ("writes raw bytes over a disk device", _re.compile(r"\bdd\b.*\bof=/dev/")),
+    ("overwrites a disk device", _re.compile(r">\s*/dev/(sd|nvme|mmcblk)")),
+    ("fork bomb", _re.compile(r":\s*\(\s*\)\s*\{")),
+]
+
+
+def _machine_killer(command: str) -> str | None:
+    for why, pat in _MACHINE_KILLERS:
+        if pat.search(command):
+            return why
+    return None
+
 
 @dataclass
 class Tool:
@@ -211,15 +232,48 @@ def build_tools(ws: Workspace) -> list[Tool]:
             more = f"\n... ({len(lines) - offset - limit} more lines; use offset={offset + limit})"
         return body + more
 
+    def _backup(f: Path) -> None:
+        """Keep the previous version of a file about to change.
+
+        One level deep, mirrored under .forge_backups/ — enough for 'undo
+        that', without turning the workspace into a version-control system
+        (that's what git is for).
+        """
+        if not f.exists() or not f.is_file():
+            return
+        bk = ws.root / ".forge_backups" / ws.rel(f)
+        bk.parent.mkdir(parents=True, exist_ok=True)
+        bk.write_bytes(f.read_bytes())
+
     def write_file(path: str, content: str) -> str:
         f = ws.resolve(path)
-        f.parent.mkdir(parents=True, exist_ok=True)
         existed = f.exists()
+        if existed and f not in ws.reads:
+            return (f"Error: {ws.rel(f)} already exists and you haven't read it "
+                    f"this session — overwriting it blind could destroy work. "
+                    f"read_file it first, or pick a new filename.")
+        f.parent.mkdir(parents=True, exist_ok=True)
+        _backup(f)
         f.write_text(content, encoding="utf-8")
         # Writing the whole file counts as knowing its contents.
         ws.reads.add(f)
         verb = "Overwrote" if existed else "Created"
         return f"{verb} {ws.rel(f)} ({len(content.splitlines())} lines)"
+
+    def undo_file(path: str) -> str:
+        f = ws.resolve(path)
+        bk = ws.root / ".forge_backups" / ws.rel(f)
+        if not bk.exists():
+            return (f"Error: no backup of {ws.rel(f)} — backups exist only for "
+                    f"files write_file or edit_file changed this session or before.")
+        current = f.read_bytes() if f.exists() else None
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_bytes(bk.read_bytes())
+        # Swap, so undoing twice redoes — nothing is ever lost either way.
+        if current is not None:
+            bk.write_bytes(current)
+        ws.reads.add(f)
+        return f"Restored {ws.rel(f)} from backup (undo again to redo)."
 
     def edit_file(path: str, old: str, new: str, replace_all: bool = False) -> str:
         f = ws.resolve(path)
@@ -237,6 +291,7 @@ def build_tools(ws: Workspace) -> list[Tool]:
         if count > 1 and not replace_all:
             return (f"Error: found {count} matches in {ws.rel(f)}. "
                     f"Add more surrounding context to make it unique, or pass replace_all=true.")
+        _backup(f)
         f.write_text(text.replace(old, new) if replace_all else text.replace(old, new, 1),
                      encoding="utf-8")
         return f"Edited {ws.rel(f)} ({count if replace_all else 1} replacement(s))"
@@ -304,6 +359,11 @@ def build_tools(ws: Workspace) -> list[Tool]:
         return f"Noted in FORGE-NOTES.md: {note[:80]}"
 
     def run_command(command: str, timeout: int = DEFAULT_TIMEOUT) -> str:
+        blocked = _machine_killer(command)
+        if blocked:
+            return (f"Error: blocked — {blocked}. This command could damage the "
+                    f"whole machine, so it's refused even in auto mode. If the "
+                    f"user genuinely wants it, they can run it themselves.")
         try:
             r = subprocess.run(
                 command, shell=True, cwd=str(ws.root),
@@ -391,6 +451,20 @@ def build_tools(ws: Workspace) -> list[Tool]:
                 "required": ["pattern"],
             },
             run=guard(search),
+        ),
+        Tool(
+            name="undo_file",
+            description="Restore a file to how it was before the last write_file or "
+                        "edit_file changed it. Use when a change was wrong or the "
+                        "user says to undo. Calling it twice redoes the change.",
+            parameters={
+                "type": "object",
+                "properties": {"path": {"type": "string"}},
+                "required": ["path"],
+            },
+            run=guard(undo_file),
+            needs_permission=True,
+            summarize=lambda a: f"restore {a.get('path')} from backup",
         ),
         Tool(
             name="save_note",

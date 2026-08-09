@@ -153,7 +153,9 @@ class Agent:
         self.history.append({"role": "user", "content": user_message})
         self._last_failed_call = None
         self._tools_ran = False
+        self._unverified_change = False
         nudged = False
+        verify_nudged = False
 
         for _ in range(self.max_steps):
             try:
@@ -183,6 +185,20 @@ class Agent:
                                    "now, do it now with tool calls. If you were "
                                    "only describing earlier work, say so briefly "
                                    "and finish.",
+                    })
+                    continue
+                # Changed files but never checked the result? One bounce:
+                # run it, test it, or read it back before calling it done.
+                if self._unverified_change and not verify_nudged:
+                    verify_nudged = True
+                    self.history.append({
+                        "role": "user",
+                        "content": "Automatic harness check: you changed files "
+                                   "this message but never verified the result. "
+                                   "Verify now — run the code or tests with "
+                                   "run_command, or read the changed file back — "
+                                   "then give your final answer. If it truly "
+                                   "can't be verified, say so plainly.",
                     })
                     continue
                 yield Event(kind="done", usage=reply.usage)
@@ -262,6 +278,14 @@ class Agent:
         failed = result.startswith("Error") or (
             result.startswith("[exit ") and not result.startswith("[exit 0]"))
         self._last_failed_call = fingerprint if failed else None
+
+        # Verification tracking: a successful write/edit sets the flag; any
+        # later successful run or read-back clears it.
+        if not failed:
+            if call.name in ("write_file", "edit_file"):
+                self._unverified_change = True
+            elif call.name in ("run_command", "read_file"):
+                self._unverified_change = False
 
         self.history.append({"role": "tool_result", "id": call.id, "content": result})
         yield Event(kind="tool_result", tool=call.name, text=result)

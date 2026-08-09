@@ -134,18 +134,41 @@ class AnthropicProvider(Provider):
                 "input_schema": t["parameters"],
             } for t in tools]
 
-        if self.model in SAFETY_FALLBACK_MODELS:
-            # These models run safety classifiers that can decline a benign
-            # request. fallbacks="default" re-runs a declined request on
-            # Anthropic's recommended substitute model inside the same call,
-            # so the user gets an answer instead of silence.
-            resp = self.client.beta.messages.create(
-                **kwargs,
-                betas=["server-side-fallback-2026-07-01"],
-                fallbacks="default",
-            )
-        else:
-            resp = self.client.messages.create(**kwargs)
+        import anthropic
+
+        try:
+            if self.model in SAFETY_FALLBACK_MODELS:
+                # These models run safety classifiers that can decline a benign
+                # request. fallbacks="default" re-runs a declined request on
+                # Anthropic's recommended substitute model inside the same call,
+                # so the user gets an answer instead of silence.
+                resp = self.client.beta.messages.create(
+                    **kwargs,
+                    betas=["server-side-fallback-2026-07-01"],
+                    fallbacks="default",
+                )
+            else:
+                resp = self.client.messages.create(**kwargs)
+        except anthropic.AuthenticationError:
+            raise RuntimeError(
+                "Claude rejected the API key. Set a valid one with\n"
+                "  export ANTHROPIC_API_KEY=sk-ant-...\n"
+                "before starting Forge, or paste it into the dashboard's "
+                "Add-a-model form. Or switch to a local model: /model qwen30b"
+            ) from None
+        except anthropic.NotFoundError:
+            raise RuntimeError(
+                f"Claude doesn't recognize the model name {self.model!r}. "
+                f"Current names include claude-opus-5, claude-fable-5, "
+                f"claude-sonnet-5, claude-haiku-4-5 — fix it in the dashboard "
+                f"or ~/.forge/config.yaml."
+            ) from None
+            # Note: keep this list in sync with web/index.html's datalist.
+        except anthropic.APIConnectionError:
+            raise RuntimeError(
+                "Couldn't reach Claude's servers — is the internet up? "
+                "A local model works offline: /model qwen30b"
+            ) from None
 
         usage = {
             "input_tokens": resp.usage.input_tokens,
@@ -248,8 +271,29 @@ class OpenAICompatProvider(Provider):
                 },
             } for t in tools]
 
-        r = self.client.post("/chat/completions", json=body)
-        r.raise_for_status()
+        import httpx
+
+        try:
+            r = self.client.post("/chat/completions", json=body)
+            r.raise_for_status()
+        except httpx.ConnectError:
+            raise RuntimeError(
+                f"Nothing is answering at {self.base_url}. Start the model "
+                f"server first (~/forge/start-model.sh big) and wait ~40 "
+                f"seconds, or switch models with /model."
+            ) from None
+        except httpx.TimeoutException:
+            raise RuntimeError(
+                f"The model server at {self.base_url} took too long to answer. "
+                f"It may still be loading the model — wait a minute and retry. "
+                f"forge doctor can tell you what's running."
+            ) from None
+        except httpx.HTTPStatusError as e:
+            raise RuntimeError(
+                f"The model server at {self.base_url} replied with an error "
+                f"({e.response.status_code}). It may have crashed or be mid-"
+                f"restart — check it with: forge doctor"
+            ) from None
         data = r.json()
         choice = data["choices"][0]["message"]
 

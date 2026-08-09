@@ -66,9 +66,33 @@ Verified: 4 deterministic scripted-provider tests (block-then-recover edit,
 repeat refusal, liar bounce, notebook injection) + live qwen30b run that
 read → edited → ran-to-verify and honored a planted notebook preference.
 
-Ideas parked for next round: auto-verify pass before "done" (config-gated),
-big/little model routing (tiny model for summaries), GBNF grammar-forced
-tool calls for models worse than qwen at tool syntax.
+**Dummy-proofing round (same session, later):**
+
+- `tools.py`: write_file refuses to overwrite an existing file the model
+  hasn't read; every write/edit backs up the prior version to
+  `.forge_backups/<relpath>` (one level, swap-on-undo so undo twice =
+  redo); new `undo_file` tool; `_machine_killer()` blocklist refuses
+  rm -rf / (also ~, $HOME, /*), mkfs, dd-to-device, >/dev/sd*, fork bombs
+  even in auto mode — deliberately short list, not a nanny filter.
+- `agent.py`: verify-before-done — if write/edit succeeded this message and
+  no later run_command/read_file happened, the final answer gets bounced
+  once asking for verification. Tested that it does NOT nag when the model
+  already verified.
+- `providers.py`: connection/auth/model-name errors now raise RuntimeError
+  with the exact fix in plain words (start-model.sh, export
+  ANTHROPIC_API_KEY, current model names, /model to switch).
+- `config.py`: corrupt YAML no longer kills everything — old file kept as
+  config.yaml.broken, defaults regenerated, loud stderr warning.
+
+Verified: 7-part guard test battery (blind-overwrite, undo/redo, blocklist
+7-blocked/6-allowed, verify-nudge, no-false-nag, friendly provider errors,
+config self-heal) + live qwen30b run passes untouched by the guards.
+Notably: the fake-key test reached Anthropic's real API and got a proper
+401 → whole Claude path confirmed wired; only a valid key is missing.
+
+Ideas parked for next round: big/little model routing (tiny model for
+summaries), GBNF grammar-forced tool calls for models worse than qwen at
+tool syntax, Gemini provider when the user brings keys.
 
 ## Gotchas
 
