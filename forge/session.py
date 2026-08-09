@@ -128,12 +128,23 @@ class Session:
         ws = Workspace(self.workspace)
         mc = load_media_config(cfg)
         self.model_name = cfg.get("active_model", "?")
+        # A model named by agent.summarizer_model takes over memory
+        # compaction — a side-job a small CPU model can carry, keeping the
+        # big model free. Misconfigured or missing = quietly no summarizer.
+        summarizer = None
+        s_name = (cfg["agent"].get("summarizer_model") or "").strip()
+        if s_name and s_name in cfg.get("models", {}):
+            try:
+                summarizer = build_provider(cfg["models"][s_name])
+            except Exception:
+                summarizer = None
         self.agent = Agent(
             provider=provider,
             tools=build_tools(ws) + build_media_tools(ws, mc),
             max_steps=int(cfg["agent"].get("max_steps", 40)),
             permission_mode=cfg["agent"].get("permission_mode", "ask"),
             notes_path=ws.root / "FORGE-NOTES.md",
+            summarizer=summarizer,
         )
 
     def reload_model(self, cfg: dict) -> None:

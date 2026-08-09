@@ -99,12 +99,22 @@ def make_agent(cfg: dict, workspace: Path) -> Agent:
     provider = build_provider(mcfg)
     ws = Workspace(workspace)
     mc = load_media_config(cfg)
+    # Same little-brain hookup the dashboard uses: a model named by
+    # agent.summarizer_model takes the memory-compaction side-job.
+    summarizer = None
+    s_name = (cfg["agent"].get("summarizer_model") or "").strip()
+    if s_name and s_name in cfg.get("models", {}):
+        try:
+            summarizer = build_provider(cfg["models"][s_name])
+        except Exception:
+            summarizer = None
     return Agent(
         provider=provider,
         tools=build_tools(ws) + build_media_tools(ws, mc),
         max_steps=int(cfg["agent"].get("max_steps", 40)),
         permission_mode=cfg["agent"].get("permission_mode", "ask"),
         notes_path=ws.root / "FORGE-NOTES.md",
+        summarizer=summarizer,
     )
 
 

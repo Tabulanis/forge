@@ -144,8 +144,13 @@ class Agent:
     def __init__(self, provider: Provider, tools: list[Tool], *,
                  max_steps: int = 80, permission_mode: str = "ask",
                  system_prompt: str = SYSTEM_PROMPT,
-                 notes_path: Path | None = None):
+                 notes_path: Path | None = None,
+                 summarizer: Provider | None = None):
         self.provider = provider
+        # Optional little brain for side-jobs (memory compaction). The big
+        # model stays the fallback — a bad little model degrades to the old
+        # behavior, never to a broken one.
+        self.summarizer = summarizer
         self.tools = {t.name: t for t in tools}
         self.max_steps = max_steps
         self.permission_mode = permission_mode
@@ -458,15 +463,21 @@ class Agent:
             transcript = ("(earliest part omitted)\n"
                           + transcript[-max_transcript:])
 
-        try:
-            reply = self.provider.complete(
-                SUMMARY_PROMPT,
-                [{"role": "user", "content": transcript}],
-                [],   # no tools — this is a straight writing task
-            )
-            summary = (reply.text or "").strip()
-        except Exception:
-            summary = ""
+        summary = ""
+        for prov in (self.summarizer, self.provider):
+            if prov is None:
+                continue
+            try:
+                reply = prov.complete(
+                    SUMMARY_PROMPT,
+                    [{"role": "user", "content": transcript}],
+                    [],   # no tools — this is a straight writing task
+                )
+                summary = (reply.text or "").strip()
+                if summary:
+                    break
+            except Exception:
+                continue
         if not summary:
             summary = ("(The summary could not be produced; earlier details "
                        "were dropped to free memory. Re-read files rather "

@@ -49,6 +49,19 @@ DEFAULT_CONFIG: dict[str, Any] = {
             "max_tokens": 4096,
             "api_key": "",
         },
+        # A small CPU-only model for short-prompt side jobs (quick
+        # classifications; memory summaries when the main model is a paid
+        # API — set agent.summarizer_model to its name to enable that).
+        # Measured honestly: CPU prompt reading is ~24 tok/s, so anything
+        # long-prompt (full agent work, big summaries) belongs on the GPU
+        # or API model instead.
+        "little": {
+            "provider": "openai-compat",
+            "model": "qwen2.5-3b",
+            "base_url": "http://127.0.0.1:8083/v1",
+            "max_tokens": 2048,
+            "api_key": "",
+        },
     },
 
     "agent": {

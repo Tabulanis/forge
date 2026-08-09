@@ -15,6 +15,12 @@ case "${1:-big}" in
     # it costs nothing the big one needs.
     MODEL=~/aidojo/shared/models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf
     PORT=8081; CTX=4096; NGL=0 ;;
+  little)
+    # The little brain: modern 3B on CPU only, leaving the whole GPU to
+    # the big model. Fast enough for short prompts (titles, routing,
+    # summaries); not meant for real coding.
+    MODEL=~/forge/models/qwen2.5-3b-instruct-q4.gguf
+    PORT=8083; CTX=8192; NGL=0 ;;
   coder14)
     MODEL=~/llmmodels/Qwen2.5-Coder-14B-Instruct-abliterated-Q8_0.gguf
     PORT=8082; CTX=8192; NGL=99 ;;
@@ -51,5 +57,12 @@ fi
 echo "starting $(basename "$MODEL") on port $PORT ..."
 # --jinja is what makes tool calling work: it uses the model's own chat
 # template, which is where the tool-call format lives.
+if [ "$NGL" = "0" ]; then
+  # Same lesson as the vision model: -ngl 0 alone still lets the CUDA
+  # build touch the card. Hiding the GPU entirely is what actually keeps
+  # a CPU model off it — vital when the big model owns nearly all VRAM.
+  exec env CUDA_VISIBLE_DEVICES="" "$LLAMA" -m "$MODEL" --host 127.0.0.1 \
+    --port "$PORT" -c "$CTX" --jinja
+fi
 exec "$LLAMA" -m "$MODEL" --host 127.0.0.1 --port "$PORT" \
   -ngl "$NGL" -c "$CTX" --jinja
