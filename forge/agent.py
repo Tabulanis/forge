@@ -50,6 +50,11 @@ MAX_RED_BOUNCES = 3        # times we refuse "done" while the last run failed
 
 COMPACT_AT = 0.70          # start compacting at 70% full
 COMPACT_KEEP = 0.25        # after compacting, recent turns may fill 25%
+# Don't compact unless the part being summarized is at least this many
+# tokens. When one long tool-heavy turn fills the window by itself, the
+# compactable prefix shrinks to almost nothing — squeezing it again every
+# step costs a model call each time and frees nothing.
+COMPACT_MIN_OLD = 512
 _CHARS_PER_TOKEN = 4       # rough estimate for sizing the kept tail
 
 SUMMARY_PROMPT = """You are condensing an agent work session to free memory.
@@ -325,6 +330,9 @@ class Agent:
             return None
 
         old, kept = self.history[:cut], self.history[cut:]
+        old_chars = sum(self._entry_chars(m) for m in old)
+        if old_chars < COMPACT_MIN_OLD * _CHARS_PER_TOKEN:
+            return None   # nothing meaningful left to squeeze — let it ride
 
         lines = []
         for m in old:

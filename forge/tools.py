@@ -49,6 +49,52 @@ def _machine_killer(command: str) -> str | None:
     return None
 
 
+def _lenient_replace(text: str, old: str, new: str) -> str | None:
+    """
+    Whitespace-forgiving fallback for edit_file.
+
+    Models — small ones constantly — reproduce the lines they want to change
+    with the wrong indentation, then miss, re-read, and miss again forever.
+    If the old text matches exactly one place in the file when comparing
+    line-by-line with whitespace stripped, that's an unambiguous edit: take
+    it, and shift the replacement to the file's real indentation.
+
+    Returns the new file text, or None when there's no single clear match
+    (zero or several) — ambiguity still refuses, same as the strict path.
+    """
+    hay = text.splitlines(keepends=True)
+    old_lines = old.splitlines()
+    while old_lines and not old_lines[0].strip():
+        old_lines.pop(0)
+    while old_lines and not old_lines[-1].strip():
+        old_lines.pop()
+    if not old_lines:
+        return None
+    needle = [l.strip() for l in old_lines]
+    n = len(needle)
+    matches = [i for i in range(len(hay) - n + 1)
+               if [hay[i + j].strip() for j in range(n)] == needle]
+    if len(matches) != 1:
+        return None
+    i = matches[0]
+
+    file_indent = len(hay[i]) - len(hay[i].lstrip())
+    given_indent = len(old_lines[0]) - len(old_lines[0].lstrip())
+    delta = file_indent - given_indent
+    out = []
+    for l in new.splitlines():
+        if not l.strip():
+            out.append("")
+        elif delta >= 0:
+            out.append(" " * delta + l)
+        else:
+            cur = len(l) - len(l.lstrip())
+            out.append(l[min(-delta, cur):])
+    matched = "".join(hay[i:i + n])
+    trail = "\n" if matched.endswith("\n") else ""
+    return "".join(hay[:i]) + "\n".join(out) + trail + "".join(hay[i + n:])
+
+
 @dataclass
 class Tool:
     name: str
@@ -74,6 +120,10 @@ class Workspace:
         # to touch a file that isn't in here — "read before you write" as a
         # hard rule instead of a polite request in the prompt.
         self.reads: set[Path] = set()
+        # Consecutive edit_file misses per file. Small models get stuck
+        # re-guessing the exact text forever; after a couple of misses the
+        # error starts telling them to rewrite the file instead.
+        self.edit_misses: dict[Path, int] = {}
 
     def resolve(self, path: str) -> Path:
         """Resolve a user/model-supplied path, refusing anything outside root."""
@@ -292,12 +342,30 @@ def build_tools(ws: Workspace) -> list[Tool]:
         text = f.read_text(encoding="utf-8")
         count = text.count(old)
         if count == 0:
-            return (f"Error: that exact text isn't in {ws.rel(f)}. "
-                    f"Read the file again — it may differ in whitespace or have changed.")
+            fixed = _lenient_replace(text, old, new)
+            if fixed is not None:
+                _backup(f)
+                f.write_text(fixed, encoding="utf-8")
+                ws.edit_misses.pop(f, None)
+                return (f"Edited {ws.rel(f)} (1 replacement — your text's "
+                        f"whitespace didn't match the file exactly, but it "
+                        f"matched one place clearly, so the edit was applied "
+                        f"at the file's real indentation)")
+            misses = ws.edit_misses.get(f, 0) + 1
+            ws.edit_misses[f] = misses
+            msg = (f"Error: that exact text isn't in {ws.rel(f)}. "
+                   f"Read the file again — it may differ in whitespace or have changed.")
+            if misses >= 2:
+                msg += (f" You have now missed {misses} times on this file. "
+                        f"Stop trying to patch it: read it once more, then use "
+                        f"write_file to replace the WHOLE file with the "
+                        f"corrected version in one go.")
+            return msg
         if count > 1 and not replace_all:
             return (f"Error: found {count} matches in {ws.rel(f)}. "
                     f"Add more surrounding context to make it unique, or pass replace_all=true.")
         _backup(f)
+        ws.edit_misses.pop(f, None)
         f.write_text(text.replace(old, new) if replace_all else text.replace(old, new, 1),
                      encoding="utf-8")
         return f"Edited {ws.rel(f)} ({count if replace_all else 1} replacement(s))"
