@@ -413,6 +413,10 @@ class Agent:
                 self.history.append({
                     "role": "tool_result", "id": call.id, "content": msg, "is_error": True,
                 })
+                # A decline counts as a failure for the broken-record guard:
+                # asking again with the same arguments must not restart a
+                # long permission wait.
+                self._last_failed_call = fingerprint
                 yield Event(kind="tool_result", tool=call.name, text="declined")
                 return
 

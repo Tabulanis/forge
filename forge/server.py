@@ -397,24 +397,33 @@ def get_doctor():
                         "detail": c.detail, "fix": c.fix} for c in checks]}
 
 
+
+def _page(name: str) -> FileResponse:
+    """Serve an HTML page with caching off. These pages are a few KB and
+    change when Forge updates — a browser showing last week's cached copy
+    of the chat page is how 'I fixed it' and 'it's still broken' happen
+    at the same time."""
+    return FileResponse(WEB_DIR / name,
+                        headers={"Cache-Control": "no-store"})
+
 @app.get("/help")
 def help_page():
-    return FileResponse(WEB_DIR / "help.html")
+    return _page("help.html")
 
 
 @app.get("/")
 def index():
-    return FileResponse(WEB_DIR / "index.html")
+    return _page("index.html")
 
 
 @app.get("/bricks")
 def bricks_page():
-    return FileResponse(WEB_DIR / "bricks.html")
+    return _page("bricks.html")
 
 
 @app.get("/chat")
 def chat_page():
-    return FileResponse(WEB_DIR / "chat.html")
+    return _page("chat.html")
 
 
 if WEB_DIR.exists():

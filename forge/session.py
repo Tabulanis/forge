@@ -64,6 +64,10 @@ class Session:
         self.cond = threading.Condition()
         self.pending: PendingPermission | None = None
         self.busy = False
+        # Set when a permission request times out unanswered: nobody is
+        # watching this session right now, so further asks this message
+        # auto-refuse instantly instead of stacking five-minute waits.
+        self.unattended = False
         self.lock = threading.Lock()
         self._build_agent(cfg)
 
@@ -96,6 +100,11 @@ class Session:
         an approval. Silence must never be read as consent when the thing
         on the other end can edit files and run commands.
         """
+        if self.unattended:
+            self.emit("note", {"text": f"Nobody answered the last permission "
+                                       f"request, so '{summary}' was refused "
+                                       f"without waiting."})
+            return False
         req = PendingPermission(id=uuid.uuid4().hex[:8], tool=tool,
                                 args=args, summary=summary)
         self.pending = req
@@ -104,6 +113,7 @@ class Session:
         answered = req.answered.wait(timeout=PERMISSION_TIMEOUT)
         self.pending = None
         if not answered:
+            self.unattended = True
             self.emit("note", {"text": "No answer in time — treating that as no."})
             return False
         return req.allowed
@@ -153,6 +163,7 @@ class Session:
                 self.emit("note", {"text": "Still working on the last one."})
                 return
             self.busy = True
+        self.unattended = False   # someone just typed — they're watching again
         self.last_used = time.time()
         try:
             for ev in self.agent.run(text, ask=self.ask_permission):
@@ -193,7 +204,11 @@ class SessionStore:
                 if s.model_name != cfg.get("active_model"):
                     s.reload_model(cfg)
                 return s
-            sid = session_id or uuid.uuid4().hex[:12]
+            # Unknown ids (a browser remembering a session from before a
+            # restart) get a FRESH id, never the stale one back: the reply
+            # carrying a new id is how the page knows to reconnect its
+            # event stream.
+            sid = uuid.uuid4().hex[:12]
             ws = Path(workspace or Path.home()).expanduser()
             if not ws.is_dir():
                 ws = Path.home()

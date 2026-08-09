@@ -167,9 +167,13 @@ function md(t) {
 }
 
 function render(e) {
-  // the server guarantees each event arrives once, in order — the cursor
-  // just tells a reconnecting page where to resume
-  if (typeof e.seq === 'number') cursor = Math.max(cursor, e.seq + 1);
+  // The stream can legitimately replay after a reconnect (the browser
+  // retries with the URL it was built with, cursor and all) — drop
+  // anything already rendered instead of showing the chat twice.
+  if (typeof e.seq === 'number') {
+    if (e.seq < cursor) return;
+    cursor = e.seq + 1;
+  }
 
   if (e.kind === 'user')        el('msg me', esc(e.text));
   else if (e.kind === 'text')   el('msg bot', md(e.text));
@@ -212,12 +216,37 @@ function setWorking(on) {
   if (on) el('working dots', 'working');
 }
 
+let reconnectTimer = null;
 function connect() {
   if (es) es.close();
   es = new EventSource(q('/api/stream/' + SESSION + '?since=' + cursor));
   es.onmessage = m => { try { render(JSON.parse(m.data)); } catch (_) {} };
-  es.onerror = () => { /* EventSource retries on its own — that's why we use it */ };
+  // Reconnect ourselves with the CURRENT cursor rather than letting the
+  // browser retry the original URL forever — a page that slept through
+  // the end of a turn resumes exactly where it left off.
+  es.onerror = () => {
+    es.close();
+    clearTimeout(reconnectTimer);
+    reconnectTimer = setTimeout(() => { if (SESSION) connect(); }, 2000);
+  };
 }
+
+// The spinner's word is not enough: if the "done" event was lost while the
+// tablet slept, ask the server whether the agent is actually still busy.
+// The server saying busy:false is ground truth — re-enable sending.
+setInterval(async () => {
+  if (!working || !SESSION) return;
+  try {
+    const d = await api('/api/sessions');
+    const mine = (d.sessions || []).find(s => s.id === SESSION);
+    if (!mine || !mine.busy) setWorking(false);
+  } catch (_) { /* offline — keep the spinner, the watchdog will retry */ }
+}, 8000);
+
+// Waking from sleep: reconnect immediately instead of waiting for a retry.
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && SESSION) connect();
+});
 
 async function send() {
   const text = $('box').value.trim();
@@ -226,19 +255,30 @@ async function send() {
   $('box').style.height = 'auto';
   setWorking(true);
   try {
+    // A send over a connection that died while the tablet slept can hang
+    // for minutes with no error. 15 seconds is generous for a LAN POST;
+    // after that, fail loudly and give the user their send button back.
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), 15000);
     const r = await api('/api/chat', {
       method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ message:text, session:SESSION, workspace:WORKSPACE })
-    });
+      body: JSON.stringify({ message:text, session:SESSION, workspace:WORKSPACE }),
+      signal: ctl.signal
+    }).finally(() => clearTimeout(timer));
     if (r.session !== SESSION) {
       SESSION = r.session;
       localStorage.setItem('forge-session', SESSION);
       connect();
+    } else if (!es || es.readyState === 2) {
+      connect();               // stream died at some point — reattach
     }
     $('mModel').textContent = r.model;
     $('mWs').textContent = r.workspace;
   } catch (err) {
-    el('err', 'Could not send: ' + err.message);
+    el('err', err.name === 'AbortError'
+      ? 'The server didn\'t answer in time — your message was put back. Try again.'
+      : 'Could not send: ' + err.message);
+    $('box').value = text;          // don't eat what they typed
     setWorking(false);
   }
 }
