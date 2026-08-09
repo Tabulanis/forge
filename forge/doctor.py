@@ -114,6 +114,17 @@ def run_checks() -> list[Check]:
             r = httpx.get(f"{base}/models", timeout=3.0)
             if r.status_code == 200:
                 out.append(Check("Model server", OK, f"Answering at {base}"))
+            elif r.status_code == 503:
+                # llama-server binds its port immediately and serves 503 until
+                # the weights finish loading — a minute or more for a 30B.
+                # Telling someone to start it again here is the worst advice
+                # available: a second copy fights the first for the card.
+                out.append(Check("Model server", WARN,
+                                 f"{base} is up but still loading the model. "
+                                 f"Big models take a minute or two.",
+                                 "Wait, then run: forge doctor     "
+                                 "(don't start it again — two copies fight "
+                                 "over the graphics card)"))
             else:
                 out.append(Check("Model server", FAIL,
                                  f"{base} replied {r.status_code}",
