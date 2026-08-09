@@ -203,6 +203,17 @@ class Agent:
                     self._system(), self.history, self.tool_schemas
                 )
             except Exception as e:
+                # A request bigger than the model's window comes back as a
+                # 400. That's recoverable: shed old tool output and go
+                # again. Only a trim that actually cut something earns a
+                # retry, so an unrelated 400 still surfaces as an error.
+                msg = str(e)
+                if ("400" in msg or "context" in msg.lower()) \
+                        and self._trim_tool_results(keep_recent=4):
+                    yield Event(kind="note",
+                                text="Hit the model's memory ceiling — trimmed "
+                                     "older tool outputs and retrying.")
+                    continue
                 yield Event(kind="error", text=f"Model call failed: {e}")
                 return
 
@@ -298,6 +309,32 @@ class Agent:
             return len(m.get("text") or "") + len(args) + 40 * len(calls)
         return len(str(m.get("content") or ""))
 
+    def _trim_tool_results(self, keep_recent: int = 8) -> int:
+        """
+        Emergency valve for a single turn that outgrows the window: truncate
+        the bodies of older tool outputs in place. Pairing stays intact —
+        every tool_use keeps its tool_result, just shorter — so any
+        provider's replay format survives. Recent entries are left alone;
+        they're what the model is actively working from.
+
+        Returns how many outputs were cut.
+        """
+        horizon = max(0, len(self.history) - keep_recent)
+        idxs = [i for i, m in enumerate(self.history[:horizon])
+                if m.get("role") == "tool_result"
+                and not m.get("_trimmed")
+                and len(str(m.get("content") or "")) > 600]
+        for i in idxs:
+            c = str(self.history[i]["content"])
+            self.history[i]["content"] = (
+                c[:300] + "\n…(older output trimmed to save memory — "
+                          "run the command again if you need the rest)")
+            self.history[i]["_trimmed"] = True
+        if idxs:
+            self._ctx_used = sum(self._entry_chars(m) for m in self.history) \
+                // _CHARS_PER_TOKEN
+        return len(idxs)
+
     def _maybe_compact(self) -> str | None:
         """
         Condense older history when the context window is filling up.
@@ -326,13 +363,20 @@ class Agent:
                 break
         if cut is None and user_idxs:
             cut = user_idxs[-1]          # keep at least the current turn
-        if not cut:                       # nothing older than the cut point
+        if cut is None:                   # no user turn to anchor to
             return None
 
         old, kept = self.history[:cut], self.history[cut:]
         old_chars = sum(self._entry_chars(m) for m in old)
-        if old_chars < COMPACT_MIN_OLD * _CHARS_PER_TOKEN:
-            return None   # nothing meaningful left to squeeze — let it ride
+        if cut == 0 or old_chars < COMPACT_MIN_OLD * _CHARS_PER_TOKEN:
+            # Nothing meaningful before the current turn — it's one long
+            # task filling the window by itself. Shrink its older tool
+            # outputs instead of summarizing a prefix that's already tiny.
+            cut_n = self._trim_tool_results()
+            if cut_n:
+                return (f"One long task filled the memory — trimmed "
+                        f"{cut_n} older tool output(s) to make room.")
+            return None
 
         lines = []
         for m in old:
