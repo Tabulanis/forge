@@ -39,6 +39,13 @@ _CLAIMS_ACTION = re.compile(
     r"(created|wrote|saved|edited|updated|added|deleted|renamed|fixed|ran|installed|made)\b"
 )
 
+# Files that look like they DEFINE success rather than implement it. A model
+# that can't make a test pass will sooner or later "fix" the test — seen
+# live: cornered on one failing case, it overwrote the suite with a stub
+# and declared victory. Changes to these get one bounce and are always
+# reported to the user.
+_TEST_FILE = re.compile(r"(^|/)(test_[^/]*|[^/]+_test\.[^./]+|conftest\.py)$")
+
 NOTES_LIMIT_CHARS = 4000  # a notebook longer than this gets tail-truncated
 
 # Memory compaction: when the conversation has eaten this fraction of the
@@ -86,6 +93,9 @@ How to work:
   cause, run again — repeat until it passes or you can say precisely why
   the failure is expected. Finishing with a known failure and no
   explanation is not an option.
+- Never weaken, stub out, or rewrite tests to make them pass — passing a
+  test you edited proves nothing. Fix the code the tests describe. If you
+  believe a test itself is wrong, leave it failing and tell the user why.
 - Use run_command for anything real: git, builds, tests, package managers.
 - run_command has no screen or keyboard. Interactive or full-screen
   programs (games, editors, TUIs) will fail with terminal errors there —
@@ -189,8 +199,10 @@ class Agent:
         self._tools_ran = False
         self._unverified_change = False
         self._last_run_failed = False
+        self._tests_touched: list[str] = []
         nudged = False
         verify_nudged = False
+        tests_nudged = False
         red_bounces = 0
 
         for _ in range(self.max_steps):
@@ -265,6 +277,23 @@ class Agent:
                 # tasks whose failing state is the honest answer (a bug
                 # report, a broken third-party dependency), not as a way
                 # for the model to shrug.
+                # Changed the yardstick instead of the work? One bounce to
+                # own up or undo; either way the user gets told below.
+                if self._tests_touched and not tests_nudged:
+                    tests_nudged = True
+                    names = ", ".join(sorted(set(self._tests_touched)))
+                    self.history.append({
+                        "role": "user",
+                        "content": "Automatic harness check: you modified "
+                                   f"test file(s) this message: {names}. "
+                                   "Passing tests you edited proves nothing. "
+                                   "If changing them wasn't explicitly the "
+                                   "task, restore them with undo_file and "
+                                   "make the real code pass. If it WAS the "
+                                   "task, keep them and say so plainly in "
+                                   "your answer.",
+                    })
+                    continue
                 if self._last_run_failed and red_bounces < MAX_RED_BOUNCES:
                     red_bounces += 1
                     self.history.append({
@@ -279,6 +308,12 @@ class Agent:
                                    f" (Reminder {red_bounces} of {MAX_RED_BOUNCES}.)",
                     })
                     continue
+                if self._tests_touched:
+                    names = ", ".join(sorted(set(self._tests_touched)))
+                    yield Event(kind="note",
+                                text=f"Heads up: test file(s) were modified "
+                                     f"this turn: {names}. Results proven by "
+                                     f"edited tests don't count on their own.")
                 yield Event(kind="done", usage=reply.usage)
                 return
 
@@ -495,6 +530,12 @@ class Agent:
         if not failed:
             if call.name in ("write_file", "edit_file"):
                 self._unverified_change = True
+                p = str(call.args.get("path", ""))
+                if _TEST_FILE.search(p):
+                    self._tests_touched.append(p)
+            elif call.name == "undo_file":
+                p = str(call.args.get("path", ""))
+                self._tests_touched = [t for t in self._tests_touched if t != p]
             elif call.name in ("run_command", "read_file"):
                 self._unverified_change = False
         # Red/green tracking: only actual command runs count. A failed file
