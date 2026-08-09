@@ -42,6 +42,33 @@ the beta path.
 **Still blocked on the user:** no ANTHROPIC_API_KEY on this machine — the
 Claude path is wired and stub-tested but has not hit the real API. First
 real test: `export ANTHROPIC_API_KEY=...` then `forge` → `/model claude`.
+The user also plans to add Gemini + other providers later; the router
+(`wm-llama` manager.py in `~/wickerman`) has a gemini translation layer that
+could be cribbed, or add a GeminiProvider in providers.py.
+
+**Also done this session — "Fable-izing" the harness** (discipline enforced
+in code so any model benefits, esp. local ones):
+
+- `tools.py`: Workspace tracks files read this session (`ws.reads`);
+  edit_file refuses files not yet read, with a corrective error the model
+  can follow. New `save_note` tool appends one-line lessons to
+  `FORGE-NOTES.md` in the workspace (append-only, no permission prompt).
+- `agent.py`: (a) system prompt now re-read each turn and carries the
+  project notebook (tail-truncated at 4000 chars); (b) broken-record
+  detector — an identical repeat of the immediately-preceding *failed* tool
+  call is refused with advice instead of executed; (c) liar catcher — a
+  final answer claiming past-tense actions when zero tools ran this message
+  gets bounced back once ("do it now or say you meant earlier work");
+  (d) notebook guidance added to SYSTEM_PROMPT.
+- `cli.py` / `session.py`: pass `notes_path=<workspace>/FORGE-NOTES.md`.
+
+Verified: 4 deterministic scripted-provider tests (block-then-recover edit,
+repeat refusal, liar bounce, notebook injection) + live qwen30b run that
+read → edited → ran-to-verify and honored a planted notebook preference.
+
+Ideas parked for next round: auto-verify pass before "done" (config-gated),
+big/little model routing (tiny model for summaries), GBNF grammar-forced
+tool calls for models worse than qwen at tool syntax.
 
 ## Gotchas
 

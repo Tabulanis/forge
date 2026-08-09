@@ -77,6 +77,7 @@ class Session:
             tools=build_tools(ws) + build_media_tools(ws, mc),
             max_steps=int(cfg["agent"].get("max_steps", 40)),
             permission_mode=cfg["agent"].get("permission_mode", "ask"),
+            notes_path=ws.root / "FORGE-NOTES.md",
         )
 
     def reload_model(self, cfg: dict) -> None:

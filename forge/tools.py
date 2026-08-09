@@ -45,6 +45,10 @@ class Workspace:
 
     def __init__(self, root: str | Path):
         self.root = Path(root).resolve()
+        # Files the model has actually seen this session. edit_file refuses
+        # to touch a file that isn't in here — "read before you write" as a
+        # hard rule instead of a polite request in the prompt.
+        self.reads: set[Path] = set()
 
     def resolve(self, path: str) -> Path:
         """Resolve a user/model-supplied path, refusing anything outside root."""
@@ -196,6 +200,7 @@ def build_tools(ws: Workspace) -> list[Tool]:
             lines = f.read_text(encoding="utf-8", errors="replace").splitlines()
         except Exception as e:
             return f"Error reading {ws.rel(f)}: {e}"
+        ws.reads.add(f)
         window = lines[offset:offset + limit]
         if not window:
             return f"(no lines in range; file has {len(lines)} lines)"
@@ -211,6 +216,8 @@ def build_tools(ws: Workspace) -> list[Tool]:
         f.parent.mkdir(parents=True, exist_ok=True)
         existed = f.exists()
         f.write_text(content, encoding="utf-8")
+        # Writing the whole file counts as knowing its contents.
+        ws.reads.add(f)
         verb = "Overwrote" if existed else "Created"
         return f"{verb} {ws.rel(f)} ({len(content.splitlines())} lines)"
 
@@ -218,6 +225,10 @@ def build_tools(ws: Workspace) -> list[Tool]:
         f = ws.resolve(path)
         if not f.exists():
             return f"Error: no such file: {ws.rel(f)}"
+        if f not in ws.reads:
+            return (f"Error: you haven't read {ws.rel(f)} this session, so this "
+                    f"edit was blocked. Use read_file on it first, then edit "
+                    f"based on what's actually there.")
         text = f.read_text(encoding="utf-8")
         count = text.count(old)
         if count == 0:
@@ -273,6 +284,24 @@ def build_tools(ws: Workspace) -> list[Tool]:
                 except Exception:
                     continue
         return "\n".join(hits) if hits else "(no matches)"
+
+    def save_note(note: str) -> str:
+        """Append one lesson to the project notebook.
+
+        Append-only and pinned to one file, so it doesn't need a permission
+        prompt — the worst a confused model can do is write a bad note.
+        """
+        note = " ".join(note.split())
+        if not note:
+            return "Error: empty note."
+        nb = ws.root / "FORGE-NOTES.md"
+        header = "" if nb.exists() else (
+            "# Project notebook\n\nLessons this project has taught its agents. "
+            "Loaded at the start of every session.\n\n")
+        with nb.open("a", encoding="utf-8") as f:
+            f.write(header + f"- {note}\n")
+        ws.reads.add(nb)
+        return f"Noted in FORGE-NOTES.md: {note[:80]}"
 
     def run_command(command: str, timeout: int = DEFAULT_TIMEOUT) -> str:
         try:
@@ -362,6 +391,22 @@ def build_tools(ws: Workspace) -> list[Tool]:
                 "required": ["pattern"],
             },
             run=guard(search),
+        ),
+        Tool(
+            name="save_note",
+            description="Write one lesson to the project notebook (FORGE-NOTES.md), "
+                        "which every future session reads at startup. Use it when you "
+                        "learn something durable the hard way: a command that must be "
+                        "run a particular way, a gotcha in this codebase, a correction "
+                        "from the user. One short sentence per note. Don't record "
+                        "things the code itself already says.",
+            parameters={
+                "type": "object",
+                "properties": {"note": {"type": "string",
+                                        "description": "One sentence worth remembering"}},
+                "required": ["note"],
+            },
+            run=guard(save_note),
         ),
         Tool(
             name="run_command",
