@@ -207,6 +207,46 @@ def _extras(cfg: dict) -> list[Check]:
         except Exception:
             pass
 
+    # -- exact math (compute tool) --------------------------------------
+    try:
+        import sympy  # noqa: F401
+        out.append(Check("Exact math (compute)", OK, "sympy is available"))
+    except ImportError:
+        out.append(Check("Exact math (compute)", WARN,
+                         "sympy missing — the compute tool will fail",
+                         "Install it:  ~/forge/.venv/bin/pip install sympy"))
+
+    # -- saved conversations --------------------------------------------
+    sess_dir = Path.home() / ".forge" / "sessions"
+    n = len(list(sess_dir.glob("*.json"))) if sess_dir.is_dir() else 0
+    out.append(Check("Saved conversations", OK,
+                     f"{n} stored — they survive restarts and reboots"))
+
+    # -- self-starting services -----------------------------------------
+    if shutil.which("systemctl"):
+        try:
+            r = subprocess.run(
+                ["systemctl", "--user", "is-enabled",
+                 "forge-model-big", "forge-model-vision", "forge-dash"],
+                capture_output=True, text=True, timeout=5)
+            states = (r.stdout or "").split()
+            if states.count("enabled") == 3:
+                out.append(Check("Start at boot", OK,
+                                 "Model, vision and dashboard all start themselves"))
+            else:
+                out.append(Check("Start at boot", WARN,
+                                 f"Some services not enabled: {' '.join(states)}",
+                                 "systemctl --user enable forge-model-big "
+                                 "forge-model-vision forge-dash"))
+        except Exception:
+            pass
+
+    # -- kid mode --------------------------------------------------------
+    if cfg.get("kid_mode"):
+        out.append(Check("Kid mode", OK,
+                         "ON — chat only, commands fenced to the workspace, "
+                         "settings locked"))
+
     return out
 
 

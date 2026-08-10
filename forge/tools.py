@@ -51,6 +51,31 @@ def _machine_killer(command: str) -> str | None:
     return None
 
 
+# Paths a fenced command may still reference: system binaries and libraries,
+# nothing personal. Everything else outside the workspace is refused.
+_FENCE_ALLOWED = ("/usr/", "/bin/", "/sbin/", "/lib/", "/lib64/", "/opt/",
+                  "/dev/null", "/proc/self")
+
+
+def _fence_violation(command: str, root: Path) -> str | None:
+    """In kid mode, find the first thing in a command that reaches outside
+    the workspace: home shortcuts, parent-hopping, absolute paths that
+    aren't system locations. Deterministic and strict — a false refusal
+    costs a reworded command; a false allow costs someone's files."""
+    rootstr = str(root)
+    for tok in _re.findall(r"[^\s;|&<>()'\"=]+", command):
+        if tok.startswith("~") or "$HOME" in tok or "${HOME" in tok:
+            return tok
+        if ".." in tok.split("/"):
+            return tok
+        if tok.startswith("/"):
+            if tok == rootstr or tok.startswith(rootstr + "/"):
+                continue
+            if not tok.startswith(_FENCE_ALLOWED):
+                return tok
+    return None
+
+
 def _lenient_replace(text: str, old: str, new: str) -> str | None:
     """
     Whitespace-forgiving fallback for edit_file.
@@ -246,8 +271,13 @@ def build_media_tools(ws: Workspace, mc) -> list[Tool]:
     return tools
 
 
-def build_tools(ws: Workspace) -> list[Tool]:
-    """Construct the toolset bound to one workspace."""
+def build_tools(ws: Workspace, fenced: bool = False) -> list[Tool]:
+    """Construct the toolset bound to one workspace.
+
+    fenced=True (kid mode) additionally confines run_command to the
+    workspace: the file tools were always fenced, but shell commands could
+    reach anything. With the fence, a borrowed tablet can only make a mess
+    inside the folder it was given."""
 
     def guard(fn):
         """Turn a workspace violation into readable text for the model.
@@ -440,6 +470,12 @@ def build_tools(ws: Workspace) -> list[Tool]:
             return (f"Error: blocked — {blocked}. This command could damage the "
                     f"whole machine, so it's refused even in auto mode. If the "
                     f"user genuinely wants it, they can run it themselves.")
+        if fenced:
+            bad = _fence_violation(command, ws.root)
+            if bad:
+                return (f"Error: kid mode is on, and this command reaches "
+                        f"outside the workspace ({bad!r}). Work only inside "
+                        f"{ws.root} — rewrite the command with relative paths.")
         try:
             r = subprocess.run(
                 command, shell=True, cwd=str(ws.root),

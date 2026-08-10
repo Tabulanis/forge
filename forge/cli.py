@@ -110,7 +110,8 @@ def make_agent(cfg: dict, workspace: Path) -> Agent:
             summarizer = None
     return Agent(
         provider=provider,
-        tools=build_tools(ws) + build_media_tools(ws, mc),
+        tools=build_tools(ws, fenced=bool(cfg.get("kid_mode")))
+              + build_media_tools(ws, mc),
         max_steps=int(cfg["agent"].get("max_steps", 40)),
         permission_mode=cfg["agent"].get("permission_mode", "ask"),
         notes_path=ws.root / "FORGE-NOTES.md",

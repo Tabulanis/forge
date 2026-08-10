@@ -140,7 +140,8 @@ class Session:
                 summarizer = None
         self.agent = Agent(
             provider=provider,
-            tools=build_tools(ws) + build_media_tools(ws, mc),
+            tools=build_tools(ws, fenced=bool(cfg.get("kid_mode")))
+                  + build_media_tools(ws, mc),
             max_steps=int(cfg["agent"].get("max_steps", 40)),
             permission_mode=cfg["agent"].get("permission_mode", "ask"),
             notes_path=ws.root / "FORGE-NOTES.md",
@@ -344,6 +345,12 @@ class SessionStore:
             # defaulting that fence to everything-you-own was fine for the
             # owner, and wrong for the ten-year-old borrowing the tablet.
             # Anyone can still pick any folder deliberately via New.
+            # In kid mode there is no picking: everything lives in Playground.
+            if cfg.get("kid_mode"):
+                play = Path.home() / "Playground"
+                w = Path(workspace).expanduser().resolve() if workspace else play
+                if w != play and play not in w.parents:
+                    workspace = None
             if workspace:
                 ws = Path(workspace).expanduser()
                 if not ws.is_dir():
@@ -361,15 +368,20 @@ class SessionStore:
         return self.sessions.get(session_id)
 
     def listing(self) -> list[dict]:
-        return [{
-            "id": s.id,
-            "workspace": str(s.workspace),
-            "model": s.model_name,
-            "busy": s.busy,
-            "messages": len(s.agent.history),
-            "last_used": s.last_used,
-        } for s in sorted(self.sessions.values(),
-                          key=lambda x: -x.last_used)]
+        out = []
+        for s in sorted(self.sessions.values(), key=lambda x: -x.last_used):
+            first = next((e.get("text", "") for e in s.log
+                          if e.get("kind") == "user"), "")
+            out.append({
+                "id": s.id,
+                "workspace": str(s.workspace),
+                "model": s.model_name,
+                "busy": s.busy,
+                "messages": len(s.agent.history),
+                "last_used": s.last_used,
+                "title": first[:60] or "(empty chat)",
+            })
+        return out
 
     def drop(self, session_id: str) -> bool:
         with self.lock:

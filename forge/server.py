@@ -38,6 +38,16 @@ WEB_DIR = Path(__file__).parent / "web"
 STORE = SessionStore()
 
 
+def require_not_kid() -> None:
+    """Settings-touching routes refuse in kid mode. The switch lives only
+    in ~/.forge/config.yaml on the computer itself — nothing reachable
+    from a tablet can flip it."""
+    if load_config().get("kid_mode"):
+        raise HTTPException(403, "Kid mode is on — settings are locked. "
+                                 "Edit ~/.forge/config.yaml at the computer "
+                                 "to change this.")
+
+
 def require_token(request: Request,
                   x_forge_token: str | None = Header(default=None)) -> None:
     """
@@ -87,7 +97,7 @@ def get_config():
     return safe
 
 
-@app.post("/api/active", dependencies=[Depends(require_token)])
+@app.post("/api/active", dependencies=[Depends(require_token), Depends(require_not_kid)])
 def set_active(spec: ActiveSpec):
     cfg = load_config()
     if spec.name not in cfg["models"]:
@@ -97,7 +107,7 @@ def set_active(spec: ActiveSpec):
     return {"ok": True, "active_model": spec.name}
 
 
-@app.post("/api/models", dependencies=[Depends(require_token)])
+@app.post("/api/models", dependencies=[Depends(require_token), Depends(require_not_kid)])
 def upsert_model(spec: ModelSpec):
     cfg = load_config()
     entry = {
@@ -117,7 +127,7 @@ def upsert_model(spec: ModelSpec):
     return {"ok": True, "models": list(cfg["models"])}
 
 
-@app.delete("/api/models/{name}", dependencies=[Depends(require_token)])
+@app.delete("/api/models/{name}", dependencies=[Depends(require_token), Depends(require_not_kid)])
 def delete_model(name: str):
     cfg = load_config()
     if name not in cfg["models"]:
@@ -129,7 +139,7 @@ def delete_model(name: str):
     return {"ok": True}
 
 
-@app.post("/api/agent", dependencies=[Depends(require_token)])
+@app.post("/api/agent", dependencies=[Depends(require_token), Depends(require_not_kid)])
 def set_agent(spec: AgentSpec):
     cfg = load_config()
     if spec.max_steps is not None:
@@ -286,7 +296,7 @@ def sessions():
     return {"sessions": STORE.listing()}
 
 
-@app.delete("/api/sessions/{session_id}", dependencies=[Depends(require_token)])
+@app.delete("/api/sessions/{session_id}", dependencies=[Depends(require_token), Depends(require_not_kid)])
 def drop_session(session_id: str):
     return {"ok": STORE.drop(session_id)}
 
@@ -332,7 +342,7 @@ def get_pipelines():
     return {"pipelines": load_pipelines()}
 
 
-@app.post("/api/pipelines", dependencies=[Depends(require_token)])
+@app.post("/api/pipelines", dependencies=[Depends(require_token), Depends(require_not_kid)])
 def save_pipeline(spec: PipelineSpec):
     if not spec.name.strip():
         raise HTTPException(400, "A recipe needs a name")
@@ -342,7 +352,7 @@ def save_pipeline(spec: PipelineSpec):
     return {"ok": True, "pipelines": list(flows)}
 
 
-@app.delete("/api/pipelines/{name}", dependencies=[Depends(require_token)])
+@app.delete("/api/pipelines/{name}", dependencies=[Depends(require_token), Depends(require_not_kid)])
 def delete_pipeline(name: str):
     flows = load_pipelines()
     if name not in flows:

@@ -25,6 +25,12 @@ DEFAULT_CONFIG: dict[str, Any] = {
     # changes this; the CLI honors it on the next turn.
     "active_model": "claude",
 
+    # Kid mode: chat only. Locks every settings route in the dashboard,
+    # confines run_command to the workspace, and pins new chats to
+    # ~/Playground. Flip it here in the file, at the computer — on purpose,
+    # nothing reachable from a tablet can change it.
+    "kid_mode": False,
+
     # Named model configs. Add as many as you like — local ones get a
     # base_url pointing at whatever's serving them.
     "models": {

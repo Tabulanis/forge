@@ -208,6 +208,13 @@ class Agent:
         refused — safer than assuming yes.
         """
         self.history.append({"role": "user", "content": user_message})
+        # A session restored from disk wakes with no usage report, which
+        # would silence preventive compaction until the first reply — and
+        # a big restored history can overflow on the very first call.
+        # Estimate conservatively (code tokenizes ~3 chars/token, denser
+        # than prose) until a real report replaces this.
+        if self._ctx_used == 0 and len(self.history) > 3:
+            self._ctx_used = sum(self._entry_chars(m) for m in self.history) // 3
         self._last_failed_call = None
         self._tools_ran = False
         self._unverified_change = False
@@ -218,6 +225,7 @@ class Agent:
         tests_nudged = False
         red_bounces = 0
         server_retried = False
+        force_compacted = False
 
         for _ in range(self.max_steps):
             if self.stop_requested:
@@ -240,12 +248,22 @@ class Agent:
                 # again. Only a trim that actually cut something earns a
                 # retry, so an unrelated 400 still surfaces as an error.
                 msg = str(e)
-                if ("400" in msg or "context" in msg.lower()) \
-                        and self._trim_tool_results(keep_recent=4):
-                    yield Event(kind="note",
-                                text="Hit the model's memory ceiling — trimmed "
-                                     "older tool outputs and retrying.")
-                    continue
+                if "400" in msg or "context" in msg.lower():
+                    if self._trim_tool_results(keep_recent=4):
+                        yield Event(kind="note",
+                                    text="Hit the model's memory ceiling — trimmed "
+                                         "older tool outputs and retrying.")
+                        continue
+                    # Nothing left to trim: last resort, compact everything
+                    # before the current turn into a briefing. A session
+                    # must never be dead-ended by its own history. Once per
+                    # message — if even this doesn't fit, report honestly.
+                    if not force_compacted:
+                        force_compacted = True
+                        note = self._maybe_compact(force=True)
+                        if note:
+                            yield Event(kind="note", text=note + " (emergency)")
+                            continue
                 # A lone 5xx is usually a transient server stumble (seen
                 # live: a corrupted prompt-cache restore). One quiet retry
                 # after a breath; a second failure is reported honestly.
@@ -399,22 +417,44 @@ class Agent:
         Returns how many outputs were cut.
         """
         horizon = max(0, len(self.history) - keep_recent)
-        idxs = [i for i, m in enumerate(self.history[:horizon])
-                if m.get("role") == "tool_result"
-                and not m.get("_trimmed")
-                and len(str(m.get("content") or "")) > 600]
-        for i in idxs:
-            c = str(self.history[i]["content"])
-            self.history[i]["content"] = (
-                c[:300] + "\n…(older output trimmed to save memory — "
-                          "run the command again if you need the rest)")
-            self.history[i]["_trimmed"] = True
-        if idxs:
+        cut = 0
+        for i, m in enumerate(self.history[:horizon]):
+            if m.get("_trimmed"):
+                continue
+            if m.get("role") == "tool_result" \
+                    and len(str(m.get("content") or "")) > 600:
+                c = str(m["content"])
+                m["content"] = (
+                    c[:300] + "\n…(older output trimmed to save memory — "
+                              "run the command again if you need the rest)")
+                m["_trimmed"] = True
+                cut += 1
+            elif m.get("role") == "tool_use":
+                # The heaviest cargo rides in call arguments — write_file
+                # carries the entire file body. Old ones are dead weight.
+                shrunk = False
+                for call in (m.get("calls") or []):
+                    args = getattr(call, "args", None)
+                    if not isinstance(args, dict):
+                        continue
+                    for k, v in list(args.items()):
+                        if isinstance(v, str) and len(v) > 600:
+                            args[k] = v[:200] + "…(argument trimmed to save memory)"
+                            shrunk = True
+                if shrunk:
+                    # Anthropic replays assistant_blocks verbatim — they
+                    # still hold the untrimmed arguments. Dropping them
+                    # makes the provider rebuild from text+calls, so the
+                    # trim actually shrinks the request for every provider.
+                    m["assistant_blocks"] = None
+                    m["_trimmed"] = True
+                    cut += 1
+        if cut:
             self._ctx_used = sum(self._entry_chars(m) for m in self.history) \
                 // _CHARS_PER_TOKEN
-        return len(idxs)
+        return cut
 
-    def _maybe_compact(self) -> str | None:
+    def _maybe_compact(self, force: bool = False) -> str | None:
         """
         Condense older history when the context window is filling up.
 
@@ -422,32 +462,41 @@ class Agent:
         None. The cut always lands at the start of a user turn, so a
         tool_use never gets separated from its tool_results — that pairing
         is load-bearing for every provider's replay format.
+
+        force=True is the last resort after the server has already refused
+        a request as too big: compact regardless of thresholds, keeping
+        only the current turn.
         """
         limit = 0
         try:
             limit = int(self.provider.context_limit())
         except Exception:
             pass
-        if limit <= 0 or self._ctx_used < limit * COMPACT_AT:
+        if limit <= 0:
+            limit = 8192 if force else 0
+        if not force and (limit <= 0 or self._ctx_used < limit * COMPACT_AT):
             return None
 
         keep_chars = int(limit * COMPACT_KEEP * _CHARS_PER_TOKEN)
         user_idxs = [i for i, m in enumerate(self.history)
                      if m.get("role") == "user"]
         cut = None
-        for i in user_idxs:
-            tail = sum(self._entry_chars(m) for m in self.history[i:])
-            if tail <= keep_chars:
-                cut = i
-                break
-        if cut is None and user_idxs:
-            cut = user_idxs[-1]          # keep at least the current turn
+        if force:
+            cut = user_idxs[-1] if user_idxs else None
+        else:
+            for i in user_idxs:
+                tail = sum(self._entry_chars(m) for m in self.history[i:])
+                if tail <= keep_chars:
+                    cut = i
+                    break
+            if cut is None and user_idxs:
+                cut = user_idxs[-1]      # keep at least the current turn
         if cut is None:                   # no user turn to anchor to
             return None
 
         old, kept = self.history[:cut], self.history[cut:]
         old_chars = sum(self._entry_chars(m) for m in old)
-        if cut == 0 or old_chars < COMPACT_MIN_OLD * _CHARS_PER_TOKEN:
+        if not force and (cut == 0 or old_chars < COMPACT_MIN_OLD * _CHARS_PER_TOKEN):
             # Nothing meaningful before the current turn — it's one long
             # task filling the window by itself. Shrink its older tool
             # outputs instead of summarizing a prefix that's already tiny.
@@ -471,8 +520,9 @@ class Agent:
             elif role == "tool_result":
                 lines.append(f"  -> {str(m.get('content',''))[:400]}")
         transcript = "\n".join(lines)
-        # The summarization call must itself fit in the window.
-        max_transcript = int(limit * 0.5 * _CHARS_PER_TOKEN)
+        # The summarization call must itself fit in the window — sized for
+        # code-dense content, which tokenizes far denser than prose.
+        max_transcript = int(limit * 0.25 * _CHARS_PER_TOKEN)
         if len(transcript) > max_transcript:
             transcript = ("(earliest part omitted)\n"
                           + transcript[-max_transcript:])

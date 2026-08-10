@@ -108,6 +108,7 @@
 
 <header>
   <div class="brand">FOR<span>GE</span></div>
+  <button id="chatsBtn" title="Your conversations">☰</button>
   <button id="newBtn">New</button>
   <div class="meta">
     <div id="mModel">—</div>
@@ -311,6 +312,48 @@ $('box').addEventListener('keydown', e => {
     e.preventDefault(); send();
   }
 });
+// The conversation drawer: saved sessions survive restarts server-side;
+// this is how you get back into one from the tablet.
+$('chatsBtn').onclick = async () => {
+  const open = document.querySelector('.drawer');
+  if (open) { open.remove(); return; }
+  let d;
+  try { d = await api('/api/sessions'); } catch (_) { return; }
+  const panel = document.createElement('div');
+  panel.className = 'drawer';
+  panel.style.cssText = 'position:fixed;top:52px;left:8px;right:8px;max-height:60vh;'
+    + 'overflow-y:auto;background:var(--panel,#1a2230);border:1px solid #334;'
+    + 'border-radius:12px;padding:8px;z-index:50;box-shadow:0 8px 30px rgba(0,0,0,.5);';
+  for (const s of (d.sessions || [])) {
+    const row = document.createElement('div');
+    const when = new Date(s.last_used * 1000);
+    row.style.cssText = 'padding:10px 12px;border-radius:8px;cursor:pointer;'
+      + (s.id === SESSION ? 'background:rgba(120,180,255,.12);' : '');
+    row.innerHTML = '<div style="font-size:14px">' + esc(s.title) + '</div>'
+      + '<div style="font-size:11px;opacity:.6">' + esc(s.workspace.split('/').pop() || s.workspace)
+      + ' · ' + when.toLocaleTimeString([], {hour:'numeric',minute:'2-digit'})
+      + (s.busy ? ' · working' : '') + '</div>';
+    row.onclick = () => {
+      panel.remove();
+      if (s.id === SESSION) return;
+      SESSION = s.id;
+      localStorage.setItem('forge-session', SESSION);
+      WORKSPACE = s.workspace;
+      localStorage.setItem('forge-workspace', WORKSPACE);
+      $('mWs').textContent = WORKSPACE;
+      log.innerHTML = '';
+      cursor = 0;
+      setWorking(false);
+      connect();               // replays the whole conversation from the server
+    };
+    panel.appendChild(row);
+  }
+  if (!(d.sessions || []).length) {
+    panel.innerHTML = '<div style="padding:12px;opacity:.6">No saved conversations yet.</div>';
+  }
+  document.body.appendChild(panel);
+};
+
 $('newBtn').onclick = () => {
   if (!confirm('Start a fresh conversation?')) return;
   SESSION = null;
