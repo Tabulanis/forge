@@ -160,6 +160,7 @@ class Session:
             notes_path=ws.root / "FORGE-NOTES.md",
             summarizer=summarizer,
             superego=superego,
+            reads=ws.reads,
         )
 
     def reload_model(self, cfg: dict) -> None:

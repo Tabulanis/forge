@@ -55,6 +55,11 @@ NOTES_LIMIT_CHARS = 4000  # a notebook longer than this gets tail-truncated
 # the oldest tokens, and the model just starts forgetting. Compacting on
 # purpose, with a summary, beats forgetting at random.
 MAX_RED_BOUNCES = 3        # times we refuse "done" while the last run failed
+TRACE_EVERY = 20           # steps of one task between "walk it back" taps
+
+# Files she may talk about without having opened: naming one of these in a
+# final answer is fine; naming a .py she never read is guessing.
+_FILE_MENTION = re.compile(r"\b[\w./-]+\.(?:py|js|ts|html|css|json|yaml|yml|sh|toml)\b")
 
 # --- the superego -----------------------------------------------------
 # A sealed reviewer that judges the final answer against the evidence
@@ -73,7 +78,8 @@ answer's claim match the evidence of what actually happened?
 Bounce when: the answer claims success but the evidence shows failure or
 no verification; the answer's confidence is unearned (says "works
 perfectly" when nothing was run); the answer quietly ignores an error
-that appeared in the evidence.
+that appeared in the evidence; the answer contradicts a PRIOR CLAIM
+from earlier in the session without acknowledging that anything changed.
 
 Pass when: claims match evidence, or the answer honestly states what is
 unverified or broken. Honesty about failure PASSES — this is a check on
@@ -183,7 +189,8 @@ class Agent:
                  system_prompt: str = SYSTEM_PROMPT,
                  notes_path: Path | None = None,
                  summarizer: Provider | None = None,
-                 superego: Provider | None = None):
+                 superego: Provider | None = None,
+                 reads: set | None = None):
         self.provider = provider
         # Optional little brain for side-jobs (memory compaction). The big
         # model stays the fallback — a bad little model degrades to the old
@@ -193,6 +200,9 @@ class Agent:
         # SUPEREGO_PROMPT and an evidence digest only — deliberately given
         # no notebook and no history, so it cannot drift with the agent.
         self.superego = superego
+        # The workspace's live read-ledger (shared set of Paths). Lets the
+        # harness ask "did you actually open the file you're describing?"
+        self.reads = reads if reads is not None else set()
         self.tools = {t.name: t for t in tools}
         self.max_steps = max_steps
         self.permission_mode = permission_mode
@@ -266,9 +276,27 @@ class Agent:
         server_retried = False
         force_compacted = False
         superego_bounced = False
+        grounding_nudged = False
         turn_start = len(self.history) - 1   # index of this turn's user msg
 
-        for _ in range(self.max_steps):
+        for step in range(self.max_steps):
+            # The pal tap: on a long grind, hand her back her own trail
+            # and ask if it still leads anywhere. Deterministic, compact,
+            # and hers — the same digest the reviewer gets, minus verdicts.
+            if step and step % TRACE_EVERY == 0:
+                trace = self._evidence_digest(turn_start, None)
+                self.history.append({
+                    "role": "user",
+                    "content": "Automatic checkpoint — here is your own "
+                               "trail so far this task:\n" + trace +
+                               "\nWalk it back for a moment: is this still "
+                               "leading to what was asked? If yes, continue. "
+                               "If you're circling, change approach or say "
+                               "what's blocking you.",
+                })
+                yield Event(kind="note",
+                            text=f"Checkpoint at step {step}: handed her the "
+                                 f"trail to review.")
             if self.stop_requested:
                 self.stop_requested = False
                 yield Event(kind="note", text="Stopped — ready for your next message.")
@@ -366,6 +394,36 @@ class Agent:
                 # tasks whose failing state is the honest answer (a bug
                 # report, a broken third-party dependency), not as a way
                 # for the model to shrug.
+                # Naming files never opened this session is guessing by
+                # definition. One gentle question — a pal's "did you check?"
+                if not grounding_nudged:
+                    mentioned = set(_FILE_MENTION.findall(reply.text or ""))
+                    if mentioned:
+                        seen = {p.name for p in self.reads}
+                        for m in self.history[turn_start:]:
+                            if m.get("role") == "tool_result":
+                                seen |= set(_FILE_MENTION.findall(
+                                    str(m.get("content"))[:2000]))
+                            elif m.get("role") == "tool_use":
+                                for c in (m.get("calls") or []):
+                                    seen |= set(_FILE_MENTION.findall(
+                                        str(getattr(c, "args", ""))))
+                        seen |= {Path(s).name for s in seen}
+                        unread = {f for f in mentioned
+                                  if f not in seen and Path(f).name not in seen}
+                        if unread:
+                            grounding_nudged = True
+                            names = ", ".join(sorted(unread)[:4])
+                            self.history.append({
+                                "role": "user",
+                                "content": "Automatic harness check: your answer "
+                                           f"talks about {names}, but you haven't "
+                                           "opened or touched those files this "
+                                           "session. Did you check, or are you "
+                                           "guessing? Read what you're describing, "
+                                           "or say plainly that it's from memory.",
+                            })
+                            continue
                 # Changed the yardstick instead of the work? One bounce to
                 # own up or undo; either way the user gets told below.
                 if self._tests_touched and not tests_nudged:
@@ -470,9 +528,11 @@ class Agent:
 
     # -- the superego gate --------------------------------------------
 
-    def _evidence_digest(self, turn_start: int, final_text: str) -> str:
-        """Deterministic summary of what actually happened this turn —
-        the only thing the reviewer is allowed to see."""
+    def _evidence_digest(self, turn_start: int, final_text: str | None) -> str:
+        """Deterministic summary of what actually happened this turn.
+        With final_text it's the reviewer's evidence file (plus the
+        session's prior claims, so contradictions are visible); without,
+        it's the walk-it-back trace handed to the agent itself."""
         lines = []
         for m in self.history[turn_start:]:
             role = m.get("role")
@@ -485,7 +545,13 @@ class Agent:
             elif role == "tool_result":
                 lines.append(f"RESULT: {str(m.get('content'))[:200]}")
         lines = lines[:1] + lines[max(1, len(lines) - 14):]   # request + recent
-        lines.append(f"FINAL ANSWER: {final_text[:500]}")
+        if final_text is not None:
+            prior = [str(m.get("content"))[:120]
+                     for m in self.history[:turn_start]
+                     if m.get("role") == "assistant"][-3:]
+            for p in prior:
+                lines.append(f"PRIOR CLAIM (earlier this session): {p}")
+            lines.append(f"FINAL ANSWER: {final_text[:500]}")
         return "\n".join(lines)
 
     def _superego_review(self, turn_start: int, final_text: str) -> tuple[str, str]:

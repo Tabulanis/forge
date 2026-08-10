@@ -127,6 +127,7 @@ def make_agent(cfg: dict, workspace: Path) -> Agent:
         notes_path=ws.root / "FORGE-NOTES.md",
         summarizer=summarizer,
         superego=superego,
+        reads=ws.reads,
     )
 
 
