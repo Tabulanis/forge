@@ -87,8 +87,13 @@
 </head>
 <body>
 <div class="wrap">
-  <h1>FOR<span>GE</span></h1>
-  <div class="sub">Your agent's control panel. Changes land in the terminal on your next message.</div>
+  <h1>MER<span>GE</span></h1>
+  <div class="sub">Merge's control panel. Changes land everywhere on your next message.</div>
+  <nav style="margin:10px 0 18px 0; display:flex; gap:14px; font-size:14px">
+    <a href="/chat">← Chat</a>
+    <a href="/bricks">Bricks</a>
+    <a href="/help">Help &amp; health</a>
+  </nav>
 
   <div class="card">
     <h2>Models</h2>
@@ -169,6 +174,23 @@
     </div>
     <div class="hint">Config file: <code id="cfgpath">…</code></div>
   </div>
+
+  <div class="card">
+    <h2>Growing room</h2>
+    <label>Memory summaries (compaction) are written by</label>
+    <div class="row">
+      <div>
+        <select id="f-summarizer"></select>
+      </div>
+      <div>
+        <button id="btn-summarizer" style="width:100%">Save</button>
+      </div>
+    </div>
+    <div class="hint">The main model does this well on the graphics card. Hand
+      it to <code>little</code> when the main model is a paid cloud API —
+      free local housekeeping while the cloud does the thinking.</div>
+    <div class="hint" id="kidmode" style="margin-top:12px">…</div>
+  </div>
 </div>
 
 <div id="toast"></div>
@@ -176,6 +198,21 @@
 <script>
 const $ = (id) => document.getElementById(id);
 let cfg = null;
+
+// The login token: from the link that opened us, else remembered from last
+// time. Without this every button on this page silently failed 401 when
+// opened from a tablet — the chat worked, the controls didn't.
+let TOKEN = new URLSearchParams(location.search).get('token')
+            || localStorage.getItem('forge-token') || '';
+if (new URLSearchParams(location.search).get('token')) {
+  localStorage.setItem('forge-token', TOKEN);
+  history.replaceState({}, '', location.pathname);
+}
+const q = p => p + (p.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(TOKEN);
+for (const a of document.querySelectorAll('nav a')) {
+  if (TOKEN) a.href += (a.getAttribute('href').includes('?') ? '&' : '?')
+                       + 'token=' + encodeURIComponent(TOKEN);
+}
 
 function toast(msg, bad) {
   const t = $('toast');
@@ -185,7 +222,7 @@ function toast(msg, bad) {
 }
 
 async function api(path, opts) {
-  const r = await fetch(path, opts);
+  const r = await fetch(q(path), opts);
   if (!r.ok) {
     const d = await r.json().catch(() => ({}));
     throw new Error(d.detail || ('HTTP ' + r.status));
@@ -313,11 +350,40 @@ $('btn-agent').onclick = async () => {
   } catch (e) { toast(e.message, true); }
 };
 
+function renderGrowing() {
+  const sel = $('f-summarizer');
+  sel.innerHTML = '<option value="">main model (default)</option>';
+  for (const name of Object.keys(cfg.models)) {
+    const o = document.createElement('option');
+    o.value = name; o.textContent = name;
+    if ((cfg.agent.summarizer_model || '') === name) o.selected = true;
+    sel.appendChild(o);
+  }
+  $('kidmode').innerHTML = cfg.kid_mode
+    ? '🧒 <b>Kid mode is ON</b> — chat only, commands fenced to the '
+      + 'workspace. Turn off by editing <code>kid_mode</code> in the config '
+      + 'file at the computer.'
+    : '🧒 Kid mode is off. To lend this to a kid safely, set '
+      + '<code>kid_mode: true</code> in the config file at the computer — '
+      + 'chat keeps working, everything else locks.';
+}
+
+$('btn-summarizer').onclick = async () => {
+  try {
+    await api('/api/agent', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({summarizer_model: $('f-summarizer').value})
+    });
+    toast('Saved — memory summaries reassigned');
+  } catch (e) { toast(e.message, true); }
+};
+
 (async function init() {
   try {
     cfg = await api('/api/config');
     renderModels();
     renderPerm();
+    renderGrowing();
     $('f-steps').value = cfg.agent.max_steps;
     $('cfgpath').textContent = cfg.config_path;
     syncFormKind();

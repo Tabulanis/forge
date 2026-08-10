@@ -83,6 +83,8 @@ class ActiveSpec(BaseModel):
 class AgentSpec(BaseModel):
     max_steps: int | None = None
     permission_mode: str | None = None
+    # "" clears it; a name assigns that model the memory-summary side-job
+    summarizer_model: str | None = None
 
 
 @app.get("/api/config", dependencies=[Depends(require_token)])
@@ -148,6 +150,11 @@ def set_agent(spec: AgentSpec):
         if spec.permission_mode not in ("ask", "auto", "deny"):
             raise HTTPException(400, "permission_mode must be ask, auto, or deny")
         cfg["agent"]["permission_mode"] = spec.permission_mode
+    if spec.summarizer_model is not None:
+        name = spec.summarizer_model.strip()
+        if name and name not in cfg["models"]:
+            raise HTTPException(404, f"No model named {name!r}")
+        cfg["agent"]["summarizer_model"] = name
     save_config(cfg)
     return {"ok": True, "agent": cfg["agent"]}
 

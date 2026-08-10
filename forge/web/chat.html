@@ -110,6 +110,7 @@
   <div class="brand">MER<span>GE</span></div>
   <button id="chatsBtn" title="Your conversations">☰</button>
   <button id="newBtn">New</button>
+  <button id="cogBtn" title="Options and admin">⚙</button>
   <div class="meta">
     <div id="mModel">—</div>
     <div id="mWs" style="max-width:44vw; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"></div>
@@ -352,6 +353,10 @@ $('chatsBtn').onclick = async () => {
     panel.innerHTML = '<div style="padding:12px;opacity:.6">No saved conversations yet.</div>';
   }
   document.body.appendChild(panel);
+};
+
+$('cogBtn').onclick = () => {
+  location.href = '/' + (TOKEN ? '?token=' + encodeURIComponent(TOKEN) : '');
 };
 
 $('newBtn').onclick = () => {
