@@ -155,6 +155,7 @@ fresh token (if you shared the old one): `forge-dash --new-token`.""",
     /clear             forget the conversation, keep the settings
     /config            where your settings file lives
     /tools             what it's able to do
+    /off               leave AND stop the local models (frees the GPU)
     /quit              leave
 
 Anything not starting with / is a message to the assistant.""",
@@ -245,6 +246,25 @@ It's being slow
     },
 
     # --------------------------------------------------------------- safety
+    # ---------------------------------------------------------------- power
+    "power": {
+        "title": "Turning her off and on",
+        "blurb": "Get your graphics card back when you're done.",
+        "body": """The local models hold the graphics card the whole time they run —
+the big one alone keeps ~23GB of it. When you're done for now:
+
+    forge off        stop every local model, free the card
+    forge on         start the big one again (takes about a minute to load)
+    forge on vision  start a specific one: big, vision, little, tiny
+
+Inside a chat, /off does the same and says goodbye.
+
+The dashboard stays up — it uses no graphics memory, and its Power card
+has the same off/on buttons, so you can wake her from the browser or a
+phone without touching a terminal. The models also come back on their own
+next time the computer boots.""",
+    },
+
     "safety": {
         "title": "Is this safe?",
         "blurb": "What it can and can't do to your computer.",
@@ -270,7 +290,7 @@ being undone. That's a better safety net than any permission prompt.""",
 
 # Order they appear in listings — start first, trouble near the end.
 ORDER = ["start", "models", "permission", "commands", "phone",
-         "flows", "media", "trouble", "safety"]
+         "flows", "media", "power", "trouble", "safety"]
 
 
 def topic(name: str):

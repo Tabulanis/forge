@@ -106,6 +106,17 @@ from descriptions if lost):
 - Battery: 75 tests, scratchpad test_compaction.py of session 940da997
   (recreate from these descriptions if the scratchpad is gone).
 
+## 2026-08-10 (session 901d2e42, Fable 5)
+
+- **Power switch** (`forge/power.py`): `forge off` stops every
+  forge-model-* unit and reports the VRAM that came back (verified live:
+  23.3 → 4.0 GB); `forge on [big|vision|little|tiny]` starts one again.
+  `/off` inside a chat = goodbye + shutdown. Dashboard has a Power card
+  (GET/POST /api/power — POST is token- and kid-gated) with the same
+  off/on buttons; the dash itself stays up as the wake button. Full
+  round trip verified: off, wake via the API, 30B back and answering.
+  `forge help power` explains it in kid terms.
+
 ## Start here tomorrow
 
 1. Read this file, claim the folder in the agent log.

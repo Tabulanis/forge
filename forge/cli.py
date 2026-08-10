@@ -94,6 +94,30 @@ def show_doctor() -> None:
         console.print("[green]Everything's working.[/green]")
 
 
+def show_power_off() -> None:
+    from . import power
+    res = power.off()
+    if res["stopped"]:
+        console.print(f"[green]stopped:[/green] {', '.join(res['stopped'])}")
+    else:
+        console.print("[dim]no local models were running[/dim]")
+    if res["vram"]:
+        console.print(f"[dim]graphics memory now: {res['vram']}[/dim]")
+    console.print("[dim]wake her later with[/dim] [cyan]forge on[/cyan] "
+                  "[dim](or the Power card in the dashboard)[/dim]")
+
+
+def show_power_on(which: str = "big") -> None:
+    from . import power
+    res = power.on(which)
+    if res.get("error"):
+        console.print(f"[red]{escape(res['error'])}[/red]")
+        return
+    console.print(f"[green]starting {res['started'][0]}[/green] "
+                  "[dim]— the big model takes about a minute to load; "
+                  "/doctor will say when it's ready[/dim]")
+
+
 def make_agent(cfg: dict, workspace: Path) -> Agent:
     mcfg = active_model_config(cfg)
     provider = build_provider(mcfg)
@@ -197,6 +221,10 @@ def handle_command(line: str, cfg: dict, workspace: Path, agent: Agent) -> tuple
     cmd, args = parts[0], parts[1:]
 
     if cmd in ("/quit", "/exit"):
+        return False, agent
+
+    if cmd == "/off":
+        show_power_off()
         return False, agent
 
     if cmd == "/help":
@@ -322,7 +350,9 @@ def main() -> None:
         prog="forge",
         description="Your own coding agent. Try:  forge help",
         epilog="forge help          what everything does\n"
-               "forge doctor        check your setup and name the fixes",
+               "forge doctor        check your setup and name the fixes\n"
+               "forge off           stop the local models, free the GPU\n"
+               "forge on            start the big model again",
         formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("message", nargs="*",
                     help="Run one message and exit, or: help / doctor")
@@ -339,6 +369,14 @@ def main() -> None:
         return
     if args.message and args.message[0].lower() == "doctor":
         show_doctor()
+        return
+    # Power belongs in this pre-flight group too: `forge off` must work
+    # even when the model it would talk to is already broken or gone.
+    if args.message and args.message[0].lower() in ("off", "sleep"):
+        show_power_off()
+        return
+    if args.message and args.message[0].lower() in ("on", "wake"):
+        show_power_on(args.message[1] if len(args.message) > 1 else "big")
         return
 
     first_run = not CONFIG_PATH.exists()

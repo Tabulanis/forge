@@ -102,6 +102,19 @@
   </div>
 
   <div class="card">
+    <h2>Power</h2>
+    <div class="bar">
+      <button class="danger" id="btn-off">⏻ Shut her down</button>
+      <button id="btn-on">Wake her up</button>
+      <span class="hint" style="margin-top:0" id="power-status">checking…</span>
+    </div>
+    <div class="hint">Off stops the local models and hands the graphics card
+      back. This page stays up, so you can wake her from here (loading takes
+      about a minute). Same thing from a terminal: <code>forge off</code> /
+      <code>forge on</code>.</div>
+  </div>
+
+  <div class="card">
     <h2>Add or edit a model</h2>
     <div class="row">
       <div>
@@ -280,6 +293,40 @@ async function checkHealth() {
   } catch (e) { $('health').textContent = 'health check failed'; }
 }
 
+async function checkPower() {
+  try {
+    const p = await api('/api/power');
+    $('power-status').textContent = (p.running.length
+      ? 'running: ' + p.running.join(', ')
+      : 'all local models are off') + (p.vram ? ' · ' + p.vram : '');
+  } catch (e) { $('power-status').textContent = ''; }
+}
+
+$('btn-off').onclick = async () => {
+  $('power-status').textContent = 'stopping…';
+  try {
+    const r = await api('/api/power', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({action: 'off'})
+    });
+    toast(r.stopped.length ? 'Stopped ' + r.stopped.join(', ')
+                           + (r.vram ? ' — ' + r.vram : '')
+                           : 'Nothing was running');
+    checkPower(); checkHealth();
+  } catch (e) { toast(e.message, true); checkPower(); }
+};
+
+$('btn-on').onclick = async () => {
+  try {
+    await api('/api/power', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({action: 'on', model: 'big'})
+    });
+    toast('Waking her up — about a minute to load');
+    setTimeout(checkPower, 3000);
+  } catch (e) { toast(e.message, true); }
+};
+
 function syncFormKind() {
   const isAnthropic = $('f-provider').value === 'anthropic';
   $('local-row').style.display = isAnthropic ? 'none' : '';
@@ -408,7 +455,8 @@ $('btn-summarizer').onclick = async () => {
     $('cfgpath').textContent = cfg.config_path;
     syncFormKind();
     checkHealth();
-    setInterval(checkHealth, 15000);
+    checkPower();
+    setInterval(() => { checkHealth(); checkPower(); }, 15000);
   } catch (e) {
     toast('Could not load config: ' + e.message, true);
   }

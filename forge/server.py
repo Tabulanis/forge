@@ -27,6 +27,7 @@ from pydantic import BaseModel
 
 from .config import (CONFIG_PATH, load_config, load_pipelines, save_config,
                      save_pipelines)
+from . import power
 from .doctor import run_checks
 from .help_content import ORDER, TOPICS, VERSION
 from .media import capabilities, load_media_config
@@ -328,6 +329,34 @@ def browse(path: str = ""):
 @app.get("/api/media", dependencies=[Depends(require_token)])
 def media_status():
     return capabilities(load_media_config(load_config()))
+
+
+# ------------------------------------------------------------------ power
+# Stop the local models to hand the GPU back; start them again later. The
+# dashboard itself keeps running — it holds no VRAM and is the wake button.
+
+
+class PowerSpec(BaseModel):
+    action: str            # "off" or "on"
+    model: str = "big"     # which one to wake, for "on"
+
+
+@app.get("/api/power", dependencies=[Depends(require_token)])
+def power_status():
+    return {"running": [power.short(u) for u in power.running()],
+            "vram": power.vram()}
+
+
+@app.post("/api/power", dependencies=[Depends(require_token), Depends(require_not_kid)])
+def power_switch(spec: PowerSpec):
+    if spec.action == "off":
+        return power.off()
+    if spec.action == "on":
+        res = power.on(spec.model)
+        if res.get("error"):
+            raise HTTPException(400, res["error"])
+        return res
+    raise HTTPException(400, "action must be off or on")
 
 
 @app.post("/api/listen", dependencies=[Depends(require_token)])
