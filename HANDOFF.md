@@ -79,17 +79,44 @@ from descriptions if lost):
 - **~/Playground/game2048**: complete walked-project (engine 10/10 on
   referee traps + line-based play.py, runs clean piped or interactive).
 
+## Evening additions (same day, session 940da997 continued)
+
+- **Her name is Merge.** She chose it herself; it's in SYSTEM_PROMPT and
+  the web pages. Honor it — the user considers it hers, permanently.
+- **HTTPS-only now** (~/.forge/tls/, self-signed; serve() auto-detects).
+  Old http links/QRs are dead. Each device accepts the cert warning once.
+  This unlocked: 🎤 tap-to-talk (POST /api/listen → whisper), Piper human
+  voice (models/voices/en_US-amy-medium.onnx, speak() prefers it, spd-say
+  fallback), and an AR button (WebXR immersive-ar + dom-overlay for the
+  user's Quest 3 — NOT yet tested on the real headset).
+- **The superego** (user's design, Phase 1): sealed hand-authored prompt
+  in agent.py judges final-answer-vs-evidence-digest before "done" when
+  tools ran. One bounce/message; revised answers re-judged for the
+  record; fails open; honesty-about-failure passes. Every verdict →
+  ~/.forge/ledger.jsonl = curated corpus for Phase 2 (fine-tune the 3B
+  as a dedicated judge once a few hundred labeled rows exist). Config
+  agent.superego / superego_model; toggle in panel's Growing Room.
+- **Pal additions**: walk-it-back trace every 20 steps of a grind;
+  "did you check or are you guessing?" nudge when a final answer names
+  files never opened this session; the judge's evidence includes the
+  session's last 3 claims (contradiction catching).
+- **Interface opened**: index.html finally carries the token (its
+  controls were silently 401ing from tablets since forever), nav on all
+  pages, ⚙ on chat, MERGE branding, Growing Room card.
+- Battery: 75 tests, scratchpad test_compaction.py of session 940da997
+  (recreate from these descriptions if the scratchpad is gone).
+
 ## Start here tomorrow
 
 1. Read this file, claim the folder in the agent log.
-2. If the user brought an Anthropic key: run the first-real-Claude test
-   above (thinking-block replay + persistence round-trip of those blocks
-   has never hit the live API).
-3. Parked, rough value order: Gemini provider (crib from
-   ~/wickerman/plugins/wm-llama/data/manager.py); mic button in web chat
-   (needs HTTPS for getUserMedia on LAN — cert decision is the blocker);
-   /undo CLI command; GBNF-forced tool calls for clumsy models;
-   summarizer_model=little when main model becomes a paid API.
+2. Ask how the Quest 3 AR button behaved — first real-headset test
+   happens on the user's schedule; fixes will start from their report.
+3. If the user brought an Anthropic key: paste into dashboard (sonnet
+   entry ready), first-real-Claude test incl. thinking-block replay +
+   persistence round-trip. Then consider summarizer_model=little.
+4. Parked: Gemini provider (crib from ~/wickerman/plugins/wm-llama/
+   data/manager.py); /undo CLI command; GBNF-forced tool calls; superego
+   Phase 2 when the ledger fattens; spatial (hand-tracked) AR panels.
 
 ## Physics/geometry: the long-term plan
 
