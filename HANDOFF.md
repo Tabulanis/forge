@@ -50,23 +50,46 @@ Everything below is committed; working tree is clean at `3646dd6`.
 - Provider errors name the exact fix; corrupt config.yaml self-heals
   (old file kept as config.yaml.broken).
 
+## Where things stand now (end of day 2026-08-09, session 940da997, Fable 5)
+
+Everything above still holds, plus a big day of hardening — all committed,
+all covered by a 63-test battery (scratchpad test_compaction.py, recreate
+from descriptions if lost):
+
+- **Everything runs under systemd user units** (forge-model-big/-vision/
+  -little/-tiny/forge-dash); big+vision+dash enabled at boot, linger on.
+- **Sessions persist** to ~/.forge/sessions/ and reload at startup; the
+  web chat has a ☰ drawer to reopen them. Restored sessions estimate
+  fullness (chars/3) so compaction fires before overflow.
+- **Memory management**: auto-compaction at 70% (window size probed from
+  /props), tool-output + call-argument trimming, emergency force-compact —
+  a session can no longer dead-end on its own history.
+- **Discipline**: red-run refusal (max 3 bounces), test-file tamper bounce
+  + user warning, decline = broken-record arm, lenient whitespace edits,
+  write_file escalation after 2 edit misses, 5xx retry-once.
+- **Web chat**: Stop button, permission cards (say_aloud always asks),
+  unattended auto-decline, no-store pages, reconnect/watchdog fixes.
+- **Kid mode** (`kid_mode: true` in config.yaml, computer-only): chat-only
+  dashboard, run_command fenced to workspace, chats pinned to ~/Playground.
+- **compute tool** (mathtools.py): sympy-backed exact math; every success
+  logs to ~/.forge/physics-dataset.jsonl (fine-tune corpus, plan above).
+- **Models**: claude/fable/sonnet (need ANTHROPIC_API_KEY), qwen30b
+  (active), little = Qwen2.5-3B CPU :8083, tiny. Little models are
+  short-prompt specialists only (24 tok/s CPU prompt eval — measured).
+- **~/Playground/game2048**: complete walked-project (engine 10/10 on
+  referee traps + line-based play.py, runs clean piped or interactive).
+
 ## Start here tomorrow
 
 1. Read this file, claim the folder in the agent log.
 2. If the user brought an Anthropic key: run the first-real-Claude test
-   above. Watch for tool-use loops specifically — the thinking-block replay
-   (`assistant_blocks` in providers.py/agent.py) is stub-tested but has
-   never run against the live API.
-3. If the user brought Gemini keys: add a GeminiProvider in providers.py
-   (follow the AnthropicProvider pattern; the old wickerman router at
-   `~/wickerman/plugins/wm-llama/data/manager.py` has a working
-   OpenAI→Gemini translation to crib from), plus a dashboard "Kind" option.
-4. Otherwise, parked ideas in rough order of value:
-   - big/little routing: tiny model (:8081) for cheap summaries/titles,
-     qwen30b for the real thinking
-   - GBNF grammar-forced tool calls for models clumsier than qwen
-     (providers already accept a `grammar` arg; nothing passes one yet)
-   - a `/undo` CLI command surfacing undo_file for the user directly
+   above (thinking-block replay + persistence round-trip of those blocks
+   has never hit the live API).
+3. Parked, rough value order: Gemini provider (crib from
+   ~/wickerman/plugins/wm-llama/data/manager.py); mic button in web chat
+   (needs HTTPS for getUserMedia on LAN — cert decision is the blocker);
+   /undo CLI command; GBNF-forced tool calls for clumsy models;
+   summarizer_model=little when main model becomes a paid API.
 
 ## Physics/geometry: the long-term plan
 
