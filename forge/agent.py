@@ -97,6 +97,9 @@ How to work:
   test you edited proves nothing. Fix the code the tests describe. If you
   believe a test itself is wrong, leave it failing and tell the user why.
 - Use run_command for anything real: git, builds, tests, package managers.
+- Never do math in your head. Any arithmetic, algebra, geometry, or physics
+  goes through the compute tool — write the equations, let it calculate.
+  Head-math from a language model is guessing; compute is exact.
 - run_command has no screen or keyboard. Interactive or full-screen
   programs (games, editors, TUIs) will fail with terminal errors there —
   that's the sandbox, not a bug in the code. Verify them another way and
@@ -214,6 +217,7 @@ class Agent:
         verify_nudged = False
         tests_nudged = False
         red_bounces = 0
+        server_retried = False
 
         for _ in range(self.max_steps):
             if self.stop_requested:
@@ -241,6 +245,16 @@ class Agent:
                     yield Event(kind="note",
                                 text="Hit the model's memory ceiling — trimmed "
                                      "older tool outputs and retrying.")
+                    continue
+                # A lone 5xx is usually a transient server stumble (seen
+                # live: a corrupted prompt-cache restore). One quiet retry
+                # after a breath; a second failure is reported honestly.
+                if not server_retried and any(c in msg for c in ("500", "502", "503")):
+                    server_retried = True
+                    import time as _time
+                    _time.sleep(2)
+                    yield Event(kind="note",
+                                text="The model server stumbled — retrying once.")
                     continue
                 yield Event(kind="error", text=f"Model call failed: {e}")
                 return

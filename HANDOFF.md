@@ -68,6 +68,21 @@ Everything below is committed; working tree is clean at `3646dd6`.
      (providers already accept a `grammar` arg; nothing passes one yet)
    - a `/undo` CLI command surfacing undo_file for the user directly
 
+## Physics/geometry: the long-term plan
+
+The `compute` tool (mathtools.py) makes any model exact at math today: it
+writes sympy programs, the machine does the arithmetic. Every successful
+computation is logged to `~/.forge/physics-dataset.jsonl` as
+(program, answer) pairs — real problems from real use, accumulating
+passively. The long-term idea the user wants: once that corpus is a few
+thousand rows, fine-tune a small local model (Qwen2.5-3B fits a LoRA
+easily in the TITAN's 24GB with unsloth/llama-factory) on
+problem→sympy-program translation, giving a fast local physics
+specialist. Until the corpus exists, don't build the training rig —
+collect first. Benchmarks that motivated this: qwen30b head-math is
+decent on textbook problems but compute is exact always; the failed runs
+in testing were server infrastructure (fixed), never sympy.
+
 ## Gotchas
 
 - History is provider-neutral; Anthropic raw blocks ride in

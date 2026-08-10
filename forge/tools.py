@@ -23,6 +23,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
+from .mathtools import COMPUTE_DESCRIPTION, run_compute
+
 MAX_READ_BYTES = 400_000     # a huge file would blow the context window
 MAX_OUTPUT_CHARS = 30_000    # same, for command output
 DEFAULT_TIMEOUT = 120
@@ -577,5 +579,20 @@ def build_tools(ws: Workspace) -> list[Tool]:
             run=run_command,
             needs_permission=True,
             summarize=lambda a: f"run: {a.get('command', '')[:120]}",
+        ),
+        Tool(
+            name="compute",
+            description=COMPUTE_DESCRIPTION,
+            parameters={
+                "type": "object",
+                "properties": {
+                    "code": {"type": "string",
+                             "description": "Python program; print() the result"},
+                },
+                "required": ["code"],
+            },
+            run=run_compute,
+            needs_permission=True,
+            summarize=lambda a: f"compute: {a.get('code', '')[:100]}",
         ),
     ]
