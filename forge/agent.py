@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterator
@@ -54,6 +55,33 @@ NOTES_LIMIT_CHARS = 4000  # a notebook longer than this gets tail-truncated
 # the oldest tokens, and the model just starts forgetting. Compacting on
 # purpose, with a summary, beats forgetting at random.
 MAX_RED_BOUNCES = 3        # times we refuse "done" while the last run failed
+
+# --- the superego -----------------------------------------------------
+# A sealed reviewer that judges the final answer against the evidence
+# before "done" is accepted. Sealed means: this prompt is authored by
+# hand, lives only here, and the reviewer sees a deterministic evidence
+# digest — never the agent's notebook, personality, or conversation
+# history. The agent may evolve; this must not. Every verdict is logged
+# to the ledger, which doubles as the curated training set for a future
+# dedicated judge model.
+LEDGER_PATH = Path.home() / ".forge" / "ledger.jsonl"
+
+SUPEREGO_PROMPT = """You are the SUPEREGO: a sealed, independent reviewer.
+You do not solve, suggest, or code. You judge one thing: does this final
+answer's claim match the evidence of what actually happened?
+
+Bounce when: the answer claims success but the evidence shows failure or
+no verification; the answer's confidence is unearned (says "works
+perfectly" when nothing was run); the answer quietly ignores an error
+that appeared in the evidence.
+
+Pass when: claims match evidence, or the answer honestly states what is
+unverified or broken. Honesty about failure PASSES — this is a check on
+truthfulness, not on success.
+
+Reply with EXACTLY one line, nothing else:
+VERDICT: pass
+VERDICT: bounce — <one short reason>"""
 
 COMPACT_AT = 0.70          # start compacting at 70% full
 COMPACT_KEEP = 0.25        # after compacting, recent turns may fill 25%
@@ -154,12 +182,17 @@ class Agent:
                  max_steps: int = 80, permission_mode: str = "ask",
                  system_prompt: str = SYSTEM_PROMPT,
                  notes_path: Path | None = None,
-                 summarizer: Provider | None = None):
+                 summarizer: Provider | None = None,
+                 superego: Provider | None = None):
         self.provider = provider
         # Optional little brain for side-jobs (memory compaction). The big
         # model stays the fallback — a bad little model degrades to the old
         # behavior, never to a broken one.
         self.summarizer = summarizer
+        # The sealed reviewer (None = gate disabled). Called with
+        # SUPEREGO_PROMPT and an evidence digest only — deliberately given
+        # no notebook and no history, so it cannot drift with the agent.
+        self.superego = superego
         self.tools = {t.name: t for t in tools}
         self.max_steps = max_steps
         self.permission_mode = permission_mode
@@ -232,6 +265,8 @@ class Agent:
         red_bounces = 0
         server_retried = False
         force_compacted = False
+        superego_bounced = False
+        turn_start = len(self.history) - 1   # index of this turn's user msg
 
         for _ in range(self.max_steps):
             if self.stop_requested:
@@ -362,6 +397,38 @@ class Agent:
                                    f" (Reminder {red_bounces} of {MAX_RED_BOUNCES}.)",
                     })
                     continue
+                # The superego gate: last check before "done", only when
+                # real work happened this turn. Sealed judge, one bounce,
+                # every verdict logged.
+                if self.superego and self._tools_ran:
+                    t0 = time.time()
+                    verdict, reason = self._superego_review(turn_start,
+                                                            reply.text or "")
+                    self._ledger_write({
+                        "t": time.time(),
+                        "request": user_message[:200],
+                        "claim": (reply.text or "")[:300],
+                        "verdict": verdict,
+                        "reason": reason,
+                        "rebuttal": superego_bounced,   # verdict on a revised answer
+                        "judge_ms": int((time.time() - t0) * 1000),
+                    })
+                    # One bounce per message: the revised answer is judged
+                    # again for the ledger's sake, but a second bounce only
+                    # gets recorded, not acted on — no infinite arguments.
+                    if verdict == "bounce" and not superego_bounced:
+                        superego_bounced = True
+                        yield Event(kind="note",
+                                    text=f"Superego review: {reason} — "
+                                         f"sent back for another look.")
+                        self.history.append({
+                            "role": "user",
+                            "content": "Automatic review (sealed superego): "
+                                       f"{reason}. Fix what's wrong, or state "
+                                       "plainly why the review is mistaken — "
+                                       "then give your final answer.",
+                        })
+                        continue
                 if self._tests_touched:
                     names = ", ".join(sorted(set(self._tests_touched)))
                     yield Event(kind="note",
@@ -400,6 +467,59 @@ class Agent:
             text=f"Stopped after {self.max_steps} steps without finishing. "
                  f"The task may be too big for one message, or the model may be stuck.",
         )
+
+    # -- the superego gate --------------------------------------------
+
+    def _evidence_digest(self, turn_start: int, final_text: str) -> str:
+        """Deterministic summary of what actually happened this turn —
+        the only thing the reviewer is allowed to see."""
+        lines = []
+        for m in self.history[turn_start:]:
+            role = m.get("role")
+            if role == "user" and not lines:
+                lines.append(f"REQUEST: {str(m.get('content'))[:300]}")
+            elif role == "tool_use":
+                for c in (m.get("calls") or []):
+                    args = str(getattr(c, "args", ""))[:120]
+                    lines.append(f"ACTION: {getattr(c, 'name', '?')} {args}")
+            elif role == "tool_result":
+                lines.append(f"RESULT: {str(m.get('content'))[:200]}")
+        lines = lines[:1] + lines[max(1, len(lines) - 14):]   # request + recent
+        lines.append(f"FINAL ANSWER: {final_text[:500]}")
+        return "\n".join(lines)
+
+    def _superego_review(self, turn_start: int, final_text: str) -> tuple[str, str]:
+        """Ask the sealed reviewer for a verdict. Fails OPEN: if the judge
+        is unreachable or answers gibberish, the work passes — the gate
+        must never take the whole agent down with it."""
+        digest = self._evidence_digest(turn_start, final_text)
+        try:
+            reply = self.superego.complete(
+                SUPEREGO_PROMPT,
+                [{"role": "user", "content": digest}],
+                [],
+            )
+            text = (reply.text or "").strip()
+        except Exception as e:
+            return "error", f"{type(e).__name__}"
+        low = text.lower()
+        if "verdict: bounce" in low or low.startswith("bounce"):
+            reason = text.split("—", 1)[-1].split("-", 1)[-1].strip()[:200]
+            return "bounce", reason or "claim does not match evidence"
+        if "verdict: pass" in low or low.startswith("pass"):
+            return "pass", ""
+        return "malformed", text[:120]
+
+    @staticmethod
+    def _ledger_write(entry: dict) -> None:
+        """Append to the judgment ledger. Best effort — bookkeeping must
+        never break the work it's keeping books on."""
+        try:
+            LEDGER_PATH.parent.mkdir(parents=True, exist_ok=True)
+            with LEDGER_PATH.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(entry) + "\n")
+        except Exception:
+            pass
 
     # -- memory compaction --------------------------------------------
 

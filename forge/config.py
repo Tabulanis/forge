@@ -78,6 +78,11 @@ DEFAULT_CONFIG: dict[str, Any] = {
         # "auto" — run everything without asking (fast, for throwaway dirs)
         # "deny" — read-only; refuse all writes and commands
         "permission_mode": "ask",
+        # The sealed reviewer: judges final answers against the evidence
+        # before "done". True/False; superego_model names which model
+        # judges (empty = the active model, with the sealed prompt).
+        "superego": True,
+        "superego_model": "",
     },
 
     # host 127.0.0.1 keeps this machine-only. Set 0.0.0.0 to reach it from a

@@ -85,6 +85,7 @@ class AgentSpec(BaseModel):
     permission_mode: str | None = None
     # "" clears it; a name assigns that model the memory-summary side-job
     summarizer_model: str | None = None
+    superego: bool | None = None
 
 
 @app.get("/api/config", dependencies=[Depends(require_token)])
@@ -155,6 +156,8 @@ def set_agent(spec: AgentSpec):
         if name and name not in cfg["models"]:
             raise HTTPException(404, f"No model named {name!r}")
         cfg["agent"]["summarizer_model"] = name
+    if spec.superego is not None:
+        cfg["agent"]["superego"] = bool(spec.superego)
     save_config(cfg)
     return {"ok": True, "agent": cfg["agent"]}
 

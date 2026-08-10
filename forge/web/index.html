@@ -190,6 +190,14 @@
       it to <code>little</code> when the main model is a paid cloud API —
       free local housekeeping while the cloud does the thinking.</div>
     <div class="hint" id="kidmode" style="margin-top:12px">…</div>
+    <label style="margin-top:16px; display:flex; align-items:center; gap:10px; cursor:pointer">
+      <input type="checkbox" id="f-superego" style="width:auto">
+      Superego review — a sealed judge checks her final answers against the
+      evidence before "done" counts
+    </label>
+    <div class="hint">Every verdict is logged to the ledger
+      (<code>~/.forge/ledger.jsonl</code>) — the training data for a future
+      dedicated judge.</div>
   </div>
 </div>
 
@@ -359,6 +367,7 @@ function renderGrowing() {
     if ((cfg.agent.summarizer_model || '') === name) o.selected = true;
     sel.appendChild(o);
   }
+  $('f-superego').checked = cfg.agent.superego !== false;
   $('kidmode').innerHTML = cfg.kid_mode
     ? '🧒 <b>Kid mode is ON</b> — chat only, commands fenced to the '
       + 'workspace. Turn off by editing <code>kid_mode</code> in the config '
@@ -367,6 +376,17 @@ function renderGrowing() {
       + '<code>kid_mode: true</code> in the config file at the computer — '
       + 'chat keeps working, everything else locks.';
 }
+
+$('f-superego').onchange = async () => {
+  try {
+    await api('/api/agent', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({superego: $('f-superego').checked})
+    });
+    toast($('f-superego').checked ? 'Superego on — final answers get reviewed'
+                                  : 'Superego off');
+  } catch (e) { toast(e.message, true); }
+};
 
 $('btn-summarizer').onclick = async () => {
   try {

@@ -138,6 +138,19 @@ class Session:
                 summarizer = build_provider(cfg["models"][s_name])
             except Exception:
                 summarizer = None
+        # The sealed reviewer. A fresh provider instance for the active (or
+        # designated) model — isolation comes from the sealed prompt and
+        # evidence-only diet, not from separate weights.
+        superego = None
+        if cfg["agent"].get("superego", True):
+            j_name = (cfg["agent"].get("superego_model") or "").strip()
+            j_cfg = (cfg["models"].get(j_name)
+                     if j_name in cfg.get("models", {})
+                     else active_model_config(cfg))
+            try:
+                superego = build_provider(j_cfg)
+            except Exception:
+                superego = None
         self.agent = Agent(
             provider=provider,
             tools=build_tools(ws, fenced=bool(cfg.get("kid_mode")))
@@ -146,6 +159,7 @@ class Session:
             permission_mode=cfg["agent"].get("permission_mode", "ask"),
             notes_path=ws.root / "FORGE-NOTES.md",
             summarizer=summarizer,
+            superego=superego,
         )
 
     def reload_model(self, cfg: dict) -> None:

@@ -108,6 +108,16 @@ def make_agent(cfg: dict, workspace: Path) -> Agent:
             summarizer = build_provider(cfg["models"][s_name])
         except Exception:
             summarizer = None
+    superego = None
+    if cfg["agent"].get("superego", True):
+        j_name = (cfg["agent"].get("superego_model") or "").strip()
+        j_cfg = (cfg["models"].get(j_name)
+                 if j_name in cfg.get("models", {})
+                 else active_model_config(cfg))
+        try:
+            superego = build_provider(j_cfg)
+        except Exception:
+            superego = None
     return Agent(
         provider=provider,
         tools=build_tools(ws, fenced=bool(cfg.get("kid_mode")))
@@ -116,6 +126,7 @@ def make_agent(cfg: dict, workspace: Path) -> Agent:
         permission_mode=cfg["agent"].get("permission_mode", "ask"),
         notes_path=ws.root / "FORGE-NOTES.md",
         summarizer=summarizer,
+        superego=superego,
     )
 
 
