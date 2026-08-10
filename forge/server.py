@@ -327,6 +327,40 @@ def media_status():
     return capabilities(load_media_config(load_config()))
 
 
+@app.post("/api/listen", dependencies=[Depends(require_token)])
+async def listen_endpoint(request: Request):
+    """
+    Voice input: the browser records audio (webm/ogg), posts the raw bytes
+    here, whisper turns them into text, the text goes back to the page.
+    Raw body instead of a multipart form on purpose — no extra dependency,
+    and the browser side is a two-line fetch.
+    """
+    import tempfile as _tf
+
+    from .media import listen as media_listen
+
+    body = await request.body()
+    if not body or len(body) < 200:
+        raise HTTPException(400, "No audio received")
+    if len(body) > 25_000_000:
+        raise HTTPException(413, "Recording too long")
+    suffix = ".webm"
+    ctype = (request.headers.get("content-type") or "").lower()
+    if "ogg" in ctype:
+        suffix = ".ogg"
+    elif "wav" in ctype:
+        suffix = ".wav"
+    elif "mp4" in ctype or "m4a" in ctype or "aac" in ctype:
+        suffix = ".m4a"
+    tmp = Path(_tf.mkdtemp()) / f"speech{suffix}"
+    tmp.write_bytes(body)
+    text = await asyncio.to_thread(
+        media_listen, str(tmp), load_media_config(load_config()))
+    if text.startswith("Error"):
+        raise HTTPException(500, text)
+    return {"text": text}
+
+
 # -------------------------------------------------------------- pipelines
 # The brick editor reads and writes these. They are the same recipes the CLI
 # runs, so anything built in the browser works from the terminal and back.
@@ -511,6 +545,15 @@ def serve() -> None:
     port = int(srv.get("port", 8770))
     token = srv.get("token", "")
 
+    # HTTPS when a certificate exists (make one with openssl into
+    # ~/.forge/tls/). Browsers only allow microphone capture and WebXR (the
+    # AR headset path) on secure pages, so this is the key that unlocks
+    # voice and AR. Self-signed: each device accepts the warning once.
+    tls_dir = Path.home() / ".forge" / "tls"
+    certfile, keyfile = tls_dir / "cert.pem", tls_dir / "key.pem"
+    use_tls = certfile.exists() and keyfile.exists()
+    scheme = "https" if use_tls else "http"
+
     print()
     if host in ("0.0.0.0", "::"):
         try:
@@ -521,18 +564,22 @@ def serve() -> None:
         except Exception:
             lan = "your-ip"
         suffix = f"?token={token}" if token else ""
-        print(f"  Forge on this machine → http://127.0.0.1:{port}/chat{suffix}")
-        print(f"  Forge from your phone → http://{lan}:{port}/chat{suffix}")
+        print(f"  Merge on this machine → {scheme}://127.0.0.1:{port}/chat{suffix}")
+        print(f"  Merge from your phone → {scheme}://{lan}:{port}/chat{suffix}")
         if not token:
             print()
             print("  WARNING: bound to the network with NO TOKEN set.")
             print("  Anyone who can reach this machine can run commands on it.")
             print("  Set one:  forge-dash --new-token")
     else:
-        print(f"  Forge → http://{host}:{port}/chat")
+        print(f"  Merge → {scheme}://{host}:{port}/chat")
         print("  (machine-only. To reach it from a phone: forge-dash --network)")
     print()
-    uvicorn.run(app, host=host, port=port, log_level="warning")
+    if use_tls:
+        uvicorn.run(app, host=host, port=port, log_level="warning",
+                    ssl_certfile=str(certfile), ssl_keyfile=str(keyfile))
+    else:
+        uvicorn.run(app, host=host, port=port, log_level="warning")
 
 
 if __name__ == "__main__":

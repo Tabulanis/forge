@@ -93,6 +93,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "whisper_bin": "~/whisper.cpp/build/bin/whisper-cli",
         "whisper_model": "~/whisper.cpp/models/ggml-small.en.bin",
         "tts_command": "spd-say",
+        "piper_voice": "~/forge/models/voices/en_US-amy-medium.onnx",
         "record_seconds": 8,
     },
 }

@@ -42,6 +42,10 @@ class MediaConfig:
     whisper_bin: str = str(Path.home() / "whisper.cpp/build/bin/whisper-cli")
     whisper_model: str = str(Path.home() / "whisper.cpp/models/ggml-small.en.bin")
     tts_command: str = "spd-say"          # speech-dispatcher; ships with most desktops
+    # A Piper voice model makes her sound like a person instead of a robot.
+    # When this file exists (and piper is installed), it wins over
+    # tts_command; delete or rename it to fall back to the robot.
+    piper_voice: str = str(Path.home() / "forge/models/voices/en_US-amy-medium.onnx")
     record_seconds: int = 8
 
 
@@ -279,8 +283,36 @@ def record(seconds: int, out_path: str | None = None) -> str:
         return f"Error recording: {type(e).__name__}: {e}"
 
 
+def _piper_bin() -> str | None:
+    """Piper installed next to our own interpreter, or on PATH."""
+    import sys
+    cand = Path(sys.executable).parent / "piper"
+    if cand.exists():
+        return str(cand)
+    return shutil.which("piper")
+
+
 def speak(text: str, mc: MediaConfig) -> str:
     """Say something out loud. Best-effort — silence is not an error worth failing on."""
+    # Human voice first: piper renders to a wav, a system player plays it.
+    voice = Path(mc.piper_voice).expanduser() if mc.piper_voice else None
+    piper = _piper_bin()
+    player = shutil.which("paplay") or shutil.which("aplay") or shutil.which("ffplay")
+    if piper and voice and voice.exists() and player:
+        try:
+            wav = Path(tempfile.mkdtemp()) / "say.wav"
+            r = subprocess.run([piper, "--model", str(voice),
+                                "--output_file", str(wav)],
+                               input=text[:800], text=True,
+                               capture_output=True, timeout=60)
+            if r.returncode == 0 and wav.exists():
+                cmd = [player, str(wav)]
+                if player.endswith("ffplay"):
+                    cmd = [player, "-nodisp", "-autoexit", "-loglevel", "quiet", str(wav)]
+                subprocess.run(cmd, capture_output=True, timeout=60)
+                return "spoken"
+        except Exception:
+            pass   # fall through to the robot rather than stay silent
     if not shutil.which(mc.tts_command.split()[0]):
         return f"(no TTS: {mc.tts_command} not installed)"
     try:
