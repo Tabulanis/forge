@@ -314,12 +314,30 @@ from the user beats any written rule. Fixes, all mechanical/structural:
   even on the author's ask (the .txt is an extraction; fixes go in the
   docx, then re-extract).
 
-End state: 12/12 individually passing except scene-gap-trap (known_open,
-by design — open-ended gap-filling still fabricates; that one is model
-ceiling + scaffolding, not a rule fix). Full-battery confirmation run
-was in flight at handoff time. Grade movement: research discipline was
-D this morning; with honest instruments she's now failing HONESTLY
-('remains a mystery') instead of fabricating, and passing on retest.
+Round 3 (the NPC-population test, "6 backstories"): new failure modes,
+new fixes. She filed the coffee shop's door BELL as an NPC (fabricated
+family of bell-tuners, invented threshold-magic), nearly refiled
+Apollonius — a MAJOR character — as "a cobbler with memory-holding
+shoes," claimed six confirmed when one landed, and saved invented lore
+to FORGE-NOTES via save_note — the notebook-poisoning vector (her own
+fabrication would've replayed as truth every turn). All reverted via
+git. Fixes: SYSTEM_PROMPT notes-are-process-never-fiction; npcs.md "who
+does NOT belong here" (people only; named majors never NPCs; ambiguous
+referent = candidates + a question; one per pass); two new battery
+tests (ambiguous-npc, notebook-no-lore) — both pass. Search gained
+| alternation ('foot|feet|tall|height').
+
+FINAL SCOREBOARD: 14 tests, 12 green serially, 2 known_open with full
+evidence trails: scene-gap-trap (open-ended gap-filling fabricates) and
+fact-present (1-of-7 — a sticky prior, 'six feet,' survives honest
+instruments and its own reviewer; worst instance cited a real-but-
+IRRELEVANT quote as support, so evidence-relevance — not evidence-
+verbatimness — is the next frontier a smarter judge could check).
+Ops lesson learned the hard way: never run two model-hungry jobs
+concurrently — a battery run overlapping the NPC task produced
+contaminated results and a mid-task 500. Serial only.
+Grade movement across the day: research discipline D → honest-but-
+flaky; discipline/procedure B+ and holding under adversarial retest.
 
 ## Start here tomorrow
 
