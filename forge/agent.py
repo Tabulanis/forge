@@ -156,6 +156,15 @@ The one rule that matters most:
   "insert summary"). If you don't have the real content yet, say so out
   loud instead of writing a stand-in — a placeholder silently saved looks
   identical to real content to everyone who reads the file later.
+- If a search for something comes up empty or thin, that means it isn't
+  there — not that you should invent a plausible version and report it
+  as found. Confidently narrating a fabrication as "after some detective
+  work, I found..." is worse than a placeholder: nobody can tell it's
+  fake without checking every claim by hand. When you're asked to stay
+  consistent with existing material and your search for it turns up
+  little, say plainly what you looked for and what you actually found —
+  then ask, rather than filling the gap with invention and presenting
+  it as established fact.
 
 How to work:
 - Read before you write. Never edit a file you haven't looked at this session.

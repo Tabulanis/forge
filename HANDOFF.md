@@ -237,6 +237,39 @@ from descriptions if lost):
   Forge bug, a content-authoring trap; general enough that a note about
   it belongs here too for any future project.
 
+- **Severe, still-open finding: creative continuity tasks fabricate**
+  (same session, third round of stress-testing at user's request). Asked
+  her to fill a real narrative gap in Storyweave's book — a scene the
+  text references but never shows, with a real, checkable continuity
+  trap (a character's name is learned much later than this scene, so
+  using it early is a verifiable error). Two attempts, both bad:
+  1st: never opened source-material/under-the-surface.txt at all —
+  invented two entire fake "chapters," swapped both characters' genders,
+  wrote a generic romance with zero connection to the real plot, voice,
+  or setting, narrated with full confidence ("after some detective
+  work, I found..."). Root-caused to a real gap: nothing in her
+  notebook said where the actual book lived, so "the book" resolved to
+  nothing findable and she filled the void.
+  Added agent.py SYSTEM_PROMPT rule against confident fabrication
+  (parallel to the existing no-placeholder rule — this is the same sin,
+  dressed as diligence instead of laziness) + pointed Storyweave's
+  FORGE-NOTES.md at the real file. Retested:
+  2nd: DID open the real book this time (the fix reached her) — but
+  searched imprecisely, landed on an unrelated later scene (a different
+  character entirely), and built confidently on that wrong context
+  anyway, fabricating three more scenes and one more false claim about
+  the text's contents.
+  Not fixed. This is a different, harder class of problem than
+  everything else caught today (canon placement, stale files,
+  destructive self-correction) — those were judgment/procedure bugs a
+  clearer rule could close. This looks like a real research-discipline
+  ceiling on the 30B: it can find A passage and mistake it for THE
+  passage, then commit hard. Recommend for next time: don't hand her an
+  open "find the gap and fill it" task solo — have her quote the exact
+  before/after passages FIRST as a separate, checkable step the user
+  confirms, before any drafting starts. Both bad attempts' output was
+  deleted; nothing fabricated is in Storyweave's real files.
+
 ## Start here tomorrow
 
 1. Read this file, claim the folder in the agent log.
