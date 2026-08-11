@@ -144,6 +144,23 @@ class Workspace:
 
     def __init__(self, root: str | Path):
         self.root = Path(root).resolve()
+        # Paths agents may never WRITE, one glob per line in .forge-protect
+        # at the workspace root (# for comments). Mechanical on purpose:
+        # 2026-08-11 proved a written rule loses to a direct "fix it" from
+        # the user — the model edited an author's read-only manuscript
+        # minutes after reading a notebook rule saying never to. Reading
+        # stays allowed; only writes are refused. (Known hole: run_command
+        # can still shell its way in — the file tools are what models
+        # actually use, and a fence there covers the real behavior.)
+        self.protected: list[str] = []
+        pf = self.root / ".forge-protect"
+        if pf.is_file():
+            try:
+                self.protected = [ln.strip() for ln in
+                                  pf.read_text(encoding="utf-8").splitlines()
+                                  if ln.strip() and not ln.strip().startswith("#")]
+            except OSError:
+                pass
         # Files the model has actually seen this session. edit_file refuses
         # to touch a file that isn't in here — "read before you write" as a
         # hard rule instead of a polite request in the prompt.
@@ -174,6 +191,16 @@ class Workspace:
             return str(p.relative_to(self.root))
         except ValueError:
             return str(p)
+
+    def protection(self, f: Path) -> str | None:
+        """The glob that write-protects f, or None. fnmatch's * crosses
+        slashes, so 'source-material/*' covers nested files too."""
+        import fnmatch
+        rel = self.rel(f)
+        for g in self.protected:
+            if fnmatch.fnmatch(rel, g):
+                return g
+        return None
 
     def mark_read(self, f: Path) -> None:
         """Record that the model has seen f's CURRENT content — via read,
@@ -349,8 +376,19 @@ def build_tools(ws: Workspace, fenced: bool = False) -> list[Tool]:
         bk.parent.mkdir(parents=True, exist_ok=True)
         bk.write_bytes(f.read_bytes())
 
+    def _refuse_protected(f: Path) -> str | None:
+        g = ws.protection(f)
+        if g:
+            return (f"Error: {ws.rel(f)} is write-protected by .forge-protect "
+                    f"({g}) — agents may read it, never change it. Tell the "
+                    f"user exactly what to change and where (file and line); "
+                    f"they make the change themselves.")
+        return None
+
     def write_file(path: str, content: str) -> str:
         f = ws.resolve(path)
+        if (refusal := _refuse_protected(f)):
+            return refusal
         existed = f.exists()
         if existed and f not in ws.reads:
             return (f"Error: {ws.rel(f)} already exists and you haven't read it "
@@ -366,6 +404,8 @@ def build_tools(ws: Workspace, fenced: bool = False) -> list[Tool]:
 
     def undo_file(path: str) -> str:
         f = ws.resolve(path)
+        if (refusal := _refuse_protected(f)):
+            return refusal
         bk = ws.root / ".forge_backups" / ws.rel(f)
         if not bk.exists():
             return (f"Error: no backup of {ws.rel(f)} — backups exist only for "
@@ -381,6 +421,8 @@ def build_tools(ws: Workspace, fenced: bool = False) -> list[Tool]:
 
     def edit_file(path: str, old: str, new: str, replace_all: bool = False) -> str:
         f = ws.resolve(path)
+        if (refusal := _refuse_protected(f)):
+            return refusal
         if not f.exists():
             return f"Error: no such file: {ws.rel(f)}"
         if f not in ws.reads:
@@ -448,6 +490,13 @@ def build_tools(ws: Workspace, fenced: bool = False) -> list[Tool]:
         this fallback wasn't, so the same query found different truths
         depending on what was installed."""
         d = ws.resolve(path)
+        # A silent "(no matches)" for a directory that doesn't even exist
+        # taught the model that entire real books "contain no mention" of
+        # their own protagonist — it searched invented folders (src/,
+        # novels/) and read the empty result as fact about the text.
+        if not d.exists():
+            return (f"Error: no such directory: {ws.rel(d)} — use list_dir "
+                    f"to see what actually exists before searching in it.")
         needle = _canon(pattern.strip())
         if not needle:
             return "(empty pattern)"

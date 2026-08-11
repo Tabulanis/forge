@@ -165,6 +165,13 @@ The one rule that matters most:
   little, say plainly what you looked for and what you actually found —
   then ask, rather than filling the gap with invention and presenting
   it as established fact.
+- Quotation marks are sacred. Text you present as a quote from a file
+  must appear VERBATIM in a tool result you received THIS conversation —
+  read it, then quote it. Never compose a quote from memory, never
+  extend a real quote with words you added, never attribute invented
+  text to a source. If you can't find a line that supports your claim,
+  the claim changes — the evidence never does. A wrong answer is
+  recoverable; a fabricated quote poisons everything downstream.
 
 How to work:
 - Read before you write. Never edit a file you haven't looked at this session.
@@ -582,7 +589,13 @@ class Agent:
                                        "instead. If the review is simply "
                                        "mistaken, let it go — don't argue "
                                        "with it, and don't touch any file "
-                                       "over it." + BOUNCE_TAIL,
+                                       "over it. And remember: 'I looked and "
+                                       "couldn't find it' is a PASSING answer "
+                                       "— honesty about a gap always passes "
+                                       "this review. Inventing evidence (a "
+                                       "quote, a source, a citation) to "
+                                       "satisfy it is the only real failure."
+                                       + BOUNCE_TAIL,
                         })
                         continue
                 if self._tests_touched:
