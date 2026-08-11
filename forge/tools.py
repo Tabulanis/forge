@@ -433,21 +433,24 @@ def build_tools(ws: Workspace, fenced: bool = False) -> list[Tool]:
             entries.append(f"{item.name}/" if item.is_dir() else item.name)
         return "\n".join(entries) if entries else "(empty)"
 
-    def search(pattern: str, path: str = ".", max_results: int = 60) -> str:
-        """Content search. Uses ripgrep when present (fast), else Python."""
-        d = ws.resolve(path)
-        try:
-            r = subprocess.run(
-                ["rg", "--line-number", "--no-heading", "--color=never",
-                 "--max-count=5", pattern, str(d)],
-                capture_output=True, text=True, timeout=30,
-            )
-            if r.returncode in (0, 1):
-                hits = r.stdout.splitlines()[:max_results]
-                return "\n".join(hits) if hits else "(no matches)"
-        except (FileNotFoundError, subprocess.TimeoutExpired):
-            pass  # fall through to the pure-Python walk
+    def _canon(s: str) -> str:
+        """Case and quote-style must never decide whether text is 'found'.
+        A model that searches "pont neuf" and gets nothing concludes the
+        bridge isn't in the book — a false negative that seeds a false
+        answer. Prose also uses curly quotes (GQ’s) where a model types
+        straight ones (GQ's); both spell the same word."""
+        return (s.replace("’", "'").replace("‘", "'")
+                 .replace("“", '"').replace("”", '"').casefold())
 
+    def search(pattern: str, path: str = ".", max_results: int = 60) -> str:
+        """Case-insensitive, quote-forgiving content search. One code path
+        on purpose — a previous ripgrep fast-path was case-sensitive while
+        this fallback wasn't, so the same query found different truths
+        depending on what was installed."""
+        d = ws.resolve(path)
+        needle = _canon(pattern.strip())
+        if not needle:
+            return "(empty pattern)"
         hits = []
         for root, dirs, files in os.walk(d):
             dirs[:] = [x for x in dirs if not x.startswith(".") and x != "node_modules"]
@@ -456,7 +459,7 @@ def build_tools(ws: Workspace, fenced: bool = False) -> list[Tool]:
                 try:
                     for i, line in enumerate(fp.read_text(encoding="utf-8",
                                                           errors="ignore").splitlines(), 1):
-                        if pattern in line:
+                        if needle in _canon(line):
                             hits.append(f"{ws.rel(fp)}:{i}:{line.strip()[:200]}")
                             if len(hits) >= max_results:
                                 return "\n".join(hits)
@@ -571,7 +574,14 @@ def build_tools(ws: Workspace, fenced: bool = False) -> list[Tool]:
         ),
         Tool(
             name="search",
-            description="Search file contents for a pattern across the workspace.",
+            description="Search file contents across the workspace. "
+                        "Case-insensitive and forgiving about quote style. "
+                        "Use ONE distinctive word or a short exact phrase — "
+                        "long phrases miss on tiny wording differences. "
+                        "Search the TOPIC, never your guessed answer: to find "
+                        "a height, search 'foot' or 'tall', not 'six feet' — "
+                        "searching only for your guess and missing it proves "
+                        "nothing about what the text says.",
             parameters={
                 "type": "object",
                 "properties": {
