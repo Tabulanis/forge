@@ -18,6 +18,13 @@ import time
 MODEL_UNITS = ("forge-model-big", "forge-model-vision",
                "forge-model-little", "forge-model-tiny")
 
+PORTS = {"big": 8080, "vision": 8090, "little": 8083, "tiny": 8081}
+
+# How much VRAM the big model takes once loaded — measured 2026-08-10
+# (4.0 → 23.3 GB). Only used to draw the loading bar; if the model ever
+# changes, the bar just runs a little fast or slow, nothing breaks.
+EXPECTED_LOAD_MB = {"big": 19300}
+
 
 def _run(*args: str) -> subprocess.CompletedProcess:
     return subprocess.run(args, capture_output=True, text=True, timeout=60)
@@ -32,6 +39,31 @@ def vram() -> str:
         return f"{int(used) / 1024:.1f} / {int(total) / 1024:.1f} GB used"
     except Exception:
         return ""
+
+
+def vram_mb() -> int | None:
+    try:
+        r = _run("nvidia-smi", "--query-gpu=memory.used",
+                 "--format=csv,noheader,nounits")
+        return int(r.stdout.strip().splitlines()[0])
+    except Exception:
+        return None
+
+
+def is_ready(which: str) -> bool:
+    """llama-server answers /health with 200 only once the weights are
+    actually loaded — before that the port refuses or says 503. This is
+    the difference between 'systemd started it' and 'she can talk'."""
+    import urllib.request
+    port = PORTS.get(which)
+    if not port:
+        return False
+    try:
+        with urllib.request.urlopen(
+                f"http://127.0.0.1:{port}/health", timeout=2) as r:
+            return r.status == 200
+    except Exception:
+        return False
 
 
 def running() -> list[str]:

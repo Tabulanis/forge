@@ -108,14 +108,53 @@ def show_power_off() -> None:
 
 
 def show_power_on(which: str = "big") -> None:
+    import time
     from . import power
+    if power.is_ready(which):
+        console.print(f"[green]{which} is already up.[/green] "
+                      "[dim]cd into your project and type[/dim] [cyan]merge[/cyan]")
+        return
     res = power.on(which)
     if res.get("error"):
         console.print(f"[red]{escape(res['error'])}[/red]")
         return
-    console.print(f"[green]starting {res['started'][0]}[/green] "
-                  "[dim]— the big model takes about a minute to load; "
-                  "/doctor will say when it's ready[/dim]")
+
+    from rich.progress import (BarColumn, Progress, TextColumn,
+                               TimeElapsedColumn)
+    # For the big model the bar is real: the weights fill the graphics card
+    # as they load, so VRAM growth IS the progress. CPU models give no such
+    # signal — their bar paces itself on a typical load time instead.
+    base = power.vram_mb()
+    expect = power.EXPECTED_LOAD_MB.get(which)
+    started = time.monotonic()
+    try:
+        with Progress(TextColumn(f"[cyan]waking {which}[/cyan]"),
+                      BarColumn(bar_width=30),
+                      TextColumn("{task.percentage:>3.0f}%"),
+                      TimeElapsedColumn(), console=console) as prog:
+            task = prog.add_task("load", total=100)
+            while not power.is_ready(which):
+                if expect and base is not None:
+                    used = power.vram_mb()
+                    pct = ((used - base) / expect * 100) if used else 0
+                else:
+                    pct = (time.monotonic() - started) / 60 * 100
+                # hold just short of full until she actually answers
+                prog.update(task, completed=max(1.0, min(pct, 97.0)))
+                if time.monotonic() - started > 300:
+                    prog.stop()
+                    console.print("[yellow]five minutes and still loading — "
+                                  "something's wrong. run[/yellow] "
+                                  "[cyan]forge doctor[/cyan]")
+                    return
+                time.sleep(1)
+            prog.update(task, completed=100)
+    except KeyboardInterrupt:
+        console.print("\n[dim]she keeps loading in the background — "
+                      "run[/dim] [cyan]forge doctor[/cyan] [dim]to check on her[/dim]")
+        return
+    console.print("[green]she's ready.[/green] [dim]cd into your project "
+                  "and type[/dim] [cyan]merge[/cyan]")
 
 
 def make_agent(cfg: dict, workspace: Path) -> Agent:

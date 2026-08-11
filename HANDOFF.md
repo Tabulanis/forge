@@ -116,6 +116,17 @@ from descriptions if lost):
   off/on buttons; the dash itself stays up as the wake button. Full
   round trip verified: off, wake via the API, 30B back and answering.
   `forge help power` explains it in kid terms.
+- **`merge` is on the PATH**: ~/.local/bin/{merge,forge,forge-dash} →
+  the venv entry points. The user starts her with `cd <project>; merge`.
+- **`merge on` now waits with a real loading bar** — VRAM growth against
+  the measured 19.3GB the 30B takes (power.EXPECTED_LOAD_MB), finishing
+  when llama-server's /health goes 200 (power.is_ready — the difference
+  between "systemd started it" and "she can talk"). CPU models pace on
+  time instead. Already-up short-circuits; Ctrl-C leaves it loading;
+  5-minute bail points at doctor. /api/power GET now returns ready[] next
+  to running[], and the dashboard Power card shows "(loading…)" until
+  ready. Measured: warm wake (weights still in page cache) is ~8s; cold
+  wake after boot is the ~1min one.
 
 ## Start here tomorrow
 

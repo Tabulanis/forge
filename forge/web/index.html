@@ -296,8 +296,10 @@ async function checkHealth() {
 async function checkPower() {
   try {
     const p = await api('/api/power');
-    $('power-status').textContent = (p.running.length
-      ? 'running: ' + p.running.join(', ')
+    const names = p.running.map(m =>
+      (p.ready || []).includes(m) ? m : m + ' (loading…)');
+    $('power-status').textContent = (names.length
+      ? 'running: ' + names.join(', ')
       : 'all local models are off') + (p.vram ? ' · ' + p.vram : '');
   } catch (e) { $('power-status').textContent = ''; }
 }
