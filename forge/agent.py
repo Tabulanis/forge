@@ -61,9 +61,12 @@ TRACE_EVERY = 20           # steps of one task between "walk it back" taps
 # user — seen live: a casual chat turn ended in "Final Answer (Corrected and
 # Verified)" about a review the user never saw. This tail rides on every
 # bounce to keep the revision pointed outward.
-BOUNCE_TAIL = (" Then give your final answer as if this check never "
-               "happened: written to the user, about their request. Don't "
-               "mention the check and don't narrate your re-verification.")
+# Wording matters: an earlier tail said "as if this check never happened"
+# and the 30B parroted that exact phrase INTO its answer. Instructions here
+# must not contain sentences that would look reasonable in a final answer.
+BOUNCE_TAIL = (" Afterwards, reply to the user about their request only. "
+               "Forbidden in that reply: any mention of checks, reviews, "
+               "verification steps, or that anything was revised.")
 
 # Files she may talk about without having opened: naming one of these in a
 # final answer is fine; naming a .py she never read is guessing.
