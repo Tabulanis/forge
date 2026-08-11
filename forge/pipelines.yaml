@@ -8,10 +8,64 @@
 #   ask      one model call, no tools — analysis, critique, routing
 #   command  a shell command, no model — the honest referee
 #   loop     repeat inner steps until a check passes
+#   plan     break a big task into a numbered list of small, checkable
+#            sub-steps (see pipeline.py's module docstring for why)
+#   foreach  run inner steps once per sub-step a `plan` produced, {item}
+#            bound to that sub-step's text
 #
 # {input} is what you typed. {step_name} is any earlier step's output.
 
 pipelines:
+
+  # ---------------------------------------------------------------
+  # Found live 2026-08-11: handed an open task ("find the gap in the
+  # story and fill it"), a 30B model fabricated wholesale — invented
+  # chapters, swapped character genders, never opened the real source
+  # file. It could verify a narrow claim reliably; it could not verify
+  # one big open-ended one. This recipe is the fix: split first, verify
+  # each small piece with its own agent pass, THEN draft — and the draft
+  # step is told to use only what got confirmed, never fill a gap with
+  # invention.
+  # ---------------------------------------------------------------
+  chunk-and-verify:
+    description: Break an open-ended task into small research steps, verify each, then draft from only what's confirmed.
+    steps:
+      - name: findings
+        kind: plan
+        model: qwen30b
+        prompt: |
+          {input}
+
+          Before anything gets written, what needs to be found and
+          confirmed FIRST? Facts to look up, passages to locate,
+          continuity to check. Research and verification steps only.
+      - name: research
+        kind: foreach
+        over: findings
+        steps:
+          - name: check
+            kind: agent
+            model: qwen30b
+            prompt: |
+              {item}
+
+              Report only what you actually find in the project's files —
+              quote or cite it precisely (file and line, or file and
+              section). If you search and it isn't there, say so plainly.
+              This step is research only: do not draft, invent, or
+              propose new content.
+      - name: draft
+        kind: agent
+        model: qwen30b
+        prompt: |
+          Original request: {input}
+
+          What was verified while researching it:
+          {research}
+
+          Now do the actual task, using ONLY what's confirmed above for
+          any fact you rely on. If something the task needs was never
+          confirmed, say so plainly instead of filling the gap yourself.
 
   # ---------------------------------------------------------------
   # The workhorse. Build it, run the real check, and if the check

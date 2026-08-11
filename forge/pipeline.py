@@ -7,12 +7,20 @@ reads the failure, and tries again will beat a strong model that answers once
 and hopes. So the loops here are built around checks that are real — a shell
 command's exit code — not a model's opinion of its own work.
 
-Four kinds of step:
+Six kinds of step:
 
   agent    — a full agent loop with tools. Reads, writes, runs things.
   ask      — one model call, no tools. Analysis, critique, routing decisions.
   command  — run a shell command. No model involved. The honest referee.
   loop     — repeat inner steps until a check passes, or give up after N.
+  plan     — one call that breaks a big, open-ended ask into a numbered
+             list of small, checkable sub-steps. Exists because an open
+             task ("find the gap and fill it") is where a local model
+             fabricates — it can't verify a claim that big in one pass.
+             Narrow sub-steps it CAN verify.
+  foreach  — runs its inner steps once per item a `plan` step produced,
+             {item} bound to that one sub-step's text. Pairs with plan to
+             turn "one big guess" into "several small, checked answers."
 
 Each step's output is stored under its name and can be dropped into any later
 prompt with {braces}, so steps feed each other:
@@ -152,6 +160,72 @@ class Pipeline:
         return StepResult(step["name"], "command", out[:8000],
                           ok=(r.returncode == 0), detail=f"exit {r.returncode}")
 
+    # -- planning: one big task -> several small, checkable ones -----
+
+    _PLAN_SYSTEM = (
+        "Break the task into a numbered list of small, concrete, "
+        "independently checkable sub-steps — each narrow enough to "
+        "research or verify on its own before anything gets written. "
+        "Every sub-step should be something you could find and quote "
+        "evidence for, or clearly say you couldn't find. Never include a "
+        "drafting, writing, or inventing step — sub-steps establish facts, "
+        "they don't create content. 3 to 6 steps. Reply with ONLY the "
+        "numbered list, one sub-step per line ('1. ...'), nothing else — "
+        "no preamble, no summary."
+    )
+
+    def _run_plan(self, step: dict, values: dict) -> StepResult:
+        provider = self._provider(step["model"])
+        prompt = _fill(step.get("prompt", "{input}"), values)
+        system = step.get("system") or self._PLAN_SYSTEM
+        reply = provider.complete(system, [{"role": "user", "content": prompt}], [])
+        items = [m.group(1).strip() for line in reply.text.splitlines()
+                 if (m := re.match(r"\s*\d+[\.\)]\s*(.+)", line))]
+        if not items:
+            # Never produce zero sub-steps — degrade to the whole task as
+            # one step rather than silently doing nothing.
+            items = [prompt.strip()]
+        values[f"__plan__{step['name']}"] = "\n".join(items)
+        listing = "\n".join(f"{i}. {t}" for i, t in enumerate(items, 1))
+        return StepResult(step["name"], "plan", listing, detail=f"{len(items)} sub-step(s)")
+
+    def _run_foreach(self, step: dict, values: dict,
+                     ask: Callable | None) -> Iterator[Any]:
+        plan_name = step.get("over")
+        if not plan_name:
+            raise PipelineError(f"foreach step {step['name']!r} needs 'over: <plan step name>'")
+        raw = values.get(f"__plan__{plan_name}")
+        if raw is None:
+            raise PipelineError(
+                f"foreach step {step['name']!r} refers to plan {plan_name!r}, "
+                f"which hasn't run yet (or isn't a plan step) — plan must "
+                f"come before foreach in the step list.")
+        items = [ln for ln in raw.splitlines() if ln.strip()]
+        inner = step.get("steps", [])
+        pieces = []
+        for i, item in enumerate(items, 1):
+            yield RunEvent(kind="loop_round", step=step["name"], round=i)
+            # A copy per item: each sub-step gets the shared context (input,
+            # earlier steps) plus its own {item}, but sub-steps don't leak
+            # into each other's values — they're independent, on purpose.
+            item_values = dict(values)
+            item_values["item"] = item
+            item_values["item_number"] = str(i)
+            last: StepResult | None = None
+            for sub in inner:
+                for out in self._dispatch(sub, item_values, ask):
+                    if isinstance(out, RunEvent):
+                        yield out
+                    else:
+                        last = out
+                        item_values[out.name] = out.output
+            if last:
+                pieces.append(f"### {i}. {item}\n\n{last.output}")
+        combined = "\n\n".join(pieces)
+        values[step["name"]] = combined
+        yield StepResult(step["name"], "foreach", combined,
+                         detail=f"{len(items)} sub-task(s)")
+
     # -- the loop ----------------------------------------------------
 
     def _run_loop(self, step: dict, values: dict,
@@ -216,6 +290,20 @@ class Pipeline:
         if kind == "loop":
             yield from self._run_loop(step, values, ask)
             return
+        if kind == "foreach":
+            yield RunEvent(kind="step_start", step=name, text=kind)
+            res = None
+            for out in self._run_foreach(step, values, ask):
+                if isinstance(out, RunEvent):
+                    yield out
+                else:
+                    res = out
+            values[f"__ok__{name}"] = "1" if (res and res.ok) else "0"
+            yield RunEvent(kind="step_done", step=name, ok=bool(res and res.ok),
+                           text=(res.detail if res else ""))
+            if res:
+                yield res
+            return
 
         yield RunEvent(kind="step_start", step=name, text=kind)
         if kind == "agent":
@@ -224,6 +312,8 @@ class Pipeline:
             res = self._run_ask(step, values)
         elif kind == "command":
             res = self._run_command(step, values)
+        elif kind == "plan":
+            res = self._run_plan(step, values)
         else:
             raise PipelineError(f"Unknown step kind {kind!r} in step {name!r}")
 
