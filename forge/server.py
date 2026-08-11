@@ -27,7 +27,7 @@ from pydantic import BaseModel
 
 from .config import (CONFIG_PATH, load_config, load_pipelines, save_config,
                      save_pipelines)
-from . import power
+from . import power, recall
 from .doctor import run_checks
 from .help_content import ORDER, TOPICS, VERSION
 from .media import capabilities, load_media_config
@@ -558,6 +558,10 @@ def serve() -> None:
                     help="Mint a fresh token, invalidating the old one")
     ap.add_argument("--port", type=int, help="Port to listen on")
     args = ap.parse_args()
+
+    # The librarian works out of this process because it's the one that's
+    # always running — cards get filed whichever door the chat came through.
+    threading.Thread(target=recall.process_queue_forever, daemon=True).start()
 
     cfg = load_config()
     srv = cfg.setdefault("server", {})

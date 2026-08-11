@@ -160,6 +160,26 @@ from descriptions if lost):
   The stray ~/SPC-lore.md was removed. SUPEREGO_PROMPT itself untouched —
   it stays sealed.
 
+- **Mid-term memory** (2026-08-11, user's "use spare RAM for mid-term mem"
+  idea, translated): forge/recall.py. Three tiers now: context (short),
+  saved sessions (mid), notes+files (long). `recall` tool (tools.py, safe,
+  no permission) does plain-code word search across all saved session
+  transcripts + the librarian's index cards — no model in the loop, OS
+  file cache makes it instant. System prompt tells her to recall instead
+  of guessing, and that recall-during-CHAT is allowed. THE LIBRARIAN: the
+  little 3B (now `systemctl --user enable --now forge-model-little`,
+  starts at boot) distills each finished exchange into a one-line card in
+  ~/.forge/memory-cards.jsonl. Flow: both doors drop finished turns into
+  ~/.forge/card-queue/ (instant, one file per turn — a CLI thread died
+  with the process and lost cards, hence the tray); the DASH works the
+  tray on a daemon thread every 30s (serve() starts it). Little down =
+  tray waits, search still finds verbatim. Verified live: she recalled
+  the Bamboo Labs printer from a previous session's transcript on her own.
+  NOT done (user floated it, worth an experiment): quantized KV cache to
+  stretch the 30B's context 16k→32k (-ctk/-ctv q8_0 in start-model.sh);
+  measure quality+speed before keeping. Card quality from the 3B is
+  unreviewed — eyeball memory-cards.jsonl after a few days.
+
 ## Start here tomorrow
 
 1. Read this file, claim the folder in the agent log.

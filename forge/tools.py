@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Callable
 
 from .mathtools import COMPUTE_DESCRIPTION, run_compute
+from .recall import search as recall_search
 
 MAX_READ_BYTES = 400_000     # a huge file would blow the context window
 MAX_OUTPUT_CHARS = 30_000    # same, for command output
@@ -630,5 +631,23 @@ def build_tools(ws: Workspace, fenced: bool = False) -> list[Tool]:
             run=run_compute,
             needs_permission=True,
             summarize=lambda a: f"compute: {a.get('code', '')[:100]}",
+        ),
+        Tool(
+            name="recall",
+            description="Search every past conversation you and the user have "
+                        "had — your mid-term memory. Use it when the user "
+                        "mentions something said or decided before that you "
+                        "can't see in the current conversation, BEFORE "
+                        "guessing or asking them to repeat it. Returns "
+                        "verbatim snippets with date, folder, and who said "
+                        "it. Query with a few concrete words (names, "
+                        "things, decisions), not full sentences.",
+            parameters={
+                "type": "object",
+                "properties": {"query": {"type": "string",
+                                         "description": "A few concrete words to look for"}},
+                "required": ["query"],
+            },
+            run=lambda query: recall_search(query, workspace=str(ws.root)),
         ),
     ]

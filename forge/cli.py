@@ -26,6 +26,7 @@ from .config import (CONFIG_PATH, active_model_config, load_config,
 from .doctor import FAIL, OK, WARN, report, run_checks
 from .help_content import ORDER, TOPICS, WELCOME, search, topic
 from .media import capabilities, load_media_config
+from . import recall
 from .pipeline import Pipeline
 from .session import SESS_DIR, Session
 
@@ -210,9 +211,11 @@ def print_events(sess: Session, message: str) -> None:
     """Drive one turn: render it as it happens, and mirror every event into
     the session log — so the web page can show this exact conversation."""
     sess.emit("user", {"text": message})
+    final_text = ""
     try:
         for ev in sess.agent.run(message, ask=ask_permission):
             if ev.kind == "text" and ev.text.strip():
+                final_text = ev.text
                 console.print()
                 console.print(Markdown(ev.text))
                 sess.emit("text", {"text": ev.text})
@@ -262,6 +265,8 @@ def print_events(sess: Session, message: str) -> None:
     finally:
         sess.last_used = time.time()
         sess.save()
+        # the librarian files an index card in the background
+        recall.remember_turn(message, final_text, str(sess.workspace), sess.id)
 
 
 def show_sessions(current_id: str) -> list[Path]:

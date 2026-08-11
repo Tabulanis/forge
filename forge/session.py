@@ -29,6 +29,7 @@ import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from . import recall
 from .agent import Agent
 from .config import active_model_config, load_config
 from .media import load_media_config
@@ -302,9 +303,11 @@ class Session:
             self.busy = True
         self.unattended = False   # someone just typed — they're watching again
         self.last_used = time.time()
+        final_text = ""
         try:
             for ev in self.agent.run(text, ask=self.ask_permission):
                 if ev.kind == "text" and ev.text.strip():
+                    final_text = ev.text
                     self.emit("text", {"text": ev.text})
                 elif ev.kind == "tool_request":
                     if not ev.will_ask:
@@ -324,6 +327,8 @@ class Session:
             self.busy = False
             self.last_used = time.time()
             self.save()
+            # the librarian files an index card in the background
+            recall.remember_turn(text, final_text, str(self.workspace), self.id)
 
 
 class SessionStore:
