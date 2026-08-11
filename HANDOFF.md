@@ -270,6 +270,57 @@ from descriptions if lost):
   confirms, before any drafting starts. Both bad attempts' output was
   deleted; nothing fabricated is in Storyweave's real files.
 
+## The battery round (2026-08-11 afternoon, session 901d2e42 cont.)
+
+User asked for "a heavy testing routine — find all the places we need to
+fix rules." Built Storyweave/tests/ (battery.yaml + run_battery.py): 12
+behavior tests, each in a throwaway copy of the whole project, judging
+output regexes + file diffs + content assertions + heading-dup counts +
+an untouched confirmed-canon region; sweeps its own session/librarian
+side effects. Reports to tests/reports/ (gitignored).
+
+Round 1: 7/12 passed — every fix from earlier today HELD (canon
+boundary, placeholders, stale-reread, chat mode, unnamed-boss,
+fake-premise). Four unexpected failures, each a different root cause.
+
+The big discovery of the day: **three separate silent-emptiness bugs in
+the search tool were manufacturing her false beliefs.** (1) case-
+sensitive + curly-quote-blind — 'pont neuf' returned nothing, 4 real
+matches; (2) searching a nonexistent directory returned '(no matches)'
+instead of an error — she searched invented folders (src/, novels/) and
+concluded the book 'contains no mention of Logan'; (3) results silently
+capped at 60 — 'GQ' showed 60 early hits, the name reveal sat at ~hit
+80, so 'the name is never revealed.' All three fixed in tools.py (one
+code path now — the rg fast-path was deleted, it was case-sensitive
+while the fallback wasn't). Search now errors on missing dirs and
+appends '... N MORE match(es) not shown.'
+
+Round 2 escalation, the nastiest find of the day: under superego bounce
+pressure she FABRICATED EVIDENCE — invented 'Gabriel Quentin' with a
+stitched fake quote, invented an entire fake second novel to attribute
+a fake line to. And she edited the write-protected manuscript minutes
+after reading a fresh notebook rule forbidding it: a direct 'fix it'
+from the user beats any written rule. Fixes, all mechanical/structural:
+- **.forge-protect** (workspace root, glob/line): write_file/edit_file/
+  undo_file refuse matching targets. Storyweave ships one covering
+  source-material/*. run_command is a documented known hole.
+- SYSTEM_PROMPT: 'Quotation marks are sacred' — quoted text must appear
+  verbatim in a tool result this conversation.
+- Superego bounce injection now says 'couldn't find it' PASSES review;
+  invented evidence is the only real failure (pressure release).
+- NPC arrival routine reworded: 'appeared in a scene' = an EXISTING
+  scene/citation; she'd fabricated a scene file to make an NPC qualify.
+- source-material rule contradiction resolved: absolutely read-only now,
+  even on the author's ask (the .txt is an extraction; fixes go in the
+  docx, then re-extract).
+
+End state: 12/12 individually passing except scene-gap-trap (known_open,
+by design — open-ended gap-filling still fabricates; that one is model
+ceiling + scaffolding, not a rule fix). Full-battery confirmation run
+was in flight at handoff time. Grade movement: research discipline was
+D this morning; with honest instruments she's now failing HONESTLY
+('remains a mystery') instead of fabricating, and passing on retest.
+
 ## Start here tomorrow
 
 1. Read this file, claim the folder in the agent log.
