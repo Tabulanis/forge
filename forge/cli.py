@@ -9,8 +9,11 @@ commands handle the meta stuff.
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
+import time
+import uuid
 from pathlib import Path
 
 from rich.console import Console
@@ -18,15 +21,13 @@ from rich.markdown import Markdown
 from rich.markup import escape
 from rich.panel import Panel
 
-from .agent import Agent
 from .config import (CONFIG_PATH, active_model_config, load_config,
                      load_pipelines, save_config)
 from .doctor import FAIL, OK, WARN, report, run_checks
 from .help_content import ORDER, TOPICS, WELCOME, search, topic
 from .media import capabilities, load_media_config
 from .pipeline import Pipeline
-from .providers import build_provider
-from .tools import Workspace, build_media_tools, build_tools
+from .session import SESS_DIR, Session
 
 console = Console()
 
@@ -35,7 +36,7 @@ workspace: [dim]{ws}[/dim]
 model: [bold]{model}[/bold] [dim]({provider})[/dim]   permissions: [bold]{perm}[/bold]
 
 [dim]/help  anything you're unsure about · /doctor  if something's broken
-/model  switch brains · Ctrl-D  quit[/dim]"""
+/model  switch brains · /sessions  earlier chats · Ctrl-D  quit[/dim]"""
 
 def show_help(arg: str = "") -> None:
     """`/help`, `/help models`, or `/help why is it slow` — all one door."""
@@ -157,41 +158,37 @@ def show_power_on(which: str = "big") -> None:
                   "and type[/dim] [cyan]merge[/cyan]")
 
 
-def make_agent(cfg: dict, workspace: Path) -> Agent:
-    mcfg = active_model_config(cfg)
-    provider = build_provider(mcfg)
-    ws = Workspace(workspace)
-    mc = load_media_config(cfg)
-    # Same little-brain hookup the dashboard uses: a model named by
-    # agent.summarizer_model takes the memory-compaction side-job.
-    summarizer = None
-    s_name = (cfg["agent"].get("summarizer_model") or "").strip()
-    if s_name and s_name in cfg.get("models", {}):
-        try:
-            summarizer = build_provider(cfg["models"][s_name])
-        except Exception:
-            summarizer = None
-    superego = None
-    if cfg["agent"].get("superego", True):
-        j_name = (cfg["agent"].get("superego_model") or "").strip()
-        j_cfg = (cfg["models"].get(j_name)
-                 if j_name in cfg.get("models", {})
-                 else active_model_config(cfg))
-        try:
-            superego = build_provider(j_cfg)
-        except Exception:
-            superego = None
-    return Agent(
-        provider=provider,
-        tools=build_tools(ws, fenced=bool(cfg.get("kid_mode")))
-              + build_media_tools(ws, mc),
-        max_steps=int(cfg["agent"].get("max_steps", 40)),
-        permission_mode=cfg["agent"].get("permission_mode", "ask"),
-        notes_path=ws.root / "FORGE-NOTES.md",
-        summarizer=summarizer,
-        superego=superego,
-        reads=ws.reads,
-    )
+def _session_files() -> list[Path]:
+    """Saved conversations, newest first — the one list both doors share."""
+    try:
+        return sorted(SESS_DIR.glob("*.json"),
+                      key=lambda p: p.stat().st_mtime, reverse=True)
+    except OSError:
+        return []
+
+
+def open_session(cfg: dict, workspace: Path, resume: bool) -> Session:
+    """
+    A conversation IS a Session — the same object the web chat uses, saved
+    to the same folder. That's the whole one-brain-two-doors trick: this
+    terminal and the browser drawer are just two views of ~/.forge/sessions/.
+    """
+    if resume:
+        for f in _session_files():
+            try:
+                d = json.loads(f.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            if Path(d.get("workspace", "")) != workspace:
+                continue
+            s = Session.load(f, cfg)
+            if s:
+                console.print(f"[dim]continuing your last chat here "
+                              f"({len(s.agent.history)} earlier entries) — "
+                              f"also visible in the web drawer[/dim]")
+                return s
+        console.print("[dim]no earlier chat in this folder — starting fresh[/dim]")
+    return Session(uuid.uuid4().hex[:12], workspace, cfg)
 
 
 def ask_permission(tool_name: str, args: dict, summary: str) -> bool:
@@ -209,19 +206,25 @@ def ask_permission(tool_name: str, args: dict, summary: str) -> bool:
     return answer in ("y", "yes", "")
 
 
-def print_events(agent: Agent, message: str) -> None:
-    """Drive one turn and render it as it happens."""
+def print_events(sess: Session, message: str) -> None:
+    """Drive one turn: render it as it happens, and mirror every event into
+    the session log — so the web page can show this exact conversation."""
+    sess.emit("user", {"text": message})
     try:
-        for ev in agent.run(message, ask=ask_permission):
+        for ev in sess.agent.run(message, ask=ask_permission):
             if ev.kind == "text" and ev.text.strip():
                 console.print()
                 console.print(Markdown(ev.text))
+                sess.emit("text", {"text": ev.text})
             elif ev.kind == "tool_request":
                 # A permission prompt is about to describe this action in
                 # full — no need to also whisper it here first.
                 if not ev.will_ask:
                     console.print(f"[dim]  · {escape(ev.summary)}[/dim]")
+                sess.emit("tool", {"tool": ev.tool, "summary": ev.summary})
             elif ev.kind == "tool_result":
+                sess.emit("result", {"tool": ev.tool,
+                                     "text": (ev.text or "")[:2000]})
                 if ev.text == "declined":
                     console.print("[red]  · declined[/red]")
                     continue
@@ -235,16 +238,19 @@ def print_events(agent: Agent, message: str) -> None:
                     console.print(f"[dim]    … {len(lines) - 3} more line(s)[/dim]")
             elif ev.kind == "note":
                 console.print(f"[yellow italic]  {escape(ev.text)}[/yellow italic]")
+                sess.emit("note", {"text": ev.text})
             elif ev.kind == "error":
                 console.print(f"[red]{escape(ev.text)}[/red]")
+                sess.emit("error", {"text": ev.text})
                 # A dead model server is the single most common failure, and
                 # the raw exception says nothing useful to someone new.
                 if "connect" in ev.text.lower() or "refused" in ev.text.lower():
                     console.print("[dim]The model doesn't seem to be running. Try:[/dim] "
-                                  "[cyan]~/forge/start-model.sh big[/cyan]  "
+                                  "[cyan]merge on[/cyan]  "
                                   "[dim]or run[/dim] [cyan]/doctor[/cyan]")
-            elif ev.kind == "done" and ev.usage:
-                u = ev.usage
+            elif ev.kind == "done":
+                sess.emit("done", {"usage": ev.usage or {}})
+                u = ev.usage or {}
                 if u.get("input_tokens") or u.get("output_tokens"):
                     console.print(
                         f"[dim]  ({u.get('input_tokens', 0)} in / "
@@ -252,19 +258,49 @@ def print_events(agent: Agent, message: str) -> None:
                     )
     except KeyboardInterrupt:
         console.print("\n[yellow]interrupted[/yellow]")
+        sess.emit("note", {"text": "interrupted at the terminal"})
+    finally:
+        sess.last_used = time.time()
+        sess.save()
 
 
-def handle_command(line: str, cfg: dict, workspace: Path, agent: Agent) -> tuple[bool, Agent]:
-    """Returns (should_continue, agent) — agent may be rebuilt on a model switch."""
+def show_sessions(current_id: str) -> list[Path]:
+    """List saved chats, newest first. Returns the files in the order shown,
+    so /resume <number> means the same thing the eye just read."""
+    files = _session_files()[:15]
+    if not files:
+        console.print("[dim]no saved chats yet[/dim]")
+        return files
+    for i, f in enumerate(files, 1):
+        try:
+            d = json.loads(f.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        first = next((e.get("text", "") for e in d.get("log", [])
+                      if e.get("kind") == "user"), "")
+        mark = "[bold green]●[/bold green]" if d.get("id") == current_id else " "
+        when = time.strftime("%b %d %H:%M", time.localtime(d.get("last_used", 0)))
+        folder = Path(d.get("workspace", "")).name or "?"
+        console.print(f" {mark} [cyan]{i:>2}[/cyan] [dim]{when}[/dim] "
+                      f"[bold]{folder[:18]:<18}[/bold] {escape(first[:46]) or '(empty)'}")
+    console.print("[dim]same list as the web drawer — /resume <number> "
+                  "picks one up[/dim]")
+    return files
+
+
+def handle_command(line: str, cfg: dict, workspace: Path, sess: Session) -> tuple[bool, Session]:
+    """Returns (should_continue, session) — the session may be swapped by
+    /resume or rebuilt on a model switch."""
     parts = line.strip().split()
     cmd, args = parts[0], parts[1:]
+    agent = sess.agent
 
     if cmd in ("/quit", "/exit"):
-        return False, agent
+        return False, sess
 
     if cmd == "/off":
         show_power_off()
-        return False, agent
+        return False, sess
 
     if cmd == "/help":
         show_help(" ".join(args))
@@ -282,7 +318,30 @@ def handle_command(line: str, cfg: dict, workspace: Path, agent: Agent) -> tuple
 
     elif cmd == "/clear":
         agent.history.clear()
+        sess.log.clear()
+        sess.log_base = 0
+        sess.save()
         console.print("[dim]context cleared[/dim]")
+
+    elif cmd == "/sessions":
+        show_sessions(sess.id)
+
+    elif cmd == "/resume":
+        files = _session_files()[:15]
+        if not args or not args[0].isdigit() or not (1 <= int(args[0]) <= len(files)):
+            console.print("[dim]usage: /resume <number> — see the numbers "
+                          "with /sessions[/dim]")
+        else:
+            picked = Session.load(files[int(args[0]) - 1], cfg)
+            if not picked:
+                console.print("[red]couldn't load that one — the file is "
+                              "damaged[/red]")
+            else:
+                sess.save()
+                console.print(f"[green]picked up the chat in "
+                              f"{picked.workspace}[/green] "
+                              f"[dim]({len(picked.agent.history)} earlier entries)[/dim]")
+                return True, picked
 
     elif cmd == "/model":
         if not args:
@@ -296,10 +355,8 @@ def handle_command(line: str, cfg: dict, workspace: Path, agent: Agent) -> tuple
         else:
             cfg["active_model"] = args[0]
             save_config(cfg)
-            agent_new = make_agent(cfg, workspace)
-            agent_new.history = agent.history        # keep the conversation
+            sess.reload_model(cfg)
             console.print(f"[green]switched to {args[0]}[/green]")
-            return True, agent_new
 
     elif cmd == "/perm":
         if not args or args[0] not in ("ask", "auto", "deny"):
@@ -343,7 +400,7 @@ def handle_command(line: str, cfg: dict, workspace: Path, agent: Agent) -> tuple
     else:
         console.print(f"[red]Unknown command {cmd}. /help for the list.[/red]")
 
-    return True, agent
+    return True, sess
 
 
 def run_pipeline(name: str, spec: dict, task: str, cfg: dict, workspace: Path) -> None:
@@ -398,6 +455,8 @@ def main() -> None:
     ap.add_argument("-w", "--workspace", default=".", help="Project directory")
     ap.add_argument("-m", "--model", help="Model config to use for this run")
     ap.add_argument("--auto", action="store_true", help="Skip permission prompts")
+    ap.add_argument("-c", "--continue", dest="cont", action="store_true",
+                    help="Pick up your last chat in this folder")
     args = ap.parse_args()
 
     # `forge help` and `forge doctor` must work even when nothing else does —
@@ -445,14 +504,15 @@ def main() -> None:
         sys.exit(1)
 
     try:
-        agent = make_agent(cfg, workspace)
+        sess = open_session(cfg, workspace, args.cont)
     except Exception as e:
         console.print(f"[red]Couldn't start: {e}[/red]")
         sys.exit(1)
 
-    # One-shot mode: `forge "fix the tests"` runs and exits.
+    # One-shot mode: `forge "fix the tests"` runs and exits — saved like
+    # any other chat, so even a one-liner can be picked up later.
     if args.message:
-        print_events(agent, " ".join(args.message))
+        print_events(sess, " ".join(args.message))
         return
 
     console.print(Panel(
@@ -471,7 +531,7 @@ def main() -> None:
         if not line:
             continue
         if line.startswith("/"):
-            cont, agent = handle_command(line, cfg, workspace, agent)
+            cont, sess = handle_command(line, cfg, workspace, sess)
             if not cont:
                 console.print("[dim]bye[/dim]")
                 break
@@ -480,11 +540,9 @@ def main() -> None:
         fresh = load_config()
         if fresh["active_model"] != cfg["active_model"]:
             cfg = fresh
-            hist = agent.history
-            agent = make_agent(cfg, workspace)
-            agent.history = hist
+            sess.reload_model(cfg)
             console.print(f"[dim](model changed to {cfg['active_model']} from the dashboard)[/dim]")
-        print_events(agent, line)
+        print_events(sess, line)
 
 
 if __name__ == "__main__":

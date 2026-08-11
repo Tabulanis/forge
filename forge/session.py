@@ -341,6 +341,35 @@ class SessionStore:
                 if s:
                     self.sessions[s.id] = s
 
+    def rescan(self) -> None:
+        """
+        Pick up what the terminal wrote while we were running.
+
+        Both doors share ~/.forge/sessions/ as the one brain: the CLI saves
+        there after every turn, but this store only read the folder at
+        startup. Called before listing or opening sessions, this loads files
+        we've never seen and re-loads ones the terminal has since updated —
+        never touching a session that is busy right now (its in-memory state
+        is newer than any file).
+        """
+        if not SESS_DIR.is_dir():
+            return
+        cfg = None
+        with self.lock:
+            for f in SESS_DIR.glob("*.json"):
+                sid = f.stem
+                try:
+                    mtime = f.stat().st_mtime
+                except OSError:
+                    continue
+                have = self.sessions.get(sid)
+                if have and (have.busy or mtime <= have.last_used + 1):
+                    continue
+                cfg = cfg or load_config()
+                s = Session.load(f, cfg)
+                if s:
+                    self.sessions[sid] = s
+
     def get_or_create(self, session_id: str | None, workspace: str | None) -> Session:
         cfg = load_config()
         with self.lock:

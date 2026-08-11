@@ -237,6 +237,7 @@ class PermissionSpec(BaseModel):
 @app.post("/api/chat", dependencies=[Depends(require_token)])
 def chat(spec: ChatSpec):
     """Start a turn. Returns immediately; watch /api/stream for what happens."""
+    STORE.rescan()   # a chat the terminal saved must be continuable here
     sess = STORE.get_or_create(spec.session, spec.workspace)
     sess.emit("user", {"text": spec.message})
     threading.Thread(target=sess.run_message, args=(spec.message,),
@@ -255,6 +256,9 @@ async def stream(session_id: str, since: int = 0):
     it needs nothing special from the browser.
     """
     sess = STORE.get(session_id)
+    if not sess:
+        STORE.rescan()   # it may be a chat the terminal saved
+        sess = STORE.get(session_id)
     if not sess:
         raise HTTPException(404, "No such session")
 
@@ -304,6 +308,7 @@ def permission(spec: PermissionSpec):
 
 @app.get("/api/sessions", dependencies=[Depends(require_token)])
 def sessions():
+    STORE.rescan()   # terminal chats belong in the drawer too
     return {"sessions": STORE.listing()}
 
 

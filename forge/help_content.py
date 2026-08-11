@@ -155,10 +155,16 @@ fresh token (if you shared the old one): `forge-dash --new-token`.""",
     /clear             forget the conversation, keep the settings
     /config            where your settings file lives
     /tools             what it's able to do
+    /sessions          your saved chats — the same list the web page shows
+    /resume <number>   pick an old chat up where it left off
     /off               leave AND stop the local models (frees the GPU)
     /quit              leave
 
-Anything not starting with / is a message to the assistant.""",
+Anything not starting with / is a message to the assistant.
+
+Every chat is saved automatically. `merge -c` in a folder continues your
+last chat there; the web page's drawer shows the same chats, so you can
+start at the desk and finish from the couch.""",
     },
 
     # ---------------------------------------------------------------- flows

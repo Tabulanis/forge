@@ -128,6 +128,20 @@ from descriptions if lost):
   ready. Measured: warm wake (weights still in page cache) is ~8s; cold
   wake after boot is the ~1min one.
 
+- **One brain, two doors** (user's ask: "make her act like Claude Code —
+  terminal and web"). The CLI now runs on the same Session objects the web
+  uses, saved to the same ~/.forge/sessions/ after every turn. `merge -c`
+  continues the last chat in the current folder; `/sessions` lists saved
+  chats (same list as the web drawer, newest first); `/resume <n>` swaps to
+  one mid-REPL; every CLI event is mirrored into the session log so the web
+  page shows terminal conversations verbatim. SessionStore.rescan() (called
+  on /api/sessions, /api/chat, and stream-miss) picks up files the terminal
+  wrote while the dash was running — never touching a busy session.
+  cli.make_agent is GONE (Session builds the agent). Verified live:
+  one-shot chat → fresh `merge -c` recalled the codeword; a chat created
+  while the dash ran appeared in /api/sessions via rescan. Known edge, by
+  design: the same session open in both doors at once = last save wins.
+
 ## Start here tomorrow
 
 1. Read this file, claim the folder in the agent log.
