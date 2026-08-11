@@ -497,8 +497,11 @@ def build_tools(ws: Workspace, fenced: bool = False) -> list[Tool]:
         if not d.exists():
             return (f"Error: no such directory: {ws.rel(d)} — use list_dir "
                     f"to see what actually exists before searching in it.")
-        needle = _canon(pattern.strip())
-        if not needle:
+        # "foot|tall|height" searches all three at once — one wide net
+        # beats five guesses. The height that hid from three separate
+        # sessions was always one synonym away from the query used.
+        needles = [_canon(p) for p in pattern.split("|") if _canon(p.strip())]
+        if not needles:
             return "(empty pattern)"
         hits, total = [], 0
         for root, dirs, files in os.walk(d):
@@ -508,7 +511,7 @@ def build_tools(ws: Workspace, fenced: bool = False) -> list[Tool]:
                 try:
                     for i, line in enumerate(fp.read_text(encoding="utf-8",
                                                           errors="ignore").splitlines(), 1):
-                        if needle in _canon(line):
+                        if any(n in _canon(line) for n in needles):
                             total += 1
                             if len(hits) < max_results:
                                 hits.append(f"{ws.rel(fp)}:{i}:{line.strip()[:200]}")
@@ -634,12 +637,13 @@ def build_tools(ws: Workspace, fenced: bool = False) -> list[Tool]:
             name="search",
             description="Search file contents across the workspace. "
                         "Case-insensitive and forgiving about quote style. "
-                        "Use ONE distinctive word or a short exact phrase — "
-                        "long phrases miss on tiny wording differences. "
-                        "Search the TOPIC, never your guessed answer: to find "
-                        "a height, search 'foot' or 'tall', not 'six feet' — "
-                        "searching only for your guess and missing it proves "
-                        "nothing about what the text says.",
+                        "Separate alternatives with | to search several words "
+                        "at once — for a height search 'foot|feet|tall|height', "
+                        "for a name reveal search 'name|called|introduced'. "
+                        "Cast a WIDE net of topic words; never search your "
+                        "guessed answer ('six feet') — missing your own guess "
+                        "proves nothing about what the text says. Short "
+                        "distinctive words beat long phrases.",
             parameters={
                 "type": "object",
                 "properties": {
