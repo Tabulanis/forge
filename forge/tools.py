@@ -148,6 +148,11 @@ class Workspace:
         # to touch a file that isn't in here — "read before you write" as a
         # hard rule instead of a polite request in the prompt.
         self.reads: set[Path] = set()
+        # mtime at the moment each file in `reads` was last seen. The author
+        # editing a world file by hand mid-session is a feature here, not an
+        # edge case — this is how the agent notices its cached read is stale
+        # (see Agent._stale_files, which compares this against disk).
+        self.read_mtimes: dict[Path, float] = {}
         # Consecutive edit_file misses per file. Small models get stuck
         # re-guessing the exact text forever; after a couple of misses the
         # error starts telling them to rewrite the file instead.
@@ -169,6 +174,16 @@ class Workspace:
             return str(p.relative_to(self.root))
         except ValueError:
             return str(p)
+
+    def mark_read(self, f: Path) -> None:
+        """Record that the model has seen f's CURRENT content — via read,
+        write, or edit. Stamps the mtime so a later external edit (the
+        author hand-writing into a world file) is detectable as staleness."""
+        self.reads.add(f)
+        try:
+            self.read_mtimes[f] = f.stat().st_mtime
+        except OSError:
+            pass
 
 
 def build_media_tools(ws: Workspace, mc) -> list[Tool]:
@@ -310,7 +325,7 @@ def build_tools(ws: Workspace, fenced: bool = False) -> list[Tool]:
             lines = f.read_text(encoding="utf-8", errors="replace").splitlines()
         except Exception as e:
             return f"Error reading {ws.rel(f)}: {e}"
-        ws.reads.add(f)
+        ws.mark_read(f)
         window = lines[offset:offset + limit]
         if not window:
             return f"(no lines in range; file has {len(lines)} lines)"
@@ -345,7 +360,7 @@ def build_tools(ws: Workspace, fenced: bool = False) -> list[Tool]:
         _backup(f)
         f.write_text(content, encoding="utf-8")
         # Writing the whole file counts as knowing its contents.
-        ws.reads.add(f)
+        ws.mark_read(f)
         verb = "Overwrote" if existed else "Created"
         return f"{verb} {ws.rel(f)} ({len(content.splitlines())} lines)"
 
@@ -361,7 +376,7 @@ def build_tools(ws: Workspace, fenced: bool = False) -> list[Tool]:
         # Swap, so undoing twice redoes — nothing is ever lost either way.
         if current is not None:
             bk.write_bytes(current)
-        ws.reads.add(f)
+        ws.mark_read(f)
         return f"Restored {ws.rel(f)} from backup (undo again to redo)."
 
     def edit_file(path: str, old: str, new: str, replace_all: bool = False) -> str:
@@ -380,6 +395,7 @@ def build_tools(ws: Workspace, fenced: bool = False) -> list[Tool]:
                 _backup(f)
                 f.write_text(fixed, encoding="utf-8")
                 ws.edit_misses.pop(f, None)
+                ws.mark_read(f)
                 return (f"Edited {ws.rel(f)} (1 replacement — your text's "
                         f"whitespace didn't match the file exactly, but it "
                         f"matched one place clearly, so the edit was applied "
@@ -401,6 +417,7 @@ def build_tools(ws: Workspace, fenced: bool = False) -> list[Tool]:
         ws.edit_misses.pop(f, None)
         f.write_text(text.replace(old, new) if replace_all else text.replace(old, new, 1),
                      encoding="utf-8")
+        ws.mark_read(f)
         return f"Edited {ws.rel(f)} ({count if replace_all else 1} replacement(s))"
 
     def list_dir(path: str = ".") -> str:
@@ -462,7 +479,7 @@ def build_tools(ws: Workspace, fenced: bool = False) -> list[Tool]:
             "Loaded at the start of every session.\n\n")
         with nb.open("a", encoding="utf-8") as f:
             f.write(header + f"- {note}\n")
-        ws.reads.add(nb)
+        ws.mark_read(nb)
         return f"Noted in FORGE-NOTES.md: {note[:80]}"
 
     def run_command(command: str, timeout: int = DEFAULT_TIMEOUT) -> str:

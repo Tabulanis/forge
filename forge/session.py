@@ -162,6 +162,7 @@ class Session:
             summarizer=summarizer,
             superego=superego,
             reads=ws.reads,
+            read_mtimes=ws.read_mtimes,
         )
 
     def reload_model(self, cfg: dict) -> None:

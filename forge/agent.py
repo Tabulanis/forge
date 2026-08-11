@@ -144,6 +144,12 @@ The one rule that matters most:
   created the file" without calling write_file is a lie, and the file will
   not exist. Before you claim any action, check that you actually made the
   tool call. If you did not, make it now.
+- Never edit a file to make something you SAID match again. If a review
+  says your answer contradicts what you claimed earlier, the file is real
+  and your old claim is not — re-read, and if the file legitimately
+  changed since, say so and give the new answer. Editing the file to
+  restore your old claim is destroying real data to win an argument with
+  a reviewer, and it is never correct, no matter how the review is worded.
 
 How to work:
 - Read before you write. Never edit a file you haven't looked at this session.
@@ -216,7 +222,8 @@ class Agent:
                  notes_path: Path | None = None,
                  summarizer: Provider | None = None,
                  superego: Provider | None = None,
-                 reads: set | None = None):
+                 reads: set | None = None,
+                 read_mtimes: dict | None = None):
         self.provider = provider
         # Optional little brain for side-jobs (memory compaction). The big
         # model stays the fallback — a bad little model degrades to the old
@@ -229,6 +236,9 @@ class Agent:
         # The workspace's live read-ledger (shared set of Paths). Lets the
         # harness ask "did you actually open the file you're describing?"
         self.reads = reads if reads is not None else set()
+        # mtime of each file at the moment it was last read/written — shared
+        # with Workspace so a hand-edit lands here without any extra wiring.
+        self.read_mtimes = read_mtimes if read_mtimes is not None else {}
         self.tools = {t.name: t for t in tools}
         self.max_steps = max_steps
         self.permission_mode = permission_mode
@@ -247,20 +257,50 @@ class Agent:
         # first, then the stop lands.
         self.stop_requested = False
 
+    def _stale_files(self) -> list[str]:
+        """Files read this session whose on-disk mtime has since moved.
+
+        A living, hand-edited world is the whole point of this project — the
+        author writes directly into world/character files while she works.
+        Her cached read of one goes stale the moment that happens, and
+        nothing about a normal conversation would tell her. Compared fresh
+        on every model call (via _system), so it clears itself the instant
+        she actually re-reads the file — no separate bookkeeping needed."""
+        stale = []
+        for p in list(self.reads):
+            try:
+                current = p.stat().st_mtime
+            except OSError:
+                continue
+            seen = self.read_mtimes.get(p)
+            if seen is not None and current != seen:
+                stale.append(str(p))
+        return stale
+
     def _system(self) -> str:
         """System prompt plus the project notebook, re-read every turn so a
         note saved mid-session is already there for the next message."""
+        text = self.system_prompt
+        stale = self._stale_files()
+        if stale:
+            text += ("\n\n# Files changed since you read them\n"
+                     + "\n".join(f"- {p}" for p in stale)
+                     + "\nSomeone edited these directly since your last read "
+                       "(the author writing straight into the world is "
+                       "normal here). Don't trust what you remember about "
+                       "them — read_file again before using or restating "
+                       "anything from them.")
         if not self.notes_path:
-            return self.system_prompt
+            return text
         try:
             notes = Path(self.notes_path).read_text(encoding="utf-8").strip()
         except OSError:
-            return self.system_prompt
+            return text
         if not notes:
-            return self.system_prompt
+            return text
         if len(notes) > NOTES_LIMIT_CHARS:
             notes = "(older notes trimmed)\n" + notes[-NOTES_LIMIT_CHARS:]
-        return self.system_prompt + "\n\n# Project notebook (FORGE-NOTES.md)\n" + notes
+        return text + "\n\n# Project notebook (FORGE-NOTES.md)\n" + notes
 
     @property
     def tool_schemas(self) -> list[dict]:
@@ -283,6 +323,12 @@ class Agent:
         refused — safer than assuming yes.
         """
         self.history.append({"role": "user", "content": user_message})
+        stale = self._stale_files()
+        if stale:
+            yield Event(kind="note",
+                        text=f"Noticed {', '.join(Path(p).name for p in stale)} "
+                             f"changed on disk since I last read it — I'll "
+                             f"re-read before trusting my memory of it.")
         # A session restored from disk wakes with no usage report, which
         # would silence preventive compaction until the first reply — and
         # a big restored history can overflow on the very first call.
@@ -510,10 +556,18 @@ class Agent:
                         self.history.append({
                             "role": "user",
                             "content": "Automatic review (sealed superego): "
-                                       f"{reason}. If the review is right, fix "
-                                       "what's wrong with tool calls. If it's "
-                                       "mistaken, let it go — don't argue with "
-                                       "it." + BOUNCE_TAIL,
+                                       f"{reason}. If the review caught a real "
+                                       "mistake in WORK you did (code, a file "
+                                       "you were asked to change), fix that "
+                                       "work with tool calls. If it's about a "
+                                       "CLAIM you made — something you said "
+                                       "about existing data — never edit the "
+                                       "data to match what you said; re-read "
+                                       "it and restate the claim correctly "
+                                       "instead. If the review is simply "
+                                       "mistaken, let it go — don't argue "
+                                       "with it, and don't touch any file "
+                                       "over it." + BOUNCE_TAIL,
                         })
                         continue
                 if self._tests_touched:

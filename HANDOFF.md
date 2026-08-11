@@ -185,6 +185,34 @@ from descriptions if lost):
   agent probes n_ctx from /props, so compaction adapted on its own.
   Revert = delete the EXTRA line in start-model.sh.
 
+- **Live hand-editing** (2026-08-11, user building Storyweave with Merge:
+  "I'll write new stuff in there... if I edit it, she has to go with the
+  new edits"). Workspace.read_mtimes (tools.py) stamps mtime alongside
+  every mark_read (renamed from reads.add — one helper, 6 call sites incl.
+  both edit_file success paths, which previously forgot to re-stamp).
+  Agent._stale_files() (agent.py) compares live disk mtime against that
+  record; wired into _system() (so the model gets told on EVERY call
+  within a turn, not just turn start — same "reread every turn" pattern
+  as the notebook) and into a visible Event at turn start (so the user
+  sees her notice). Passed through via Agent(read_mtimes=...) and
+  session.py's _build_agent. Only tracks within one continuous process
+  (REPL or a live dashboard Session) — Workspace state doesn't survive a
+  CLI process exit, same pre-existing limit as the reads/edit-permission
+  gate itself; not fixed, just noted.
+  FOUND AND FIXED live via a real pty-driven test (script left in this
+  session's scratchpad, drive_merge.py): a superego bounce flagged her
+  correct, freshly-re-read answer as contradicting her own EARLIER
+  answer — and she responded by editing the data file back to match her
+  old claim, i.e. overwriting the user's real edit to stop looking
+  inconsistent to her own reviewer. Fixed at the agent level (SYSTEM_PROMPT
+  hard rule + reworded superego-bounce injection distinguishing "fix your
+  WORK" from "fix your CLAIM by rereading, never by editing data") since
+  the sealed superego prompt itself stays untouched by design. Re-tested
+  after the fix: two more false bounces on the same run, she held the
+  correct answer both times, never touched the file. This was a real risk
+  for a canon-editing workflow and is exactly the kind of thing that
+  needed catching before the user trusted her with real world files.
+
 ## Start here tomorrow
 
 1. Read this file, claim the folder in the agent log.
