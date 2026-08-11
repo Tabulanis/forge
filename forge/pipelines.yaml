@@ -12,6 +12,9 @@
 #            sub-steps (see pipeline.py's module docstring for why)
 #   foreach  run inner steps once per sub-step a `plan` produced, {item}
 #            bound to that sub-step's text
+#   gate     one constrained-choice call that can stop the whole
+#            pipeline early — the answer must start with pass_word or
+#            everything after it is skipped
 #
 # {input} is what you typed. {step_name} is any earlier step's output.
 
@@ -21,14 +24,26 @@ pipelines:
   # Found live 2026-08-11: handed an open task ("find the gap in the
   # story and fill it"), a 30B model fabricated wholesale — invented
   # chapters, swapped character genders, never opened the real source
-  # file. It could verify a narrow claim reliably; it could not verify
-  # one big open-ended one. This recipe is the fix: split first, verify
-  # each small piece with its own agent pass, THEN draft — and the draft
-  # step is told to use only what got confirmed, never fill a gap with
-  # invention.
+  # file. Splitting into small verified research steps helped some.
+  # Adding a gate (a separate, constrained proceed/stop judgment
+  # between research and drafting) helped more — it got two honest
+  # "NOT FOUND" answers instead of confident wrong ones on retest.
+  #
+  # STILL NOT RELIABLE for a task this open-ended, on THIS same test:
+  # the gate said "proceed" anyway on research that included at least
+  # one wrong citation, and the draft step went on to fabricate FOUR
+  # scene files, not one — including a scene pairing Logan with the
+  # wrong established character entirely. The gate is the same model
+  # checking its own research; it isn't independent enough to catch a
+  # citation that looks real but points at the wrong passage. Use this
+  # recipe for narrower, single-fact research questions (verified
+  # working there — see the boss-NPC awareness check) and NOT yet for
+  # "find the gap in a 56,000-word book and write the missing scene."
+  # For that, the only pattern that's actually held up today is a
+  # human confirming the exact passage before any drafting starts.
   # ---------------------------------------------------------------
   chunk-and-verify:
-    description: Break an open-ended task into small research steps, verify each, then draft from only what's confirmed.
+    description: Break an open-ended task into small research steps, verify each, gate on real evidence, then draft.
     steps:
       - name: findings
         kind: plan
@@ -38,7 +53,10 @@ pipelines:
 
           Before anything gets written, what needs to be found and
           confirmed FIRST? Facts to look up, passages to locate,
-          continuity to check. Research and verification steps only.
+          continuity to check. Include a step that specifically checks
+          whether what's being asked for might ALREADY exist somewhere,
+          in full — not just related material, the actual thing itself.
+          Research and verification steps only.
       - name: research
         kind: foreach
         over: findings
@@ -49,11 +67,34 @@ pipelines:
             prompt: |
               {item}
 
-              Report only what you actually find in the project's files —
-              quote or cite it precisely (file and line, or file and
-              section). If you search and it isn't there, say so plainly.
-              This step is research only: do not draft, invent, or
-              propose new content.
+              Search for it, and if you find anything relevant, keep
+              reading forward AND backward from that point — a fragment
+              of the right passage is not the same as having found the
+              whole thing, and the answer may continue well past where
+              you first landed. Report only what you actually find in the
+              project's files — quote or cite it precisely (file and
+              line). If you search and it genuinely isn't there, say
+              "NOT FOUND" plainly. This step is research only: do not
+              draft, invent, or propose new content.
+      - name: enough_evidence
+        kind: gate
+        model: qwen30b
+        pass_word: "proceed"
+        choices: ["proceed", "stop"]
+        prompt: |
+          Original request: {input}
+
+          Research findings:
+          {research}
+
+          Answer "proceed" ONLY if the findings above contain specific,
+          quoted, cited evidence — not vague summaries or guesses — that
+          is actually about what the request is asking for, AND the
+          findings do not indicate the requested thing already exists in
+          full elsewhere. Answer "stop" if evidence is thin, uncited,
+          about the wrong thing, contradictory, or if the findings
+          suggest this already exists and doesn't need to be created.
+          Reply with exactly one word.
       - name: draft
         kind: agent
         model: qwen30b

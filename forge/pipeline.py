@@ -21,6 +21,18 @@ Six kinds of step:
   foreach  — runs its inner steps once per item a `plan` step produced,
              {item} bound to that one sub-step's text. Pairs with plan to
              turn "one big guess" into "several small, checked answers."
+  gate     — an `ask` call whose answer can stop the WHOLE pipeline early.
+             Exists because "draft only from confirmed facts, say so if
+             something's missing" is a soft instruction a confident model
+             talks past — verified live: research came back thin AND
+             wrong (a citation from an unrelated part of the book), and
+             the very next step drafted a full fabricated scene anyway,
+             instructions notwithstanding. A gate makes "is there enough
+             REAL evidence to proceed" its own narrow, constrained
+             judgment call — the kind of check this model is actually
+             decent at, per the divergence test that first surfaced this
+             pattern — instead of trusting the same pass that's about to
+             write prose to also police itself.
 
 Each step's output is stored under its name and can be dropped into any later
 prompt with {braces}, so steps feed each other:
@@ -226,6 +238,14 @@ class Pipeline:
         yield StepResult(step["name"], "foreach", combined,
                          detail=f"{len(items)} sub-task(s)")
 
+    # -- gate: a narrow judgment call that can stop the pipeline -----
+
+    def _run_gate(self, step: dict, values: dict) -> StepResult:
+        res = self._run_ask(step, values)
+        pass_word = step.get("pass_word", "yes").strip().lower()
+        passed = res.output.strip().lower().startswith(pass_word)
+        return StepResult(step["name"], "gate", res.output, ok=passed)
+
     # -- the loop ----------------------------------------------------
 
     def _run_loop(self, step: dict, values: dict,
@@ -314,6 +334,8 @@ class Pipeline:
             res = self._run_command(step, values)
         elif kind == "plan":
             res = self._run_plan(step, values)
+        elif kind == "gate":
+            res = self._run_gate(step, values)
         else:
             raise PipelineError(f"Unknown step kind {kind!r} in step {name!r}")
 
@@ -337,6 +359,12 @@ class Pipeline:
                     else:
                         results.append(item)
                         values[item.name] = item.output
+                        # A failed gate stops everything after it — the
+                        # whole point is that "not enough real evidence"
+                        # must never reach a step that writes prose.
+                        if item.kind == "gate" and not item.ok:
+                            yield RunEvent(kind="done", text=item.output, ok=False)
+                            return
         except PipelineError as e:
             yield RunEvent(kind="error", text=str(e), ok=False)
             return
