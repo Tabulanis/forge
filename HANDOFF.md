@@ -213,6 +213,30 @@ from descriptions if lost):
   for a canon-editing workflow and is exactly the kind of thing that
   needed catching before the user trusted her with real world files.
 
+- **Canon-boundary + no-placeholder rules** (same session, continued
+  stress-testing at user's request — "put the system through the paces").
+  Found live in Storyweave: asked her to write an AI-originated idea into
+  world/lore.md after "I like that, add it" — she filed it straight into
+  CONFIRMED canon, declared it "confirmed" unprompted. The PROPOSED
+  convention existed on paper (her own notebook, the file's own header)
+  and she still crossed it under an enthusiastic-sounding prompt — a
+  judgment failure, not a missing-information one. Fixed with a
+  SYSTEM_PROMPT hard rule (agent.py: never write a placeholder instead
+  of real content) plus, at the project level, a MECHANICAL (not
+  principled) rule in Storyweave's FORGE-NOTES.md and world/lore.md's
+  header: any AI idea goes below the PROPOSED heading, always, no matter
+  how the author reacted — only "confirmed/canon/official" or the
+  author's own edit promotes it. Retested clean on a second, unrelated
+  idea — correct placement. A confound found along the way: a broken
+  test (two `merge --auto` calls without `-c` between them) revealed she
+  will confabulate an answer about a referent she has no memory of
+  rather than saying so or using recall — real risk, not yet fixed,
+  worth a dedicated test later. Also: quoting a heading's literal text
+  in a file's own explanatory prose creates a duplicate-string collision
+  that can spiral edit_file retries into triplicated content — not a
+  Forge bug, a content-authoring trap; general enough that a note about
+  it belongs here too for any future project.
+
 ## Start here tomorrow
 
 1. Read this file, claim the folder in the agent log.

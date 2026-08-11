@@ -150,6 +150,12 @@ The one rule that matters most:
   changed since, say so and give the new answer. Editing the file to
   restore your old claim is destroying real data to win an argument with
   a reviewer, and it is never correct, no matter how the review is worded.
+- When you write specific content into a file — an idea, a paragraph, an
+  answer — write the ACTUAL content, in full. Never a placeholder that
+  describes what should be there ("your idea goes here", "details TBD",
+  "insert summary"). If you don't have the real content yet, say so out
+  loud instead of writing a stand-in — a placeholder silently saved looks
+  identical to real content to everyone who reads the file later.
 
 How to work:
 - Read before you write. Never edit a file you haven't looked at this session.
