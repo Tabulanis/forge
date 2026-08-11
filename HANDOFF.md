@@ -175,10 +175,15 @@ from descriptions if lost):
   tray on a daemon thread every 30s (serve() starts it). Little down =
   tray waits, search still finds verbatim. Verified live: she recalled
   the Bamboo Labs printer from a previous session's transcript on her own.
-  NOT done (user floated it, worth an experiment): quantized KV cache to
-  stretch the 30B's context 16k→32k (-ctk/-ctv q8_0 in start-model.sh);
-  measure quality+speed before keeping. Card quality from the 3B is
-  unreviewed — eyeball memory-cards.jsonl after a few days.
+  Card quality from the 3B is unreviewed — eyeball memory-cards.jsonl
+  after a few days.
+- **32k context KEPT** (same day): start-model.sh big now runs
+  `-c 32768 -fa on -ctk q8_0 -ctv q8_0` — 8-bit KV cache buys double the
+  window in the same VRAM (23.4GB used, was 23.3 at 16k). Measured before
+  keeping: needle-at-the-top of a 23,359-token prompt answered exactly
+  (27s prompt eval ≈ 850 tok/s); short chat 4.8s; tool calls clean. The
+  agent probes n_ctx from /props, so compaction adapted on its own.
+  Revert = delete the EXTRA line in start-model.sh.
 
 ## Start here tomorrow
 

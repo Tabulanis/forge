@@ -8,7 +8,11 @@ LLAMA=~/llama.cpp/build/bin/llama-server
 case "${1:-big}" in
   big)
     MODEL=~/llama-agent/Huihui-Qwen3-30B-A3B-Instruct-2507-abliterated-Q4_K_M.gguf
-    PORT=8080; CTX=16384; NGL=99 ;;
+    # 32k context in the same VRAM as the old 16k: the KV cache (her
+    # working memory on the card) is stored at 8-bit instead of 16-bit.
+    # Needs flash attention on. Measured 2026-08-11 before keeping.
+    PORT=8080; CTX=32768; NGL=99
+    EXTRA="-fa on -ctk q8_0 -ctv q8_0" ;;
   tiny)
     # -ngl 0 keeps this one entirely in system RAM on the CPU, leaving the
     # whole GPU for the big model. That's the point of a small router model:
@@ -65,4 +69,4 @@ if [ "$NGL" = "0" ]; then
     --port "$PORT" -c "$CTX" --jinja
 fi
 exec "$LLAMA" -m "$MODEL" --host 127.0.0.1 --port "$PORT" \
-  -ngl "$NGL" -c "$CTX" --jinja
+  -ngl "$NGL" -c "$CTX" --jinja ${EXTRA:-}
