@@ -500,7 +500,7 @@ def build_tools(ws: Workspace, fenced: bool = False) -> list[Tool]:
         needle = _canon(pattern.strip())
         if not needle:
             return "(empty pattern)"
-        hits = []
+        hits, total = [], 0
         for root, dirs, files in os.walk(d):
             dirs[:] = [x for x in dirs if not x.startswith(".") and x != "node_modules"]
             for fn in files:
@@ -509,11 +509,20 @@ def build_tools(ws: Workspace, fenced: bool = False) -> list[Tool]:
                     for i, line in enumerate(fp.read_text(encoding="utf-8",
                                                           errors="ignore").splitlines(), 1):
                         if needle in _canon(line):
-                            hits.append(f"{ws.rel(fp)}:{i}:{line.strip()[:200]}")
-                            if len(hits) >= max_results:
-                                return "\n".join(hits)
+                            total += 1
+                            if len(hits) < max_results:
+                                hits.append(f"{ws.rel(fp)}:{i}:{line.strip()[:200]}")
                 except Exception:
                     continue
+        # Silent truncation is how "the name is never revealed" happens: 60
+        # early-book hits with no hint that the reveal sits at hit 80. Keep
+        # counting past the cap and SAY what was left unshown.
+        if total > len(hits):
+            hits.append(f"... {total - len(hits)} MORE match(es) not shown "
+                        f"(last shown was {hits[-1].split(':')[0]}:"
+                        f"{hits[-1].split(':')[1]}) — the answer may be in the "
+                        f"later ones. Use a more specific pattern, or search "
+                        f"again reading from higher line numbers.")
         return "\n".join(hits) if hits else "(no matches)"
 
     def save_note(note: str) -> str:
