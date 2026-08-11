@@ -142,6 +142,24 @@ from descriptions if lost):
   while the dash ran appeared in /api/sessions via rescan. Known edge, by
   design: the same session open in both doors at once = last save wins.
 
+- **"Going off the rails" fix** (user's report; confirmed in ledger +
+  session df51db2b5991: a chat about SCP lore ended with an uninvited
+  48-line fanfic written to ~ and three rounds of arguing with the
+  superego). Three-part cure, all verified live:
+  1. CHAT/WORK modes in SYSTEM_PROMPT — conversational messages get words
+     only, no tools, never create an unasked-for file; unsure = offer,
+     don't do. Retest of the same SCP question: words only, zero tools,
+     and she *offered* the project instead.
+  2. BOUNCE_TAIL (agent.py) appended to all six harness/superego bounce
+     injections: revise, then answer the USER as if the check never
+     happened — no narrating verification, no arguing with the review.
+     Superego injection also reworded ("if mistaken, let it go"). Retest:
+     bounce fired, she fixed with tool calls, final answer user-facing.
+  3. CLI home-folder guard: `merge` run in ~ redirects the chat to
+     ~/Playground with a note (-w ~ overrides), same default the web has.
+  The stray ~/SPC-lore.md was removed. SUPEREGO_PROMPT itself untouched —
+  it stays sealed.
+
 ## Start here tomorrow
 
 1. Read this file, claim the folder in the agent log.

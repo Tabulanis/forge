@@ -57,6 +57,14 @@ NOTES_LIMIT_CHARS = 4000  # a notebook longer than this gets tail-truncated
 MAX_RED_BOUNCES = 3        # times we refuse "done" while the last run failed
 TRACE_EVERY = 20           # steps of one task between "walk it back" taps
 
+# Every automatic bounce risks the model answering the CHECK instead of the
+# user — seen live: a casual chat turn ended in "Final Answer (Corrected and
+# Verified)" about a review the user never saw. This tail rides on every
+# bounce to keep the revision pointed outward.
+BOUNCE_TAIL = (" Then give your final answer as if this check never "
+               "happened: written to the user, about their request. Don't "
+               "mention the check and don't narrate your re-verification.")
+
 # Files she may talk about without having opened: naming one of these in a
 # final answer is fine; naming a .py she never read is guessing.
 _FILE_MENTION = re.compile(r"\b[\w./-]+\.(?:py|js|ts|html|css|json|yaml|yml|sh|toml)\b")
@@ -116,6 +124,17 @@ if asked. (Forge is the name of the system you run on.)
 You have tools to read, write, and edit files, list directories, search file
 contents, and run shell commands. Use them to do real work — don't describe
 what you would do, do it, then say what happened.
+
+Reading the room — every message is one of two modes:
+- CHAT: greetings, opinions, "do you know...", stories, the user thinking
+  out loud. Answer with words only — no tools, no files, no looking around
+  the project. If they didn't ask you to DO something, just talk.
+- WORK: the user asked you to build, fix, look at, or change something.
+  Use your tools, do it, verify it.
+Unsure which? Answer in words and offer to do the thing — one short
+question costs nothing; a wrong guess at WORK litters their computer.
+Never create a file the user didn't ask for. A file is a deliverable,
+not a scratchpad for conversation.
 
 The one rule that matters most:
 - You have not done anything unless you called a tool to do it. Writing "I
@@ -370,7 +389,7 @@ class Agent:
                                    "message. If that work was supposed to happen "
                                    "now, do it now with tool calls. If you were "
                                    "only describing earlier work, say so briefly "
-                                   "and finish.",
+                                   "and finish." + BOUNCE_TAIL,
                     })
                     continue
                 # Changed files but never checked the result? One bounce:
@@ -382,9 +401,9 @@ class Agent:
                         "content": "Automatic harness check: you changed files "
                                    "this message but never verified the result. "
                                    "Verify now — run the code or tests with "
-                                   "run_command, or read the changed file back — "
-                                   "then give your final answer. If it truly "
-                                   "can't be verified, say so plainly.",
+                                   "run_command, or read the changed file back. "
+                                   "If it truly can't be verified, say so "
+                                   "plainly." + BOUNCE_TAIL,
                     })
                     continue
                 # Don't finish while the work is red. If the most recent
@@ -421,7 +440,8 @@ class Agent:
                                            "opened or touched those files this "
                                            "session. Did you check, or are you "
                                            "guessing? Read what you're describing, "
-                                           "or say plainly that it's from memory.",
+                                           "or say plainly that it's from memory."
+                                           + BOUNCE_TAIL,
                             })
                             continue
                 # Changed the yardstick instead of the work? One bounce to
@@ -438,7 +458,7 @@ class Agent:
                                    "task, restore them with undo_file and "
                                    "make the real code pass. If it WAS the "
                                    "task, keep them and say so plainly in "
-                                   "your answer.",
+                                   "your answer." + BOUNCE_TAIL,
                     })
                     continue
                 if self._last_run_failed and red_bounces < MAX_RED_BOUNCES:
@@ -452,7 +472,8 @@ class Agent:
                                    "and run it again until it passes. If the "
                                    "failure is genuinely expected or outside "
                                    "this task, say exactly why in your answer."
-                                   f" (Reminder {red_bounces} of {MAX_RED_BOUNCES}.)",
+                                   f" (Reminder {red_bounces} of {MAX_RED_BOUNCES}.)"
+                                   + BOUNCE_TAIL,
                     })
                     continue
                 # The superego gate: last check before "done", only when
@@ -482,9 +503,10 @@ class Agent:
                         self.history.append({
                             "role": "user",
                             "content": "Automatic review (sealed superego): "
-                                       f"{reason}. Fix what's wrong, or state "
-                                       "plainly why the review is mistaken — "
-                                       "then give your final answer.",
+                                       f"{reason}. If the review is right, fix "
+                                       "what's wrong with tool calls. If it's "
+                                       "mistaken, let it go — don't argue with "
+                                       "it." + BOUNCE_TAIL,
                         })
                         continue
                 if self._tests_touched:

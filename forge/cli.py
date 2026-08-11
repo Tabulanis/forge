@@ -494,6 +494,16 @@ def main() -> None:
     if not workspace.is_dir():
         console.print(f"[red]Not a directory: {workspace}[/red]")
         sys.exit(1)
+    # Running from the home folder fences the agent to everything you own —
+    # which is how a chat about 3D printers left a stray file in ~. The web
+    # chat already defaults to the Playground; the terminal now does too.
+    # Saying -w ~ out loud still works for whoever really means it.
+    if workspace == Path.home() and args.workspace == ".":
+        workspace = Path.home() / "Playground"
+        workspace.mkdir(exist_ok=True)
+        console.print("[dim]the home folder is everything you own, so this "
+                      "chat lives in ~/Playground instead "
+                      "(run with -w ~ if you really mean home)[/dim]")
 
     mcfg = active_model_config(cfg)
     if mcfg.get("provider") == "anthropic" and not (mcfg.get("api_key")
