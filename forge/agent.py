@@ -47,7 +47,12 @@ _CLAIMS_ACTION = re.compile(
 # reported to the user.
 _TEST_FILE = re.compile(r"(^|/)(test_[^/]*|[^/]+_test\.[^./]+|conftest\.py)$")
 
-NOTES_LIMIT_CHARS = 4000  # a notebook longer than this gets tail-truncated
+# A notebook longer than this gets tail-truncated — which silently DROPS
+# THE OLDEST RULES first. Sized for the old 16k context and never
+# revisited when the window doubled; found live 2026-08-11 when a
+# project's notebook hit 4.7k and its foundational rules quietly fell
+# off, degrading behavior that had been solid for hours.
+NOTES_LIMIT_CHARS = 8000
 
 # Memory compaction: when the conversation has eaten this fraction of the
 # model's context window, the older part is condensed into a summary. Local
