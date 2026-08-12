@@ -356,12 +356,29 @@ def build_tools(ws: Workspace, fenced: bool = False) -> list[Tool]:
         window = lines[offset:offset + limit]
         if not window:
             return f"(no lines in range; file has {len(lines)} lines)"
-        # Line numbers help the model target edits precisely.
-        body = "\n".join(f"{i + offset + 1:6d}\t{ln}" for i, ln in enumerate(window))
-        more = ""
-        if offset + limit < len(lines):
-            more = f"\n... ({len(lines) - offset - limit} more lines; use offset={offset + limit})"
-        return body + more
+        # Line numbers help the model target edits precisely. The BYTE cap
+        # on the returned window exists because the line default (2000) is
+        # sized for code: 1000 lines of a novel is ~25k tokens, which
+        # detonates a 32k context in one call — seen live: two emergency
+        # compactions and a dead turn. Cap loudly, never silently.
+        body_lines, used = [], 0
+        for i, ln in enumerate(window):
+            entry = f"{i + offset + 1:6d}\t{ln}"
+            if used + len(entry) > 20_000:
+                next_off = offset + i
+                body_lines.append(
+                    f"... (output capped at 20KB to protect your working "
+                    f"memory — {len(lines) - next_off} lines remain; "
+                    f"continue with offset={next_off}, or search instead "
+                    f"of reading big stretches)")
+                break
+            body_lines.append(entry)
+            used += len(entry) + 1
+        else:
+            if offset + limit < len(lines):
+                body_lines.append(f"... ({len(lines) - offset - limit} more "
+                                  f"lines; use offset={offset + limit})")
+        return "\n".join(body_lines)
 
     def _backup(f: Path) -> None:
         """Keep the previous version of a file about to change.
