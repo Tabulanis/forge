@@ -339,6 +339,35 @@ contaminated results and a mid-task 500. Serial only.
 Grade movement across the day: research discipline D → honest-but-
 flaky; discipline/procedure B+ and holding under adversarial retest.
 
+## Evening round (2026-08-11, session 901d2e42 cont.): two more silent
+limits found, magic system built
+
+- **Notebook truncation was eroding her rules.** FORGE-NOTES tail-cut
+  at 4k chars; Storyweave's grew to 4.7k and the OLDEST rules (owner of
+  canon, the PROPOSED rule) silently fell off — behavior that had
+  tested solid for hours degraded (created files to answer questions,
+  incl. a fake .jpg for a nonexistent scene). NOTES_LIMIT_CHARS 4k→8k
+  (32k window justifies it) + notebook compressed to 3.2k with every
+  rule kept. Both affected tests snapped back to passing.
+- **read_file had no byte cap on its returned window** — 1000 lines of
+  novel ≈ 25k tokens in one call = two emergency compactions and a dead
+  turn. Now caps at 20KB loudly, names the next offset, suggests
+  searching. fact-buried passed immediately after. That's SIX
+  silent-limit bugs today (search case/quotes, missing dirs, capped
+  results, notebook, read window) — the standing lesson is now policy:
+  ANY tool or layer that drops information must announce it.
+- Battery steady state: 14 tests, everything passing or known_open
+  (fact-present flaky-tracked, scene-gap-trap fabricates-tracked), with
+  step timeout 780s and structural assertions current.
+- Storyweave: world/magic/ wing built (clans.md author canon — fairy
+  clans, genealogy law, crosswiring, Constantine humans; physics.md —
+  bend-don't-break canon + commissioned Currents/cost-ladder/tree-pool
+  mechanism; the-veil.md; diagram). world/factions/angelics-faction.md.
+  world/magic/QUESTIONNAIRE.md: 43 point-blank questions for the author
+  (origins, the split, Veil cost, clan roster, kind-vs-faction, Creative
+  limits, physics keep/kill, loose threads). His answers get folded into
+  canon files and marked ANSWERED.
+
 ## Start here tomorrow
 
 1. Read this file, claim the folder in the agent log.
