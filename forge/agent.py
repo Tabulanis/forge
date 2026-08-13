@@ -391,7 +391,7 @@ class Agent:
             if step and step % TRACE_EVERY == 0:
                 trace = self._evidence_digest(turn_start, None)
                 self.history.append({
-                    "role": "user",
+                    "role": "user", "synthetic": True,
                     "content": "Automatic checkpoint — here is your own "
                                "trail so far this task:\n" + trace +
                                "\nWalk it back for a moment: is this still "
@@ -469,7 +469,7 @@ class Agent:
                         and _CLAIMS_ACTION.search(reply.text or "")):
                     nudged = True
                     self.history.append({
-                        "role": "user",
+                        "role": "user", "synthetic": True,
                         "content": "Automatic harness check: that reply describes "
                                    "actions, but no tools ran while handling this "
                                    "message. If that work was supposed to happen "
@@ -483,7 +483,7 @@ class Agent:
                 if self._unverified_change and not verify_nudged:
                     verify_nudged = True
                     self.history.append({
-                        "role": "user",
+                        "role": "user", "synthetic": True,
                         "content": "Automatic harness check: you changed files "
                                    "this message but never verified the result. "
                                    "Verify now — run the code or tests with "
@@ -520,7 +520,7 @@ class Agent:
                             grounding_nudged = True
                             names = ", ".join(sorted(unread)[:4])
                             self.history.append({
-                                "role": "user",
+                                "role": "user", "synthetic": True,
                                 "content": "Automatic harness check: your answer "
                                            f"talks about {names}, but you haven't "
                                            "opened or touched those files this "
@@ -536,7 +536,7 @@ class Agent:
                     tests_nudged = True
                     names = ", ".join(sorted(set(self._tests_touched)))
                     self.history.append({
-                        "role": "user",
+                        "role": "user", "synthetic": True,
                         "content": "Automatic harness check: you modified "
                                    f"test file(s) this message: {names}. "
                                    "Passing tests you edited proves nothing. "
@@ -550,7 +550,7 @@ class Agent:
                 if self._last_run_failed and red_bounces < MAX_RED_BOUNCES:
                     red_bounces += 1
                     self.history.append({
-                        "role": "user",
+                        "role": "user", "synthetic": True,
                         "content": "Automatic harness check: the most recent "
                                    "command you ran FAILED, and you're about "
                                    "to finish anyway. Don't stop while it's "
@@ -587,7 +587,7 @@ class Agent:
                                     text=f"Superego review: {reason} — "
                                          f"sent back for another look.")
                         self.history.append({
-                            "role": "user",
+                            "role": "user", "synthetic": True,
                             "content": "Automatic review (sealed superego): "
                                        f"{reason}. If the review caught a real "
                                        "mistake in WORK you did (code, a file "
@@ -792,8 +792,15 @@ class Agent:
             return None
 
         keep_chars = int(limit * COMPACT_KEEP * _CHARS_PER_TOKEN)
+        # Real user turns only. A bounce/checkpoint is role "user" so the
+        # provider replays it correctly, but it's the harness talking, not
+        # the human — and it always refers to what came right before it
+        # (the answer it's bouncing). Cutting there keeps the bounce and
+        # summarizes away the very thing it's about, which is exactly how
+        # a real turn dissolved into a blank "what would you like to work
+        # on?" — found live 2026-08-12.
         user_idxs = [i for i, m in enumerate(self.history)
-                     if m.get("role") == "user"]
+                     if m.get("role") == "user" and not m.get("synthetic")]
         cut = None
         if force:
             cut = user_idxs[-1] if user_idxs else None

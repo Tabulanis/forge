@@ -40,7 +40,24 @@ case "${1:-big}" in
     MODEL=~/forge/models/qwen2.5-vl-7b-q4.gguf
     MMPROJ=~/forge/models/qwen2.5-vl-7b-mmproj.gguf
     PORT=8090; CTX=4096; NGL=0 ;;
-  *) echo "unknown model: $1  (try: big, tiny, coder14, vision)"; exit 1 ;;
+  merge)
+    # Merge's sighted brain: Qwen3.6 27B dense, abliterated (Heretic), with
+    # native vision — the mmproj here is her own eyes, not the shared 7B on
+    # 8090. Dense means the whole model fires per token: smarter and sighted
+    # than the 30B MoE, but slower per word.
+    # VRAM math: she does NOT fit alongside the big 30B. Stop that first
+    # (it's the llama-server on port 8080), then start her — she gets the
+    # whole card. 16.5GB weights + ~1.5GB vision + KV cache ≈ 21GB of 24.
+    # CTX=16384 is the safe start; try 32768 later and watch nvidia-smi.
+    MODEL=~/forge/models/Qwen3.6-27B-Abliterated-Heretic-Q4_K_M.gguf
+    MMPROJ=~/forge/models/Qwen3.6-27B-mmproj-F16.gguf
+    PORT=8085; CTX=16384; NGL=99
+    # --reasoning-budget 512: she thinks before speaking (that's the depth),
+    # but capped — uncapped she spent 500+ tokens deliberating over a simple
+    # hello, which at ~15 tok/s is half a minute of silence. Raise it if her
+    # answers to hard questions feel shallow; 0 turns thinking off entirely.
+    EXTRA="-fa on -ctk q8_0 -ctv q8_0 --reasoning-budget 512" ;;
+  *) echo "unknown model: $1  (try: big, tiny, coder14, vision, merge)"; exit 1 ;;
 esac
 
 if [ -n "${MMPROJ:-}" ]; then
@@ -55,7 +72,7 @@ if [ -n "${MMPROJ:-}" ]; then
       --host 127.0.0.1 --port "$PORT" -c "$CTX" --jinja
   fi
   exec "$LLAMA" -m "$MODEL" --mmproj "$MMPROJ" --host 127.0.0.1 --port "$PORT" \
-    -ngl "$NGL" -c "$CTX" --jinja
+    -ngl "$NGL" -c "$CTX" --jinja ${EXTRA:-}
 fi
 
 echo "starting $(basename "$MODEL") on port $PORT ..."

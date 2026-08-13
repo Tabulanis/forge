@@ -15,15 +15,21 @@ import time
 
 # Order matters only for display. big is the workhorse; the others exist
 # but are usually stopped anyway.
-MODEL_UNITS = ("forge-model-big", "forge-model-vision",
+MODEL_UNITS = ("forge-model-big", "forge-model-merge", "forge-model-vision",
                "forge-model-little", "forge-model-tiny")
 
-PORTS = {"big": 8080, "vision": 8090, "little": 8083, "tiny": 8081}
+PORTS = {"big": 8080, "merge": 8085, "vision": 8090, "little": 8083, "tiny": 8081}
 
-# How much VRAM the big model takes once loaded — measured 2026-08-10
-# (4.0 → 23.3 GB). Only used to draw the loading bar; if the model ever
-# changes, the bar just runs a little fast or slow, nothing breaks.
-EXPECTED_LOAD_MB = {"big": 19300}
+# How much VRAM each model takes once loaded — measured. Only used to draw
+# the loading bar; if a model ever changes, the bar just runs fast or slow.
+EXPECTED_LOAD_MB = {"big": 19300, "merge": 21000}
+
+# Models that can't share the card at once (measured: big alone holds ~19GB,
+# merge needs ~21GB of the 24GB total — together they don't fit). Starting
+# one now auto-stops the other first, instead of leaving that as a comment
+# a human has to remember — same lesson as everything else found this
+# session: a rule that isn't enforced gets crossed eventually.
+EXCLUSIVE = {"big": "merge", "merge": "big"}
 
 
 def _run(*args: str) -> subprocess.CompletedProcess:
@@ -93,14 +99,22 @@ def off() -> dict:
 
 
 def on(which: str = "big") -> dict:
-    """Start one model service. Loading the 30B takes a minute — this
-    returns as soon as systemd accepts the job, it does not wait."""
+    """Start one model service. Loading a model takes a minute — this
+    returns as soon as systemd accepts the job, it does not wait.
+    Auto-stops whatever this model can't share the card with (see
+    EXCLUSIVE) — VRAM math is not something to leave to a reminder."""
     unit = f"forge-model-{which}"
     if unit not in MODEL_UNITS:
         return {"started": [], "vram": vram(),
                 "error": f"no model service named {which!r} — "
                          f"try: {', '.join(short(u) for u in MODEL_UNITS)}"}
+    stopped = []
+    rival = EXCLUSIVE.get(which)
+    if rival and rival in running():
+        _run("systemctl", "--user", "stop", f"forge-model-{rival}.service")
+        stopped = [rival]
+        time.sleep(1.5)   # let the driver actually release the VRAM
     r = _run("systemctl", "--user", "start", unit + ".service")
     err = r.stderr.strip()
-    return {"started": [] if err else [which], "vram": vram(),
-            "error": err}
+    return {"started": [] if err else [which], "stopped_for_room": stopped,
+            "vram": vram(), "error": err}
