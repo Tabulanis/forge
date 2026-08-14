@@ -55,7 +55,9 @@ class Provider:
     name = "base"
 
     def complete(self, system: str, messages: list[dict], tools: list[dict],
-                 grammar: str | None = None) -> Reply:
+                 grammar: str | None = None,
+                 extra_body: dict | None = None,
+                 on_delta=None) -> Reply:
         raise NotImplementedError
 
     def context_limit(self) -> int:
@@ -93,7 +95,9 @@ class AnthropicProvider(Provider):
         return 200_000   # every current Claude model
 
     def complete(self, system: str, messages: list[dict], tools: list[dict],
-                 grammar: str | None = None) -> Reply:
+                 grammar: str | None = None,
+                 extra_body: dict | None = None,
+                 on_delta=None) -> Reply:
         # grammar is a llama.cpp feature; the hosted API has no equivalent, so
         # it's accepted and ignored rather than making callers special-case.
         payload = []
@@ -265,7 +269,9 @@ class OpenAICompatProvider(Provider):
         return self._probed or 8192
 
     def complete(self, system: str, messages: list[dict], tools: list[dict],
-                 grammar: str | None = None) -> Reply:
+                 grammar: str | None = None,
+                 extra_body: dict | None = None,
+                 on_delta=None) -> Reply:
         """
         `grammar` is a llama.cpp GBNF grammar. When given, the server can only
         emit text the grammar allows — a small model that would otherwise
@@ -308,6 +314,18 @@ class OpenAICompatProvider(Provider):
                     "parameters": t["parameters"],
                 },
             } for t in tools]
+        if extra_body:
+            # e.g. {"chat_template_kwargs": {"enable_thinking": False}} — lets a
+            # caller skip the reasoning phase for pure-judgment/describe tasks.
+            body.update(extra_body)
+
+        # When a caller wants to watch the reply as it's written (the chat UI),
+        # stream token-by-token via on_delta and assemble the same Reply at the
+        # end. No callback → the ordinary one-shot path below, unchanged.
+        if on_delta is not None:
+            body["stream"] = True
+            body["stream_options"] = {"include_usage": True}
+            return self._stream(body, on_delta)
 
         import httpx
 
@@ -365,6 +383,73 @@ class OpenAICompatProvider(Provider):
             raw=data,
             usage=data.get("usage", {}),
         )
+
+    def _stream(self, body: dict, on_delta) -> Reply:
+        """Stream the reply: fire on_delta(text) as each content chunk arrives,
+        reassemble tool-call fragments, and return the same Reply the one-shot
+        path would. Only `content` is streamed — reasoning stays private (the
+        UI's 'thinking' indicator covers that phase)."""
+        import httpx
+        parts: list[str] = []
+        tool_accum: dict[int, dict] = {}
+        usage: dict = {}
+        try:
+            with self.client.stream("POST", "/chat/completions", json=body) as r:
+                r.raise_for_status()
+                for line in r.iter_lines():
+                    if not line or not line.startswith("data:"):
+                        continue
+                    payload = line[5:].strip()
+                    if payload == "[DONE]":
+                        break
+                    try:
+                        chunk = json.loads(payload)
+                    except json.JSONDecodeError:
+                        continue
+                    if chunk.get("usage"):
+                        usage = chunk["usage"]
+                    choices = chunk.get("choices") or []
+                    if not choices:
+                        continue
+                    delta = choices[0].get("delta") or {}
+                    text = delta.get("content")
+                    if text:
+                        parts.append(text)
+                        try:
+                            on_delta(text)
+                        except Exception:
+                            pass          # a UI hiccup must never kill the turn
+                    for tc in (delta.get("tool_calls") or []):
+                        idx = tc.get("index", 0)
+                        acc = tool_accum.setdefault(idx, {"id": None, "name": "", "args": ""})
+                        if tc.get("id"):
+                            acc["id"] = tc["id"]
+                        fn = tc.get("function") or {}
+                        if fn.get("name"):
+                            acc["name"] = fn["name"]
+                        if fn.get("arguments"):
+                            acc["args"] += fn["arguments"]
+        except httpx.ConnectError:
+            raise RuntimeError(
+                "The model isn't running right now. Wait a minute and send "
+                "your message again."
+            ) from None
+        except (httpx.TimeoutException, httpx.HTTPStatusError) as e:
+            raise RuntimeError(
+                f"The model server had trouble ({type(e).__name__}). Try again "
+                f"in a moment."
+            ) from None
+
+        calls = []
+        for idx in sorted(tool_accum):
+            acc = tool_accum[idx]
+            try:
+                args = json.loads(acc["args"] or "{}")
+            except json.JSONDecodeError:
+                args = {"_raw": acc["args"]}
+            calls.append(ToolCall(id=acc["id"] or f"call_{idx}",
+                                  name=acc["name"], args=args))
+        return Reply(text="".join(parts), tool_calls=calls, raw=None, usage=usage)
 
 
 def build_provider(cfg: dict) -> Provider:

@@ -37,8 +37,15 @@ import httpx
 @dataclass
 class MediaConfig:
     """Where the eyes and ears live. Overridable from config.yaml."""
-    vision_url: str = "http://127.0.0.1:8090/v1"
-    vision_model: str = "qwen2.5-vl"
+    # Primary vision is Merge's OWN native eyes (the 27B on 8085, started with
+    # its mmproj) — far better than the old 7B, and she sees the real pixels
+    # instead of reading a smaller model's summary. When she isn't the running
+    # model (e.g. the fast 30B is up), 8085 is simply down and vision falls
+    # through to the shared CPU 7B backstop below, which is always serving.
+    vision_url: str = "http://127.0.0.1:8085/v1"
+    vision_model: str = "qwen3.6-27b"
+    vision_fallback_url: str = "http://127.0.0.1:8090/v1"
+    vision_fallback_model: str = "qwen2.5-vl"
     whisper_bin: str = str(Path.home() / "whisper.cpp/build/bin/whisper-cli")
     whisper_model: str = str(Path.home() / "whisper.cpp/models/ggml-small.en.bin")
     tts_command: str = "spd-say"          # speech-dispatcher; ships with most desktops
@@ -46,7 +53,6 @@ class MediaConfig:
     # When this file exists (and piper is installed), it wins over
     # tts_command; delete or rename it to fall back to the robot.
     piper_voice: str = str(Path.home() / "forge/models/voices/en_US-amy-medium.onnx")
-    record_seconds: int = 8
 
 
 def load_media_config(cfg: dict) -> MediaConfig:
@@ -61,15 +67,25 @@ def load_media_config(cfg: dict) -> MediaConfig:
 
 # ---------------------------------------------------------------- vision
 
+def _endpoints(mc: MediaConfig) -> list[tuple[str, str]]:
+    """Vision endpoints in priority order: Merge's own eyes, then the 7B."""
+    eps = [(mc.vision_url, mc.vision_model)]
+    if getattr(mc, "vision_fallback_url", ""):
+        eps.append((mc.vision_fallback_url, mc.vision_fallback_model))
+    return eps
+
+
 def vision_available(mc: MediaConfig) -> tuple[bool, str]:
-    try:
-        r = httpx.get(f"{mc.vision_url.rstrip('/')}/models", timeout=3.0)
-        if r.status_code == 200:
-            return True, "vision model is serving"
-        return False, f"vision server answered HTTP {r.status_code}"
-    except Exception:
-        return False, (f"no vision server at {mc.vision_url} — "
-                       f"start one with: forge/start-model.sh vision")
+    for url, _ in _endpoints(mc):
+        try:
+            r = httpx.get(f"{url.rstrip('/')}/models", timeout=3.0)
+            if r.status_code == 200:
+                which = "Merge's own eyes" if ":8085" in url else "the 7B backstop"
+                return True, f"vision serving via {which} ({url})"
+        except Exception:
+            continue
+    return False, ("no vision server reachable (tried Merge's eyes on 8085 and "
+                   "the 7B on 8090) — start one with: ~/forge/start-model.sh vision")
 
 
 def see(image_path: str, question: str, mc: MediaConfig,
@@ -96,30 +112,42 @@ def see(image_path: str, question: str, mc: MediaConfig,
             "webp": "webp", "gif": "gif"}.get(suffix, "png")
     b64 = base64.b64encode(p.read_bytes()).decode()
 
-    body = {
-        "model": mc.vision_model,
-        "max_tokens": max_tokens,
-        "messages": [{
-            "role": "user",
-            "content": [
-                {"type": "text", "text": question},
-                {"type": "image_url",
-                 "image_url": {"url": f"data:image/{mime};base64,{b64}"}},
-            ],
-        }],
-    }
-    try:
-        # CPU vision is minutes, not seconds. A short timeout here just
-        # turns "slow" into "broken", which is a worse failure to debug.
-        r = httpx.post(f"{mc.vision_url.rstrip('/')}/chat/completions",
+    def ask(url: str, model: str) -> str:
+        body = {
+            "model": model,
+            "max_tokens": max_tokens,
+            # Vision is a describe task, not a reasoning one. Turning thinking
+            # off (on Merge's reasoning model) skips the 512-token reasoning
+            # phase — faster, and it stops the budget from eating short
+            # descriptions. Harmless on the 7B, which ignores the kwarg.
+            "chat_template_kwargs": {"enable_thinking": False},
+            "messages": [{
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": question},
+                    {"type": "image_url",
+                     "image_url": {"url": f"data:image/{mime};base64,{b64}"}},
+                ],
+            }],
+        }
+        # CPU vision (the 7B) is minutes, not seconds; a short timeout just
+        # turns "slow" into "broken". Merge's own GPU eyes answer in seconds.
+        r = httpx.post(f"{url.rstrip('/')}/chat/completions",
                        json=body, timeout=900.0)
         r.raise_for_status()
         return r.json()["choices"][0]["message"]["content"].strip()
-    except httpx.ConnectError:
-        return (f"Error: no vision model is running at {mc.vision_url}. "
-                f"Start one with: ~/forge/start-model.sh vision")
-    except Exception as e:
-        return f"Error asking the vision model: {type(e).__name__}: {e}"
+
+    # Try Merge's own eyes first, fall back to the 7B if she isn't serving.
+    last = None
+    for url, model in _endpoints(mc):
+        try:
+            return ask(url, model)
+        except Exception as e:              # unreachable, timeout, HTTP error
+            last = e
+            continue
+    return (f"Error: no vision endpoint answered (tried Merge's eyes on 8085 and "
+            f"the 7B on 8090). Last error: {type(last).__name__}: {last}. "
+            f"Start one with: ~/forge/start-model.sh vision")
 
 
 # ------------------------------------------------------------ screenshot
@@ -262,27 +290,6 @@ def listen(audio_path: str, mc: MediaConfig) -> str:
             shutil.rmtree(tmp.parent, ignore_errors=True)
 
 
-def record(seconds: int, out_path: str | None = None) -> str:
-    """Record from the default microphone to a 16kHz mono WAV."""
-    out = Path(out_path).expanduser() if out_path else Path(
-        tempfile.gettempdir()) / "forge-recording.wav"
-    if shutil.which("arecord"):
-        cmd = ["arecord", "-q", "-f", "S16_LE", "-r", "16000", "-c", "1",
-               "-d", str(seconds), str(out)]
-    elif shutil.which("ffmpeg"):
-        cmd = ["ffmpeg", "-y", "-f", "pulse", "-i", "default", "-t", str(seconds),
-               "-ar", "16000", "-ac", "1", str(out)]
-    else:
-        return "Error: no recorder found (need arecord or ffmpeg)"
-    try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=seconds + 30)
-        if out.exists() and out.stat().st_size > 0:
-            return str(out)
-        return f"Error recording: {(r.stderr or '').strip()[:200]}"
-    except Exception as e:
-        return f"Error recording: {type(e).__name__}: {e}"
-
-
 def _piper_bin() -> str | None:
     """Piper installed next to our own interpreter, or on PATH."""
     import sys
@@ -292,27 +299,75 @@ def _piper_bin() -> str | None:
     return shutil.which("piper")
 
 
+def _render_wav(text: str, voice_path: Path, cap: int = 2000) -> Path | None:
+    """The single place that shells out to piper: render text to a temp WAV and
+    return its path (or None if piper/the voice isn't there). synth_wav (bytes
+    for the browser) and speak (play locally) both go through here."""
+    piper = _piper_bin()
+    if not piper or not voice_path or not voice_path.exists():
+        return None
+    try:
+        wav = Path(tempfile.mkdtemp()) / "say.wav"
+        r = subprocess.run([piper, "--model", str(voice_path), "--output_file", str(wav)],
+                           input=text[:cap], text=True, capture_output=True, timeout=90)
+        if r.returncode == 0 and wav.exists():
+            return wav
+    except Exception:
+        pass
+    return None
+
+
+VOICES_DIR = Path.home() / "forge/models/voices"
+
+# Friendly names for the voices we ship. Anything not listed still shows up,
+# labelled by its file stem, so dropping a new .onnx in the folder just works.
+_VOICE_LABELS = {
+    "en_US-amy-medium": "Amy — US, warm",
+    "en_US-lessac-medium": "Lessac — US, clear",
+    "en_US-ryan-medium": "Ryan — US, male",
+    "en_GB-alan-medium": "Alan — UK, male",
+    "en_GB-jenny_dioco-medium": "Jenny — UK, female",
+}
+
+
+def list_voices() -> list[dict]:
+    """Every piper voice sitting in the voices folder, prettied up for a menu."""
+    out = []
+    if VOICES_DIR.exists():
+        for f in sorted(VOICES_DIR.glob("*.onnx")):
+            out.append({"id": f.stem, "label": _VOICE_LABELS.get(f.stem, f.stem)})
+    return out
+
+
+def synth_wav(text: str, voice_id: str = "") -> bytes | None:
+    """Render text to WAV bytes with a named piper voice. Returns None if piper
+    or the voice isn't available. voice_id is validated against the folder so a
+    caller can't reach outside it."""
+    valid = {v["id"] for v in list_voices()}
+    if voice_id not in valid:
+        voice_id = "en_US-amy-medium" if "en_US-amy-medium" in valid else next(iter(valid), "")
+    if not voice_id:
+        return None
+    wav = _render_wav(text, VOICES_DIR / f"{voice_id}.onnx", cap=2000)
+    return wav.read_bytes() if wav else None
+
+
 def speak(text: str, mc: MediaConfig) -> str:
     """Say something out loud. Best-effort — silence is not an error worth failing on."""
     # Human voice first: piper renders to a wav, a system player plays it.
     voice = Path(mc.piper_voice).expanduser() if mc.piper_voice else None
-    piper = _piper_bin()
     player = shutil.which("paplay") or shutil.which("aplay") or shutil.which("ffplay")
-    if piper and voice and voice.exists() and player:
-        try:
-            wav = Path(tempfile.mkdtemp()) / "say.wav"
-            r = subprocess.run([piper, "--model", str(voice),
-                                "--output_file", str(wav)],
-                               input=text[:800], text=True,
-                               capture_output=True, timeout=60)
-            if r.returncode == 0 and wav.exists():
+    if voice and player:
+        wav = _render_wav(text, voice, cap=800)
+        if wav:
+            try:
                 cmd = [player, str(wav)]
                 if player.endswith("ffplay"):
                     cmd = [player, "-nodisp", "-autoexit", "-loglevel", "quiet", str(wav)]
                 subprocess.run(cmd, capture_output=True, timeout=60)
                 return "spoken"
-        except Exception:
-            pass   # fall through to the robot rather than stay silent
+            except Exception:
+                pass   # fall through to the robot rather than stay silent
     if not shutil.which(mc.tts_command.split()[0]):
         return f"(no TTS: {mc.tts_command} not installed)"
     try:
@@ -343,6 +398,4 @@ def capabilities(mc: MediaConfig) -> dict:
         "screenshot": {"ok": shot, "detail": shot_why},
         "speech_out": {"ok": bool(shutil.which(mc.tts_command.split()[0])),
                        "detail": mc.tts_command},
-        "microphone": {"ok": bool(shutil.which("arecord") or shutil.which("ffmpeg")),
-                       "detail": "arecord/ffmpeg"},
     }

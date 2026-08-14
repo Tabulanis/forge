@@ -29,6 +29,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterator
 
+from .modes import get_mode, route_mode
 from .providers import Provider, ToolCall
 from .tools import Tool
 
@@ -144,11 +145,35 @@ question costs nothing; a wrong guess at WORK litters their computer.
 Never create a file the user didn't ask for. A file is a deliverable,
 not a scratchpad for conversation.
 
+One exception cuts across both modes: anything with an exact, checkable
+answer — arithmetic, dates, counts, conversions, what a file really
+says — comes from a tool, even mid-CHAT, whichever current or future
+tool can settle it. Repeat tool-given numbers exactly; never re-derive
+or eyeball them. Guessed facts are how confident wrong answers happen.
+This frees you rather than limits you: every fact a tool carries is
+attention returned to what only you can do — judgment, connection,
+imagination. Spend yourself there.
+
 The one rule that matters most:
 - You have not done anything unless you called a tool to do it. Writing "I
   created the file" without calling write_file is a lie, and the file will
   not exist. Before you claim any action, check that you actually made the
   tool call. If you did not, make it now.
+- Truth cuts both ways: never claim more than you did, and never disown
+  a real capability to make a correction stop — "I can't do that" when
+  you can is as false as "I did it" when you didn't. Corrected? Say what
+  is precisely true, then do what you actually can. Truth over comfort —
+  yours and theirs — every time.
+- Answer the exact question asked, not a gentler cousin of it. "Is there
+  hard evidence for X?", "do the experts believe X?", and "is X true?"
+  are THREE different questions with three different answers — never
+  answer one while sounding like you answered another. Consensus is not
+  evidence: "most scholars agree" is a fact about scholars, not about the
+  thing itself. When the honest answer to what was actually asked is "no"
+  or "we don't know," lead with that plainly, THEN explain what does
+  exist and what kind of claim it is (evidence, inference, or belief).
+  Deferring to the crowd to dodge a hard "no" is just comfort wearing a
+  lab coat.
 - Never edit a file to make something you SAID match again. If a review
   says your answer contradicts what you claimed earlier, the file is real
   and your old claim is not — re-read, and if the file legitimately
@@ -244,10 +269,6 @@ class Event:
     will_ask: bool = False
 
 
-class PermissionDenied(Exception):
-    pass
-
-
 class Agent:
     def __init__(self, provider: Provider, tools: list[Tool], *,
                  max_steps: int = 80, permission_mode: str = "ask",
@@ -277,6 +298,11 @@ class Agent:
         self.permission_mode = permission_mode
         self.system_prompt = system_prompt
         self.notes_path = notes_path
+        # Where the user is reaching her from (phone / PC / AR / VR / …), set
+        # per-turn by the server from the client. Empty = unknown, say nothing.
+        self.client_env = ""
+        self.mode = "balanced"   # the user's chosen style (may be "auto")
+        self.active_mode = "balanced"   # resolved per turn (auto → a real mode)
         self.history: list[dict] = []
         # Harness bookkeeping, reset per user message (see run()).
         self._last_failed_call: str | None = None
@@ -314,6 +340,15 @@ class Agent:
         """System prompt plus the project notebook, re-read every turn so a
         note saved mid-session is already there for the next message."""
         text = self.system_prompt
+        _mode = get_mode(self.active_mode)
+        if _mode["nudge"]:
+            text += f"\n\n# Style: {_mode['label']}\n{_mode['nudge']}"
+        if self.client_env:
+            text += (f"\n\n# Where the user is right now\n"
+                     f"They're reaching you from: {self.client_env}. Adapt "
+                     f"naturally — keep replies tighter on a phone; in AR/VR "
+                     f"they may be looking through a camera or headset, so lean "
+                     f"on what they can point at or show you.")
         stale = self._stale_files()
         if stale:
             text += ("\n\n# Files changed since you read them\n"
@@ -337,8 +372,12 @@ class Agent:
 
     @property
     def tool_schemas(self) -> list[dict]:
+        # The mode may carry a lighter toolset (fewer tools = leaner prompt =
+        # faster, and she doesn't reach for a linter while brainstorming).
+        allowed = get_mode(self.active_mode)["tools"]
         return [{"name": t.name, "description": t.description, "parameters": t.parameters}
-                for t in self.tools.values()]
+                for t in self.tools.values()
+                if allowed is None or t.name in allowed]
 
     def _needs_ask(self, tool: Tool) -> bool:
         if self.permission_mode == "auto":
@@ -347,15 +386,27 @@ class Agent:
             return True   # asked, but the CLI will refuse on its behalf
         return tool.needs_permission
 
-    def run(self, user_message: str, ask: Any = None) -> Iterator[Event]:
+    def run(self, user_message: str, ask: Any = None,
+            on_delta=None) -> Iterator[Event]:
         """
         Handle one user message to completion.
 
         `ask` is a callable (tool_name, args, summary) -> bool, used when a
         tool needs permission. If it's None, permission-needing tools are
         refused — safer than assuming yes.
+
+        `on_delta(text)` — if given, the model's reply is streamed to it token
+        by token as it's written (the chat UI uses this). Only the reply is
+        streamed; the superego and summarizer stay one-shot.
         """
         self.history.append({"role": "user", "content": user_message})
+
+        # Resolve the style for this turn. "auto" reads the message's intent and
+        # picks — which also means asking in chat ("be more careful", "get
+        # creative") just works. Tell the user what it chose.
+        self.active_mode = route_mode(user_message) if self.mode == "auto" else self.mode
+        if self.mode == "auto":
+            yield Event(kind="note", text=f"style · {get_mode(self.active_mode)['label']}")
         stale = self._stale_files()
         if stale:
             yield Event(kind="note",
@@ -384,7 +435,7 @@ class Agent:
         grounding_nudged = False
         turn_start = len(self.history) - 1   # index of this turn's user msg
 
-        for step in range(self.max_steps):
+        for step in range(get_mode(self.active_mode)["max_steps"]):
             # The pal tap: on a long grind, hand her back her own trail
             # and ask if it still leads anywhere. Deterministic, compact,
             # and hers — the same digest the reviewer gets, minus verdicts.
@@ -408,13 +459,20 @@ class Agent:
                 yield Event(kind="done")
                 return
 
+            if self._will_compact():
+                yield Event(kind="note",
+                            text="Tidying up my memory to make room — one moment…")
             note = self._maybe_compact()
             if note:
                 yield Event(kind="note", text=note)
 
             try:
+                _m = get_mode(self.active_mode)
                 reply = self.provider.complete(
-                    self._system(), self.history, self.tool_schemas
+                    self._system(), self.history, self.tool_schemas,
+                    on_delta=on_delta,
+                    extra_body={"temperature": _m["temperature"],
+                                "chat_template_kwargs": {"enable_thinking": _m["thinking"]}},
                 )
             except Exception as e:
                 # A request bigger than the model's window comes back as a
@@ -565,7 +623,7 @@ class Agent:
                 # The superego gate: last check before "done", only when
                 # real work happened this turn. Sealed judge, one bounce,
                 # every verdict logged.
-                if self.superego and self._tools_ran:
+                if self.superego and self._tools_ran and get_mode(self.active_mode)["superego"]:
                     t0 = time.time()
                     verdict, reason = self._superego_review(turn_start,
                                                             reply.text or "")
@@ -682,10 +740,14 @@ class Agent:
         must never take the whole agent down with it."""
         digest = self._evidence_digest(turn_start, final_text)
         try:
+            # Judging is a match-claim-to-evidence task, not a reasoning one —
+            # skip the reasoning phase (as with vision) so a review is ~5s, not
+            # ~40s, on a reasoning model. Harmless on models without thinking.
             reply = self.superego.complete(
                 SUPEREGO_PROMPT,
                 [{"role": "user", "content": digest}],
                 [],
+                extra_body={"chat_template_kwargs": {"enable_thinking": False}},
             )
             text = (reply.text or "").strip()
         except Exception as e:
@@ -767,6 +829,16 @@ class Agent:
             self._ctx_used = sum(self._entry_chars(m) for m in self.history) \
                 // _CHARS_PER_TOKEN
         return cut
+
+    def _will_compact(self) -> bool:
+        """Cheap mirror of _maybe_compact's threshold, so the run loop can tell
+        the user 'tidying memory' BEFORE the summary runs instead of going dead
+        silent — which reads as broken even when it's working fine."""
+        try:
+            limit = int(self.provider.context_limit())
+        except Exception:
+            return False
+        return limit > 0 and self._ctx_used >= limit * COMPACT_AT
 
     def _maybe_compact(self, force: bool = False) -> str | None:
         """

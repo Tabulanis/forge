@@ -21,7 +21,7 @@ from pathlib import Path
 
 import httpx
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -30,7 +30,7 @@ from .config import (CONFIG_PATH, load_config, load_pipelines, save_config,
 from . import power, recall
 from .doctor import run_checks
 from .help_content import ORDER, TOPICS, VERSION
-from .media import capabilities, load_media_config
+from .media import capabilities, list_voices, load_media_config, synth_wav
 from .pipeline import Pipeline
 from .session import SessionStore
 
@@ -226,6 +226,8 @@ class ChatSpec(BaseModel):
     message: str
     session: str | None = None
     workspace: str | None = None
+    env: str = ""            # where the user is: phone / PC / AR / VR / …
+    mode: str = ""           # operating style: flash / muse / balanced / precise / deep
 
 
 class PermissionSpec(BaseModel):
@@ -239,6 +241,9 @@ def chat(spec: ChatSpec):
     """Start a turn. Returns immediately; watch /api/stream for what happens."""
     STORE.rescan()   # a chat the terminal saved must be continuable here
     sess = STORE.get_or_create(spec.session, spec.workspace)
+    sess.agent.client_env = (spec.env or "").strip()[:60]   # let her know the device
+    if spec.mode:
+        sess.agent.mode = spec.mode.strip().lower()         # operating style
     sess.emit("user", {"text": spec.message})
     threading.Thread(target=sess.run_message, args=(spec.message,),
                      daemon=True).start()
@@ -334,6 +339,79 @@ def browse(path: str = ""):
 @app.get("/api/media", dependencies=[Depends(require_token)])
 def media_status():
     return capabilities(load_media_config(load_config()))
+
+
+# Her real voice, server-side. The browser's speechSynthesis is at the mercy of
+# whatever robotic voices the phone happens to ship; piper gives her one good
+# voice that sounds identical on every device. /api/voices lists the menu;
+# /api/speak renders a line to WAV the browser just plays.
+@app.get("/api/voices", dependencies=[Depends(require_token)])
+def voices():
+    return {"voices": list_voices()}
+
+
+class SpeakSpec(BaseModel):
+    text: str
+    voice: str = ""
+
+
+@app.post("/api/speak", dependencies=[Depends(require_token)])
+def speak_text(spec: SpeakSpec):
+    text = (spec.text or "").strip()
+    if not text:
+        raise HTTPException(400, "Nothing to say")
+    wav = synth_wav(text, spec.voice)
+    if not wav:
+        raise HTTPException(503, "TTS unavailable (piper or voice missing)")
+    return Response(content=wav, media_type="audio/wav",
+                    headers={"Cache-Control": "no-store"})
+
+
+# Serve an image file to the browser so her drawings and the things she looks
+# at show up inline in the chat. Token-gated and fenced to the home dir (this
+# is a personal LAN tool; everything under home is already the user's), and
+# images only — never an arbitrary file read.
+_IMG_EXT = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
+
+
+@app.get("/api/file", dependencies=[Depends(require_token)])
+def serve_file(path: str):
+    p = Path(path).expanduser().resolve()
+    home = Path.home().resolve()
+    if p != home and home not in p.parents:
+        raise HTTPException(403, "Outside the home directory")
+    if not p.is_file():
+        raise HTTPException(404, "No such file")
+    if p.suffix.lower() not in _IMG_EXT:
+        raise HTTPException(415, "Not an image")
+    return FileResponse(p, headers={"Cache-Control": "no-cache"})
+
+
+@app.post("/api/upload", dependencies=[Depends(require_token)])
+async def upload_image(request: Request, session: str = ""):
+    """Save a photo the user snapped (raw image bytes in the body, like
+    /api/listen) into the session's workspace/uploads, and return its path so
+    the chat can send it to her for look_at_image."""
+    sess = STORE.get(session) if session else None
+    if not sess and session:
+        STORE.rescan()
+        sess = STORE.get(session)
+    if not sess:
+        sess = STORE.get_or_create(None, "")   # a photo can start a fresh chat
+    body = await request.body()
+    if not body or len(body) < 100:
+        raise HTTPException(400, "No image received")
+    if len(body) > 20_000_000:
+        raise HTTPException(413, "Image too large")
+    ctype = (request.headers.get("content-type") or "").lower()
+    ext = ".png" if "png" in ctype else ".webp" if "webp" in ctype \
+        else ".gif" if "gif" in ctype else ".jpg"
+    import time as _t
+    updir = Path(sess.workspace) / "uploads"
+    updir.mkdir(parents=True, exist_ok=True)
+    path = updir / f"photo-{int(_t.time())}{ext}"
+    path.write_bytes(body)
+    return {"path": str(path), "session": sess.id}
 
 
 # ------------------------------------------------------------------ power
@@ -619,7 +697,16 @@ def serve() -> None:
     else:
         print(f"  Merge → {scheme}://{host}:{port}/chat")
         print("  (machine-only. To reach it from a phone: forge-dash --network)")
-    print()
+    # Her human voice (piper) is found next to THIS interpreter. If we were
+    # launched under a bare python instead of the venv, piper is missing and she
+    # silently drops to the robot TTS — warn loudly rather than fail quietly.
+    from .media import _piper_bin
+    if not _piper_bin():
+        print("  ⚠ Human voice OFF — piper not found next to this interpreter.")
+        print("    Launch under the venv:  ~/forge/.venv/bin/python -m forge.server")
+        print("    or simply:  bash ~/forge/start-dashboard.sh")
+        print()
+
     if use_tls:
         uvicorn.run(app, host=host, port=port, log_level="warning",
                     ssl_certfile=str(certfile), ssl_keyfile=str(keyfile))

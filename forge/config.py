@@ -93,13 +93,17 @@ DEFAULT_CONFIG: dict[str, Any] = {
     # Eyes and ears. Every one of these is optional — Forge runs fine
     # without any of them, and tools only appear when they actually work.
     "media": {
-        "vision_url": "http://127.0.0.1:8090/v1",
-        "vision_model": "qwen2.5-vl",
+        # Primary vision is Merge's own sighted brain (8085); the shared CPU 7B
+        # (8090) is the fallback when she's not the active model. Keep these in
+        # step with the MediaConfig defaults in media.py.
+        "vision_url": "http://127.0.0.1:8085/v1",
+        "vision_model": "qwen3.6-27b",
+        "vision_fallback_url": "http://127.0.0.1:8090/v1",
+        "vision_fallback_model": "qwen2.5-vl",
         "whisper_bin": "~/whisper.cpp/build/bin/whisper-cli",
         "whisper_model": "~/whisper.cpp/models/ggml-small.en.bin",
         "tts_command": "spd-say",
         "piper_voice": "~/forge/models/voices/en_US-amy-medium.onnx",
-        "record_seconds": 8,
     },
 }
 

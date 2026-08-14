@@ -305,9 +305,23 @@ class Session:
         self.unattended = False   # someone just typed — they're watching again
         self.last_used = time.time()
         final_text = ""
+        # Stream the reply live: batch tokens into ~18-char pieces (so the log
+        # doesn't fill with hundreds of one-token events) and emit them as
+        # 'text_delta'. The authoritative 'text' event below finalizes each
+        # segment, so any un-flushed tail is covered.
+        delta_buf = [""]
+
+        def on_delta(piece: str) -> None:
+            delta_buf[0] += piece
+            if len(delta_buf[0]) >= 18:
+                self.emit("text_delta", {"text": delta_buf[0]})
+                delta_buf[0] = ""
+
         try:
-            for ev in self.agent.run(text, ask=self.ask_permission):
+            for ev in self.agent.run(text, ask=self.ask_permission,
+                                     on_delta=on_delta):
                 if ev.kind == "text" and ev.text.strip():
+                    delta_buf[0] = ""   # final text supersedes buffered deltas
                     final_text = ev.text
                     self.emit("text", {"text": ev.text})
                 elif ev.kind == "tool_request":
@@ -404,10 +418,10 @@ class SessionStore:
             if workspace:
                 ws = Path(workspace).expanduser()
                 if not ws.is_dir():
-                    ws = Path.home() / "Playground"
+                    ws = Path.home() / "Merge"
             else:
-                ws = Path.home() / "Playground"
-            if ws == Path.home() / "Playground":
+                ws = Path.home() / "Merge"   # her home — a real space, not a scratch dir
+            if ws == Path.home() / "Merge":
                 ws.mkdir(exist_ok=True)
             s = Session(sid, ws, cfg)
             self.sessions[sid] = s

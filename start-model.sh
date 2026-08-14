@@ -1,9 +1,22 @@
 #!/usr/bin/env bash
-# Start a local model for Forge to talk to.
+# Start a local model (or the image server) for Forge to talk to.
 #   ./start-model.sh          -> the 30B (main workhorse, port 8080)
 #   ./start-model.sh tiny     -> TinyLlama (small + fast, port 8081)
+#   ./start-model.sh little   -> Qwen 3B on CPU (routing/titles/summaries, 8083)
+#   ./start-model.sh coder14  -> Qwen2.5-Coder 14B (port 8082)
+#   ./start-model.sh vision   -> shared 7B vision/mmproj on CPU (port 8090)
+#   ./start-model.sh merge    -> Merge's sighted 27B (port 8085)
+#   ./start-model.sh imagegen -> SD-Turbo image server, CPU (port 8771)
 set -e
 LLAMA=~/llama.cpp/build/bin/llama-server
+
+# The image generator is a python server, not a llama model — handle it
+# before the llama case. CPU only (GPU stays Merge's); holds SD-Turbo warm
+# on :8771 so each image skips the model reload.
+if [ "${1:-big}" = "imagegen" ]; then
+  echo "starting image-gen warm server on :8771 (CPU, SD-Turbo) ..."
+  exec env CUDA_VISIBLE_DEVICES="" PYTHONPATH="$HOME/forge" python3 -m forge.imagegen_server
+fi
 
 case "${1:-big}" in
   big)
@@ -52,12 +65,13 @@ case "${1:-big}" in
     MODEL=~/forge/models/Qwen3.6-27B-Abliterated-Heretic-Q4_K_M.gguf
     MMPROJ=~/forge/models/Qwen3.6-27B-mmproj-F16.gguf
     PORT=8085; CTX=16384; NGL=99
-    # --reasoning-budget 512: she thinks before speaking (that's the depth),
-    # but capped — uncapped she spent 500+ tokens deliberating over a simple
-    # hello, which at ~15 tok/s is half a minute of silence. Raise it if her
-    # answers to hard questions feel shallow; 0 turns thinking off entirely.
-    EXTRA="-fa on -ctk q8_0 -ctv q8_0 --reasoning-budget 512" ;;
-  *) echo "unknown model: $1  (try: big, tiny, coder14, vision, merge)"; exit 1 ;;
+    # --reasoning-budget 256: she thinks before speaking (that's the depth),
+    # but capped tighter now — at 512 she spent up to ~35s deliberating before
+    # EVERY reply, even "yeah cool". 256 roughly halves that pre-reply pause
+    # while leaving real room to reason on hard questions. Raise back toward
+    # 512 if her answers to hard questions feel shallow; 0 turns thinking off.
+    EXTRA="-fa on -ctk q8_0 -ctv q8_0 --reasoning-budget 256" ;;
+  *) echo "unknown model: $1  (try: big, tiny, little, coder14, vision, merge, imagegen)"; exit 1 ;;
 esac
 
 if [ -n "${MMPROJ:-}" ]; then

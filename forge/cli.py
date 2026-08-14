@@ -504,10 +504,10 @@ def main() -> None:
     # chat already defaults to the Playground; the terminal now does too.
     # Saying -w ~ out loud still works for whoever really means it.
     if workspace == Path.home() and args.workspace == ".":
-        workspace = Path.home() / "Playground"
+        workspace = Path.home() / "Merge"
         workspace.mkdir(exist_ok=True)
         console.print("[dim]the home folder is everything you own, so this "
-                      "chat lives in ~/Playground instead "
+                      "chat lives in ~/Merge (her workshop) instead "
                       "(run with -w ~ if you really mean home)[/dim]")
 
     mcfg = active_model_config(cfg)
