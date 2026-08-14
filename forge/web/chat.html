@@ -5,7 +5,12 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Merge">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="theme-color" content="#0f1117">
+<link rel="manifest" href="/static/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/static/icon-192.png">
+<link rel="icon" type="image/png" href="/static/icon-192.png">
 <title>Merge</title>
 <style>
   :root {
@@ -36,7 +41,7 @@
     header { gap:6px; padding:8px 10px; padding-top:calc(8px + env(safe-area-inset-top)); }
     .brand { font-size:12px; letter-spacing:.08em; }
     header button { padding:6px 9px; font-size:13px; }
-    #mode { padding:6px 6px; font-size:12px; max-width:34vw; }
+    #mode, #privacy { padding:6px 6px; font-size:12px; max-width:34vw; }
     .meta { font-size:10px; }
     .meta > div:first-child { display:none; }   /* drop the model line; keep the tappable folder */
     #mWs { max-width:30vw; }
@@ -46,7 +51,7 @@
     background:#222736; border:1px solid var(--line); color:var(--ink);
     border-radius:8px; padding:7px 11px; font-size:13px; font-family:inherit;
   }
-  #mode {
+  #mode, #privacy {
     background:#222736; border:1px solid var(--line); color:var(--ink);
     border-radius:8px; padding:6px 8px; font-size:13px; font-family:inherit;
   }
@@ -73,6 +78,8 @@
   .note { color:var(--gold); font-size:13px; font-style:italic; }
   .recbtn { background:#c0392b !important; color:#fff !important; }
   .spk-on { background:var(--accent) !important; color:#06131a !important; }
+  #privacyBanner { padding:7px 14px; font-size:12.5px; text-align:center;
+    border-bottom:1px solid var(--line); letter-spacing:.2px; }
 
   /* her window: images she draws or looks at, shown inline */
   .imgcard { margin:8px 0; max-width:min(420px, 92%); }
@@ -88,6 +95,15 @@
          background:var(--dim); margin-right:6px; vertical-align:middle;
          transition:background .3s; }
   .dot.on { background:var(--good); box-shadow:0 0 6px rgba(103,227,155,.6); }
+  .dot.warn { background:#e0b050; box-shadow:0 0 6px rgba(224,176,80,.6); }
+  .dot.off { background:var(--bad); box-shadow:0 0 6px rgba(255,107,107,.55); }
+  .meta > div:first-child { cursor:pointer; }
+  /* copy button on code blocks she writes */
+  .msg pre { position:relative; }
+  .copybtn { position:absolute; top:6px; right:6px; background:#2a2f3d; color:var(--dim);
+    border:1px solid var(--line); border-radius:6px; font-size:11px; padding:2px 8px;
+    cursor:pointer; opacity:.72; font-family:inherit; }
+  .copybtn:hover { opacity:1; color:var(--ink); }
 
   /* the welcome / empty state */
   .welcome { text-align:center; color:var(--dim); padding:13vh 20px 0;
@@ -234,6 +250,11 @@
     <option value="precise">🎯 Precise</option>
     <option value="deep">🧠 Deep</option>
   </select>
+  <select id="privacy" title="Privacy: saved / off the record / knowledge only">
+    <option value="normal">🗒️ Normal</option>
+    <option value="offrec">🕶️ Off the record</option>
+    <option value="sandbox">🔒 Knowledge only</option>
+  </select>
   <button id="arBtn" style="display:none" title="Augmented reality (headset)">AR</button>
   <button id="speakBtn" title="Read her replies aloud">🔈</button>
   <button id="voiceBtn" style="display:none" title="Hands-free voice chat">🎙️</button>
@@ -243,6 +264,7 @@
   </div>
 </header>
 
+<div id="privacyBanner" style="display:none"></div>
 <div id="log"></div>
 
 <footer>
@@ -285,6 +307,31 @@ function detectEnv() {
 $('mode').value = localStorage.getItem('forge-mode') || 'auto';
 $('mode').onchange = () => localStorage.setItem('forge-mode', $('mode').value);
 
+// ---- privacy: a separate dial from the speed style ------------------
+// normal = saved & full access; offrec = read anything but change nothing on
+// disk, unrecorded; sandbox = knowledge + safe tools only, no files, unrecorded.
+let sessionEphemeral = false;   // is the CURRENT chat one that leaves no trace?
+function currentPrivacy() { return $('privacy').value || 'normal'; }
+const _PRIV_BANNER = {
+  offrec:  {bg:'#3a2d12', fg:'#f0c26b', text:"🕶️ Off the record — she can read but can't change anything, and nothing here is saved."},
+  sandbox: {bg:'#2b1836', fg:'#d9a8f5', text:"🔒 Knowledge only — no files at all, and nothing here is saved."},
+};
+function updatePrivacyUI() {
+  const b = $('privacyBanner'), p = currentPrivacy(), cfg = _PRIV_BANNER[p];
+  if (cfg) { b.textContent = cfg.text; b.style.background = cfg.bg; b.style.color = cfg.fg; b.style.display = ''; }
+  else b.style.display = 'none';
+  $('privacy').style.outline = cfg ? '2px solid ' + cfg.fg : '';
+}
+$('privacy').value = localStorage.getItem('forge-privacy') || 'normal';
+$('privacy').onchange = () => {
+  localStorage.setItem('forge-privacy', $('privacy').value);
+  newChat(false);          // a privacy switch starts a clean chat — never mix recorded and private
+  updatePrivacyUI();
+  const p = currentPrivacy();
+  if (p !== 'normal') el('note', (_PRIV_BANNER[p] || {}).text || '');
+};
+updatePrivacyUI();
+
 const q = p => p + (p.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(TOKEN);
 const api = (p, opts) => fetch(q(p), opts).then(r => {
   if (r.status === 401) { badToken(); throw new Error('unauthorized'); }
@@ -312,6 +359,23 @@ function el(cls, html) {
   log.appendChild(d);
   if (follow) scrollDown();
   return d;
+}
+
+// Put a small "copy" button on every code block she writes.
+function addCopyButtons(container) {
+  if (!container) return;
+  container.querySelectorAll('pre').forEach(pre => {
+    if (pre.querySelector('.copybtn')) return;
+    const btn = document.createElement('button');
+    btn.className = 'copybtn'; btn.textContent = 'copy';
+    btn.onclick = () => {
+      const code = (pre.querySelector('code') || pre).innerText;
+      (navigator.clipboard ? navigator.clipboard.writeText(code) : Promise.reject())
+        .then(() => { btn.textContent = 'copied'; setTimeout(() => btn.textContent = 'copy', 1200); })
+        .catch(() => { btn.textContent = 'select + copy'; });
+    };
+    pre.appendChild(btn);
+  });
 }
 const esc = s => String(s ?? '').replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
 
@@ -402,8 +466,10 @@ function render(e) {
     if (follow) scrollDown();
   }
   else if (e.kind === 'text')   {
-    if (streamBubble) { streamBubble.innerHTML = md(e.text); endStream(); }
-    else el('msg bot', md(e.text));
+    let bubble;
+    if (streamBubble) { streamBubble.innerHTML = md(e.text); bubble = streamBubble; endStream(); }
+    else bubble = el('msg bot', md(e.text));
+    addCopyButtons(bubble);                                  // copy on any code she wrote
     imagePaths(e.text).forEach(showImage);
     if (voiceMode || speakAll) voiceReply += ' ' + e.text;   // collect to speak on done
   }
@@ -539,6 +605,7 @@ function send() {
 
 async function dispatch(text) {
   setWorking(true);
+  if (currentPrivacy() !== 'normal') sessionEphemeral = true;   // this chat leaves no trace
   try {
     // A send over a connection that died while the tablet slept can hang
     // for minutes with no error. 15 seconds is generous for a LAN POST;
@@ -548,7 +615,8 @@ async function dispatch(text) {
     const r = await api('/api/chat', {
       method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({ message:text, session:SESSION, workspace:WORKSPACE,
-                             env: detectEnv(), mode: $('mode').value }),
+                             env: detectEnv(), mode: $('mode').value,
+                             privacy: currentPrivacy() }),
       signal: ctl.signal
     }).finally(() => clearTimeout(timer));
     if (r.session !== SESSION) {
@@ -643,9 +711,7 @@ $('chatsBtn').onclick = async () => {
   document.body.appendChild(backdrop);
 };
 
-$('cogBtn').onclick = () => {
-  location.href = '/' + (TOKEN ? '?token=' + encodeURIComponent(TOKEN) : '');
-};
+$('cogBtn').onclick = () => openSettings();
 
 // ---- voice input: tap to talk, tap to stop -------------------------
 // Browsers only grant the microphone on secure (https) pages — the button
@@ -1049,8 +1115,9 @@ function openVoiceSettings() {
       '<label style="font-size:12px;color:var(--dim)">Speed · <span id="rV">' + rate + '</span>' +
         '<input id="rateSel" type="range" min="0.7" max="1.6" step="0.05" value="' + rate +
         '" style="width:100%;margin-top:4px"></label>' +
-      '<div style="font-size:11px;color:var(--dim);opacity:.8">Pitch &amp; speed apply to device ' +
-        'voices. Her own voices (top of the list) sound the same on every device.</div>' +
+      '<div style="font-size:11px;color:var(--dim);opacity:.8">Her voices (top) come from ' +
+        'the PC and stream in as she talks — same on every device. A device voice plays ' +
+        'instantly from this phone; pitch &amp; speed apply only to those.</div>' +
     '</div>' +
     '<div class="foot"><button class="cancel">Close</button><button class="use">▶ Test</button></div>';
   bg.appendChild(box); document.body.appendChild(bg);
@@ -1068,6 +1135,116 @@ function openVoiceSettings() {
     save();
     stopSpeaking();
     say("Hey! This is how I sound now. Better?");
+  };
+}
+
+// A memorable, easy-to-say passphrase: three clear, distinct words. Voice
+// chat has to hear it, and you have to remember it.
+const _PHRASE_WORDS = ['amber','otter','canyon','harbor','maple','comet','pepper',
+  'willow','cobalt','meadow','ember','lantern','pebble','cricket','saffron','juniper',
+  'marble','walnut','copper','thistle','falcon','indigo','pumpkin','anchor'];
+function suggestPhrase() {
+  const pick = () => _PHRASE_WORDS[Math.floor(Math.random() * _PHRASE_WORDS.length)];
+  const out = [];
+  while (out.length < 3) { const w = pick(); if (!out.includes(w)) out.push(w); }
+  return out.join(' ');
+}
+
+// The ⚙ settings panel: who she talks to (owner + challenge phrase), a way
+// into the voice options, and a link on to the full admin page.
+function openSettings() {
+  if (document.querySelector('.fmodal-bg')) return;
+  const INP = 'width:100%;margin-top:6px;background:#0d0f16;color:var(--ink);' +
+    'border:1px solid var(--line);border-radius:8px;padding:11px;font-size:15px;' +
+    'font-family:inherit;box-sizing:border-box';
+  const ROW = 'display:block;width:100%;box-sizing:border-box;text-align:left;' +
+    'background:#2a2f3d;color:var(--ink);border:1px solid var(--line);border-radius:10px;' +
+    'padding:13px;font-size:14px;font-family:inherit;cursor:pointer';
+  const adminHref = '/' + (TOKEN ? '?token=' + encodeURIComponent(TOKEN) : '');
+  const bg = document.createElement('div'); bg.className = 'fmodal-bg';
+  bg.onclick = () => bg.remove();
+  const box = document.createElement('div'); box.className = 'fmodal';
+  box.onclick = e => e.stopPropagation();
+  box.innerHTML =
+    '<h3>Settings</h3>' +
+    '<div style="padding:2px 16px 14px;display:flex;flex-direction:column;gap:18px">' +
+      '<div>' +
+        '<label style="display:flex;align-items:center;gap:10px;font-size:13px;cursor:pointer;margin-bottom:4px">' +
+          '<input type="checkbox" id="idEnabled" style="width:18px;height:18px;accent-color:var(--accent)">' +
+          '🔒 Identity checks &amp; challenge phrase</label>' +
+        '<div id="idHint" style="font-size:11px;color:#e0b050;margin:0 0 10px 28px;display:none"></div>' +
+        '<label style="font-size:12px;color:var(--dim)">Your name' +
+          '<input id="ownerName" placeholder="e.g. your name" style="' + INP + '"></label>' +
+        '<label style="font-size:12px;color:var(--dim);margin-top:12px;display:block">' +
+          'Challenge phrase <span id="phraseState" style="color:var(--dim)"></span>' +
+          '<div style="display:flex;gap:6px;margin-top:6px">' +
+            '<input id="phraseInput" type="password" autocomplete="new-password" ' +
+              'placeholder="leave blank to keep current" style="' + INP + ';margin-top:0;flex:1">' +
+            '<button id="suggestPhrase" type="button" style="flex:0 0 auto;background:#2a2f3d;' +
+              'color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:0 12px;' +
+              'font-size:13px;font-family:inherit;cursor:pointer">Suggest</button>' +
+          '</div></label>' +
+        '<div style="font-size:11px;color:var(--dim);margin-top:8px;line-height:1.5">' +
+          "She never sees this — it's checked on the server, and she asks for it only if a " +
+          "conversation seems off (and keeps asking if it's wrong). Stored scrambled, so pick " +
+          "something you'll remember. " +
+          '<a id="clearPhrase" href="#" style="color:var(--accent);display:none">clear it</a></div>' +
+      '</div>' +
+      '<button id="toVoice" style="' + ROW + '">🎙️ Voice &amp; speech options →</button>' +
+      '<a href="' + adminHref + '" style="' + ROW + ';text-decoration:none">⚙ Full admin &amp; models →</a>' +
+    '</div>' +
+    '<div class="foot"><button class="cancel">Close</button><button class="use">Save</button></div>';
+  bg.appendChild(box); document.body.appendChild(bg);
+
+  let hasPhrase = false;
+  function updateIdHint() {
+    const on = box.querySelector('#idEnabled').checked;
+    const willHave = hasPhrase || box.querySelector('#phraseInput').value.trim();
+    const hint = box.querySelector('#idHint');
+    if (on && !willHave) { hint.textContent = '⚠ Add a phrase below to actually arm it.'; hint.style.display = ''; }
+    else hint.style.display = 'none';
+  }
+  fetch(q('/api/identity')).then(r => r.json()).then(d => {
+    box.querySelector('#idEnabled').checked = !!d.enabled;
+    box.querySelector('#ownerName').value = d.owner_name || '';
+    hasPhrase = !!d.has_phrase;
+    box.querySelector('#phraseState').textContent = hasPhrase ? '· set ✓' : '· not set';
+    if (hasPhrase) box.querySelector('#clearPhrase').style.display = '';
+    updateIdHint();
+  }).catch(() => {});
+
+  box.querySelector('#idEnabled').onchange = updateIdHint;
+  box.querySelector('#phraseInput').oninput = updateIdHint;
+  box.querySelector('#suggestPhrase').onclick = () => {
+    const inp = box.querySelector('#phraseInput');
+    inp.type = 'text';                       // show it so it's easy to read + remember
+    inp.value = suggestPhrase();
+    updateIdHint();
+  };
+  box.querySelector('#toVoice').onclick = () => { bg.remove(); openVoiceSettings(); };
+  box.querySelector('#clearPhrase').onclick = e => {
+    e.preventDefault();
+    fetch(q('/api/identity'), {method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({phrase: ''})}).then(() => {
+        box.querySelector('#phraseState').textContent = '· not set';
+        box.querySelector('#phraseInput').value = '';
+        box.querySelector('#clearPhrase').style.display = 'none';
+        el('note', 'Challenge phrase cleared.');
+      });
+  };
+  box.querySelector('.cancel').onclick = () => bg.remove();
+  box.querySelector('.use').onclick = () => {
+    const owner = box.querySelector('#ownerName').value.trim();
+    const phrase = box.querySelector('#phraseInput').value;
+    const body = {enabled: box.querySelector('#idEnabled').checked, owner_name: owner};
+    if (phrase.trim()) body.phrase = phrase;          // only set when they typed one
+    fetch(q('/api/identity'), {method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body)}).then(r => r.json()).then(d => {
+        const armed = d.enabled && d.has_phrase;
+        el('note', 'Saved. Identity checks are ' + (armed ? 'ON' : 'off') +
+          (d.enabled && !d.has_phrase ? ' (add a phrase to arm them).' : '.'));
+        bg.remove();
+      }).catch(() => el('err', 'Could not save settings.'));
   };
 }
 
@@ -1116,16 +1293,21 @@ if (navigator.xr && navigator.xr.isSessionSupported) {
   }).catch(() => {});
 }
 
-$('newBtn').onclick = () => {
-  if (!confirm('Start a fresh conversation?')) return;
+function newChat(confirmFirst) {
+  if (confirmFirst && !confirm('Start a fresh conversation?')) return;
+  // Delete-after: an off-the-record chat is dropped from the server too, so it
+  // truly leaves nothing behind (it was never on disk; this clears it from RAM).
+  if (SESSION && sessionEphemeral) fetch(q('/api/sessions/' + SESSION), {method: 'DELETE'}).catch(() => {});
   SESSION = null;
+  sessionEphemeral = false;
   localStorage.removeItem('forge-session');
   endStream();
   log.innerHTML = '';
   cursor = 0;
   if (es) es.close();
   showWelcome();          // folder stays as-is; tap the folder name up top to change it
-};
+}
+$('newBtn').onclick = () => newChat(true);
 
 // A real, browsable folder picker (replaces the old prompt()). Tap the folder
 // name in the header, or New, to open it. Uses /api/browse to walk directories.
@@ -1177,11 +1359,30 @@ function pickFolder() {
   load(cur);
 }
 
+// The header dot tells you whether her BRAIN is actually reachable, not just
+// the dashboard: green = awake, amber = loading / swapped / not responding,
+// red = can't reach the dashboard at all. Tap the dot for the detail (phones
+// have no hover). Polled so a model swap shows up on its own.
+async function checkHealth() {
+  const dot = $('statusDot');
+  try {
+    const h = await api('/api/health');
+    if (h.reachable) { dot.className = 'dot on'; dot.dataset.msg = 'Merge is awake' + (h.model ? ' (' + h.model + ')' : ''); }
+    else { dot.className = 'dot warn'; dot.dataset.msg = "Her model isn't responding — " + (h.detail || '') + '. Loading or swapped out?'; }
+  } catch (e) {
+    dot.className = 'dot off'; dot.dataset.msg = "Can't reach the dashboard.";
+  }
+  dot.title = dot.dataset.msg;
+}
+
 (async function init() {
   try {
     const cfg = await api('/api/config');
     $('mModel').textContent = cfg.active_model;
-    $('statusDot').classList.add('on');
+    checkHealth();
+    setInterval(checkHealth, 20000);
+    const meta = document.querySelector('.meta > div:first-child');
+    if (meta) meta.onclick = () => { checkHealth(); el('note', $('statusDot').dataset.msg || 'Checking…'); };
     if (!WORKSPACE) { WORKSPACE = ''; }
     $('mWs').textContent = WORKSPACE || '(pick a folder)';
     $('mWs').title = 'Change working folder';

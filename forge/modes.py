@@ -13,7 +13,8 @@ The spectrum, left to right:
 
 # Tool tiers by name. None = every tool (no filter).
 _LIGHT = {"read_file", "list_dir", "search", "web_search", "fetch_url", "recall",
-          "look_at_image", "take_screenshot", "say_aloud", "transcribe_audio"}
+          "look_at_image", "take_screenshot", "say_aloud", "transcribe_audio",
+          "verify_phrase"}
 _WRITING = _LIGHT | {"write_file", "edit_file", "undo_file", "save_note",
                      "text_stats", "ai_tells", "name_check", "generate_image"}
 
@@ -60,6 +61,31 @@ AUTO_LABEL = "\U0001f39b️ Auto"
 
 def get_mode(name: str) -> dict:
     return MODES.get((name or "").strip().lower(), MODES[DEFAULT_MODE])
+
+
+# ---- privacy modes: a SEPARATE axis from the speed styles above ----------
+# Each can further restrict her tools and switch off all persistence, so a
+# chat can leave no trace. `deny` names tools removed on top of the style's
+# own toolset; `ephemeral` means nothing about the chat is written to disk.
+_WRITES_DISK = {"write_file", "edit_file", "undo_file", "save_note",
+                "run_command", "format_code", "generate_image", "take_screenshot"}
+_TOUCHES_FILES = _WRITES_DISK | {"read_file", "list_dir", "search"}
+
+PRIVACY = {
+    # everyday: saved, full access
+    "normal":  {"label": "Normal", "ephemeral": False, "deny": frozenset()},
+    # off the record: reads anything, changes nothing on disk, nothing recorded
+    "offrec":  {"label": "\U0001f576️ Off the record", "ephemeral": True,
+                "deny": frozenset(_WRITES_DISK)},
+    # knowledge only: her knowledge + safe tools, hands off the filesystem
+    "sandbox": {"label": "\U0001f512 Knowledge only", "ephemeral": True,
+                "deny": frozenset(_TOUCHES_FILES)},
+}
+PRIVACY_DEFAULT = "normal"
+
+
+def get_privacy(name: str) -> dict:
+    return PRIVACY.get((name or "").strip().lower(), PRIVACY[PRIVACY_DEFAULT])
 
 
 import re as _re

@@ -33,6 +33,7 @@ from . import recall
 from .agent import Agent
 from .config import active_model_config, load_config
 from .media import load_media_config
+from .modes import get_privacy
 from .providers import ToolCall, build_provider
 from .tools import Workspace, build_media_tools, build_tools
 
@@ -114,6 +115,9 @@ class Session:
         # an event to be delivered from twice.
         self.log: list[dict] = []
         self.log_base = 0          # how many were dropped off the front
+        # A private/off-the-record chat: never written to disk, never listed,
+        # gone when it ends. Set per-turn by the server from the privacy mode.
+        self.ephemeral = False
         self.cond = threading.Condition()
         self.pending: PendingPermission | None = None
         self.busy = False
@@ -341,9 +345,11 @@ class Session:
         finally:
             self.busy = False
             self.last_used = time.time()
-            self.save()
-            # the librarian files an index card in the background
-            recall.remember_turn(text, final_text, str(self.workspace), self.id)
+            # Off the record: no session file, no memory card — nothing recorded.
+            if not self.ephemeral:
+                self.save()
+                # the librarian files an index card in the background
+                recall.remember_turn(text, final_text, str(self.workspace), self.id)
 
 
 class SessionStore:
@@ -390,11 +396,14 @@ class SessionStore:
                 if s:
                     self.sessions[sid] = s
 
-    def get_or_create(self, session_id: str | None, workspace: str | None) -> Session:
+    def get_or_create(self, session_id: str | None, workspace: str | None,
+                      privacy: str = "normal") -> Session:
         cfg = load_config()
+        ephemeral = get_privacy(privacy)["ephemeral"]
         with self.lock:
             if session_id and session_id in self.sessions:
                 s = self.sessions[session_id]
+                s.ephemeral = ephemeral
                 # a model switched in the dashboard should land here too
                 if s.model_name != cfg.get("active_model"):
                     s.reload_model(cfg)
@@ -424,8 +433,10 @@ class SessionStore:
             if ws == Path.home() / "Merge":
                 ws.mkdir(exist_ok=True)
             s = Session(sid, ws, cfg)
+            s.ephemeral = ephemeral        # set BEFORE any save
             self.sessions[sid] = s
-            s.save()
+            if not s.ephemeral:            # a private chat is never written, even the shell
+                s.save()
             return s
 
     def get(self, session_id: str) -> Session | None:
@@ -434,6 +445,8 @@ class SessionStore:
     def listing(self) -> list[dict]:
         out = []
         for s in sorted(self.sessions.values(), key=lambda x: -x.last_used):
+            if s.ephemeral:
+                continue            # private chats never show in the drawer
             first = next((e.get("text", "") for e in s.log
                           if e.get("kind") == "user"), "")
             out.append({

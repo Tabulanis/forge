@@ -90,6 +90,11 @@ DEFAULT_CONFIG: dict[str, Any] = {
     # this thing runs shell commands and anyone on the LAN could reach it.
     "server": {"host": "127.0.0.1", "port": 8770, "token": ""},
 
+    # Who she belongs to, and a challenge phrase for when a session smells off.
+    # Off by default — arm it when you're ready. The phrase is stored ONLY as a
+    # salted hash (see identity.py), never in plaintext here, never in her prompt.
+    "identity": {"enabled": False, "owner_name": "", "phrase_hash": "", "phrase_salt": ""},
+
     # Eyes and ears. Every one of these is optional — Forge runs fine
     # without any of them, and tools only appear when they actually work.
     "media": {

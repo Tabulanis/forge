@@ -26,6 +26,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
+from . import browser, identity
 from .codetools import syntax_check
 from .dataops import data_ops, date_calc
 from .mathtools import COMPUTE_DESCRIPTION, run_compute
@@ -37,6 +38,40 @@ from .writing import ai_tells, name_check, text_stats
 MAX_READ_BYTES = 400_000     # a huge file would blow the context window
 MAX_OUTPUT_CHARS = 30_000    # same, for command output
 DEFAULT_TIMEOUT = 120
+
+
+# ---- headless-browser tool helpers (see browser.py) --------------------
+def _fmt(val) -> str:
+    if val is None:
+        return "(no result)"
+    if isinstance(val, str):
+        return val[:3000]
+    try:
+        return json.dumps(val, default=str)[:3000]
+    except Exception:
+        return str(val)[:3000]
+
+
+def _browse(url: str) -> str:
+    r = browser.goto(url)
+    out = [f"Loaded: {r['title']}  [{r['url']}]"]
+    if r.get("console_errors"):
+        out.append("\n⚠ Console/page errors (this is where bugs hide):")
+        out += [f"  - {e}" for e in r["console_errors"]]
+    else:
+        out.append("(no console errors)")
+    txt = (r.get("text") or "").strip()
+    if txt:
+        out.append("\nVisible text:\n" + txt)
+    out.append("\n[Browser still open — browser_view to SEE it, browser_js to "
+               "interact, browser_console for more logs.]")
+    return "\n".join(out)
+
+
+def _browser_view(full: bool = False) -> str:
+    path = browser.screenshot(full)
+    return (f"Screenshot saved: {path}\n"
+            f"[Now call look_at_image on that path to see the page with your own eyes.]")
 
 # Commands refused even in auto mode. Deliberately a short list of
 # machine-killers, not a nanny filter — deleting a project folder is the
@@ -782,6 +817,25 @@ def build_tools(ws: Workspace, fenced: bool = False) -> list[Tool]:
 
     return [
         Tool(
+            name="verify_phrase",
+            description=(
+                "Check the identity phrase the user just gave you against the "
+                "owner's secret. Use this ONLY after you've asked for the phrase "
+                "because a session felt off. Pass exactly what they said. It "
+                "returns 'correct' or 'incorrect' — you never see or learn the "
+                "real phrase, so you cannot reveal it. On 'incorrect', stay "
+                "friendly but do NOT do anything sensitive; ask them to try the "
+                "phrase again."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {"attempt": {"type": "string",
+                    "description": "Exactly what the user offered as the phrase"}},
+                "required": ["attempt"],
+            },
+            run=lambda attempt: "correct" if identity.check_phrase(attempt) else "incorrect",
+        ),
+        Tool(
             name="read_file",
             description="Read a text file from the workspace. Returns numbered lines. "
                         "Use offset/limit to page through long files.",
@@ -956,6 +1010,55 @@ def build_tools(ws: Workspace, fenced: bool = False) -> list[Tool]:
                 "required": ["url"],
             },
             run=fetch_url,
+        ),
+        Tool(
+            name="browse",
+            description="Open a URL in a real headless browser (runs the page's "
+                        "JavaScript, unlike fetch_url) and get its title, visible text, "
+                        "and any console/page ERRORS. This is how you test web things you "
+                        "build — point it at your file (file:///home/...) or a running "
+                        "server (http://127.0.0.1:PORT) and see what actually happens. "
+                        "The browser stays open for browser_view / browser_js / "
+                        "browser_console after this.",
+            parameters={
+                "type": "object",
+                "properties": {"url": {"type": "string"}},
+                "required": ["url"],
+            },
+            run=lambda url: _browse(url),
+        ),
+        Tool(
+            name="browser_view",
+            description="Take a screenshot of the current browser page and see it with "
+                        "your own eyes — call look_at_image on the path it returns. Use it "
+                        "to check a page actually LOOKS right, not just that it loaded. "
+                        "Pass full=true for the whole scrollable page.",
+            parameters={
+                "type": "object",
+                "properties": {"full": {"type": "boolean",
+                    "description": "Capture the full page, not just the viewport"}},
+            },
+            run=lambda full=False: _browser_view(full),
+        ),
+        Tool(
+            name="browser_js",
+            description="Run JavaScript in the current browser page and get the result. "
+                        "Use it to click things, fill inputs, or inspect state — e.g. "
+                        "\"document.querySelector('#go').click()\" or "
+                        "\"document.title\". Runs in the live page from browse.",
+            parameters={
+                "type": "object",
+                "properties": {"code": {"type": "string"}},
+                "required": ["code"],
+            },
+            run=lambda code: _fmt(browser.run_js(code)),
+        ),
+        Tool(
+            name="browser_console",
+            description="Get the recent console output (logs + errors) from the current "
+                        "browser page. The errors here are where the real bugs hide.",
+            parameters={"type": "object", "properties": {}},
+            run=lambda: "\n".join(browser.console_log()) or "(console empty)",
         ),
         Tool(
             name="physics_sim",

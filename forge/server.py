@@ -27,7 +27,7 @@ from pydantic import BaseModel
 
 from .config import (CONFIG_PATH, load_config, load_pipelines, save_config,
                      save_pipelines)
-from . import power, recall
+from . import identity, power, recall
 from .doctor import run_checks
 from .help_content import ORDER, TOPICS, VERSION
 from .media import capabilities, list_voices, load_media_config, synth_wav
@@ -228,6 +228,7 @@ class ChatSpec(BaseModel):
     workspace: str | None = None
     env: str = ""            # where the user is: phone / PC / AR / VR / …
     mode: str = ""           # operating style: flash / muse / balanced / precise / deep
+    privacy: str = ""        # normal / offrec (off the record) / sandbox (knowledge only)
 
 
 class PermissionSpec(BaseModel):
@@ -240,10 +241,17 @@ class PermissionSpec(BaseModel):
 def chat(spec: ChatSpec):
     """Start a turn. Returns immediately; watch /api/stream for what happens."""
     STORE.rescan()   # a chat the terminal saved must be continuable here
-    sess = STORE.get_or_create(spec.session, spec.workspace)
+    _priv = (spec.privacy or "normal").strip().lower()
+    sess = STORE.get_or_create(spec.session, spec.workspace, _priv)
     sess.agent.client_env = (spec.env or "").strip()[:60]   # let her know the device
+    # Identity checks fire only when switched on AND a phrase is set (armed).
+    sess.agent.identity_owner = (
+        (load_config().get("identity") or {}).get("owner_name", "")
+        if identity.armed() else "")
     if spec.mode:
         sess.agent.mode = spec.mode.strip().lower()         # operating style
+    sess.agent.privacy = _priv                               # privacy axis (tools + prompt)
+    sess.ephemeral = sess.agent.ephemeral                    # gate all persistence
     sess.emit("user", {"text": spec.message})
     threading.Thread(target=sess.run_message, args=(spec.message,),
                      daemon=True).start()
@@ -345,6 +353,26 @@ def media_status():
 # whatever robotic voices the phone happens to ship; piper gives her one good
 # voice that sounds identical on every device. /api/voices lists the menu;
 # /api/speak renders a line to WAV the browser just plays.
+# Owner identity + challenge phrase. GET returns the name and whether a phrase
+# is set — never the phrase. POST sets them; the phrase is hashed in identity.py
+# before it touches disk, and is never sent back out.
+@app.get("/api/identity", dependencies=[Depends(require_token)])
+def get_identity():
+    return identity.status()
+
+
+class IdentitySpec(BaseModel):
+    enabled: bool | None = None    # the on/off switch (None = leave as-is)
+    owner_name: str | None = None
+    phrase: str | None = None      # None = leave as-is, "" = clear, else = set
+
+
+@app.post("/api/identity", dependencies=[Depends(require_token), Depends(require_not_kid)])
+def set_identity(spec: IdentitySpec):
+    return identity.set_identity(enabled=spec.enabled, owner_name=spec.owner_name,
+                                 phrase=spec.phrase)
+
+
 @app.get("/api/voices", dependencies=[Depends(require_token)])
 def voices():
     return {"voices": list_voices()}

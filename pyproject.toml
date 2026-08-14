@@ -16,6 +16,7 @@ dependencies = [
   "ddgs>=9.0",            # web_search
   "beautifulsoup4>=4.12", # fetch_url page-text extraction
   "piper-tts>=1.6",       # her human voice (pulls onnxruntime)
+  "playwright>=1.60",     # headless browser she drives (also run: playwright install chromium)
 ]
 
 [project.scripts]
