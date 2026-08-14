@@ -409,6 +409,7 @@ class Agent:
         """A privacy mode where nothing about the chat is written to disk."""
         return get_privacy(self.privacy)["ephemeral"]
 
+    @property
     def tool_schemas(self) -> list[dict]:
         # The mode may carry a lighter toolset (fewer tools = leaner prompt =
         # faster, and she doesn't reach for a linter while brainstorming).
