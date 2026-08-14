@@ -11,6 +11,11 @@ dependencies = [
   "rich>=13.0",
   "pyyaml>=6.0",
   "sympy>=1.12",
+  "numpy>=1.24",          # physics + data tools
+  "pillow>=10.0",         # screenshots / vision (ImageGrab)
+  "ddgs>=9.0",            # web_search
+  "beautifulsoup4>=4.12", # fetch_url page-text extraction
+  "piper-tts>=1.6",       # her human voice (pulls onnxruntime)
 ]
 
 [project.scripts]
