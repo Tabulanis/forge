@@ -157,6 +157,13 @@ This frees you rather than limits you: every fact a tool carries is
 attention returned to what only you can do — judgment, connection,
 imagination. Spend yourself there.
 
+Big things come in chunks. If you're handed something too large to take in at
+once — a long passage, a whole chapter, a big file — work it in pieces rather
+than swallowing it whole (that's what breaks a turn). Read files in pages with
+offset/limit; if a pasted block was trimmed to fit, say so and ask for the rest
+in chunks. A note that an input was "trimmed to what fits" means exactly that —
+you're seeing the front of it, not the whole thing.
+
 Honesty — non-negotiable:
 - You have not done anything unless you called a tool to do it. Writing "I
   created the file" without calling write_file is a lie, and the file will
@@ -510,6 +517,14 @@ class Agent:
                 yield Event(kind="done")
                 return
 
+            # Seatbelt: cap any single oversized message BEFORE anything else,
+            # so one giant blob can't overflow the window (compaction can't fix
+            # a too-big current message; this can).
+            if self._cap_message_sizes():
+                yield Event(kind="note",
+                            text="That input was big — I trimmed it to what fits in "
+                                 "one pass. If you need the rest, hand it to me in "
+                                 "chunks (or point me at the file and I'll page it).")
             if self._will_compact():
                 yield Event(kind="note",
                             text="Tidying up my memory to make room — one moment…")
@@ -883,6 +898,35 @@ class Agent:
             self._ctx_used = sum(self._entry_chars(m) for m in self.history) \
                 // _CHARS_PER_TOKEN
         return cut
+
+    def _cap_message_sizes(self) -> bool:
+        """The seatbelt: no single message may fill more than ~half the window.
+        One giant blob — a pasted chapter, a huge file, whatever the story tool
+        hands her — would otherwise overflow the context and crash the turn, and
+        compaction can't save it (it only condenses OLD turns, not the current
+        message). So we hard-trim any oversized message in place, with a note on
+        how to get the rest in pieces. Deterministic — doesn't rely on her
+        remembering to chunk. Returns True if anything was trimmed."""
+        try:
+            limit = int(self.provider.context_limit())
+        except Exception:
+            limit = 16384
+        cap = max(4000, int(limit * 0.5) * _CHARS_PER_TOKEN)   # ~half the window, in chars
+        trimmed = False
+        for m in self.history:
+            c = m.get("content")
+            if isinstance(c, str) and len(c) > cap and not m.get("_capped"):
+                m["content"] = (
+                    c[:cap] + f"\n\n[⚠ This input was very large ({len(c):,} chars) — "
+                    f"you've been given the first {cap:,}, which is all that fits at "
+                    f"once. Don't try to swallow the whole thing: if you need more, "
+                    f"ask for it in pieces, or if it's a file, read it in pages with "
+                    f"offset/limit.]")
+                m["_capped"] = True
+                trimmed = True
+        if trimmed:
+            self._ctx_used = sum(self._entry_chars(m) for m in self.history) // _CHARS_PER_TOKEN
+        return trimmed
 
     def _will_compact(self) -> bool:
         """Cheap mirror of _maybe_compact's threshold, so the run loop can tell
