@@ -22,12 +22,16 @@ import os
 import re
 import subprocess
 import sys
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
+import httpx
+
 from . import browser, identity
 from .codetools import syntax_check
+from .config import load_config
 from .dataops import data_ops, date_calc
 from .mathtools import COMPUTE_DESCRIPTION, run_compute
 from .physics import quantum_sim, relativity_sim
@@ -72,6 +76,86 @@ def _browser_view(full: bool = False) -> str:
     path = browser.screenshot(full)
     return (f"Screenshot saved: {path}\n"
             f"[Now call look_at_image on that path to see the page with your own eyes.]")
+
+
+# ---- self-compressing notebook (save_note) -----------------------------
+# The project notebook is kept to a FIXED size: it changes, it doesn't grow.
+# When a new lesson pushes it over the cap, a little-model "librarian" folds it
+# back down — merging overlaps, keeping the most useful — and the full pre-fold
+# set is archived first, so a lesson is never silently lost.
+NOTE_CAP = 20
+
+_NB_HEADER = ("# Project notebook\n\nLessons this project has taught its agents, "
+              "loaded at the start of every session. Kept to a fixed size — it "
+              "sharpens, it doesn't sprawl.\n\n")
+
+
+def _parse_notes(text: str) -> list[str]:
+    return [ln[2:].strip() for ln in (text or "").splitlines()
+            if ln.startswith("- ") and ln[2:].strip()]
+
+
+def _notebook_md(notes: list[str]) -> str:
+    return _NB_HEADER + "".join(f"- {n}\n" for n in notes)
+
+
+def _write_atomic(path: Path, text: str) -> None:
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(text, encoding="utf-8")
+    tmp.replace(path)
+
+
+def _librarian_compact(notes: list[str], cap: int) -> list[str] | None:
+    """Ask the little model to fold the notebook down to `cap` lessons — merging
+    overlaps, dropping only true redundancy, keeping every distinct useful one.
+    Returns the new list, or None if it can't (caller keeps a safe fallback)."""
+    m = (load_config().get("models") or {}).get("little") or {}
+    base = (m.get("base_url") or "").rstrip("/")
+    if not base:
+        return None
+    numbered = "\n".join(f"{i + 1}. {n}" for i, n in enumerate(notes))
+    prompt = (
+        f"You keep a work-notebook of at most {cap} lessons about how to work with "
+        f"this user and project. It is one over the limit. Fold it back to {cap} or "
+        f"fewer: MERGE lessons that overlap, and drop ONLY what is truly redundant "
+        f"— never lose a distinct, useful lesson, and keep the original wording where "
+        f"you can. One short line each.\n\nNotebook:\n{numbered}\n\n"
+        f"Reply with ONLY the final lessons, one per line, each starting with '- ', "
+        f"no numbers and no commentary.")
+    try:
+        r = httpx.post(f"{base}/chat/completions",
+                       json={"messages": [{"role": "user", "content": prompt}],
+                             "max_tokens": 1500, "temperature": 0.2}, timeout=90)
+        if r.status_code != 200:
+            return None
+        out = _parse_notes(r.json()["choices"][0]["message"].get("content") or "")
+        # Guardrails: sane count, and it didn't nuke the content wholesale.
+        if out and len(out) <= cap and len("".join(out)) >= 0.4 * len("".join(notes)):
+            return out
+    except Exception:
+        pass
+    return None
+
+
+def _compact_notebook_file(nb_path: str, arch_path: str, cap: int) -> None:
+    """Background: archive the full notebook, then fold it back to the cap."""
+    nb = Path(nb_path)
+    try:
+        notes = _parse_notes(nb.read_text(encoding="utf-8"))
+    except Exception:
+        return
+    if len(notes) <= cap:
+        return
+    try:      # archive the full set BEFORE folding — nothing is ever lost
+        with Path(arch_path).open("a", encoding="utf-8") as f:
+            f.write("\n## snapshot before folding\n" + "".join(f"- {n}\n" for n in notes))
+    except Exception:
+        pass
+    folded = _librarian_compact(notes, cap) or notes[-cap:]   # fallback: keep freshest
+    try:
+        _write_atomic(nb, _notebook_md(folded))
+    except Exception:
+        pass
 
 # Commands refused even in auto mode. Deliberately a short list of
 # machine-killers, not a nanny filter — deleting a project folder is the
@@ -771,22 +855,31 @@ def build_tools(ws: Workspace, fenced: bool = False) -> list[Tool]:
         return "\n".join(hits) if hits else "(no matches)"
 
     def save_note(note: str) -> str:
-        """Append one lesson to the project notebook.
+        """Record one lesson in the project notebook.
 
-        Append-only and pinned to one file, so it doesn't need a permission
-        prompt — the worst a confused model can do is write a bad note.
+        The notebook is a FIXED size (NOTE_CAP): it changes, it doesn't grow.
+        A new lesson is added; if that pushes it over the cap, a little-model
+        librarian folds it back down in the background (merging overlaps, keeping
+        the most useful), and the full pre-fold set is archived first so nothing
+        is ever lost. Pinned to one file, so no permission prompt needed.
         """
         note = " ".join(note.split())
         if not note:
             return "Error: empty note."
         nb = ws.root / "FORGE-NOTES.md"
-        header = "" if nb.exists() else (
-            "# Project notebook\n\nLessons this project has taught its agents. "
-            "Loaded at the start of every session.\n\n")
-        with nb.open("a", encoding="utf-8") as f:
-            f.write(header + f"- {note}\n")
+        notes = _parse_notes(nb.read_text(encoding="utf-8")) if nb.exists() else []
+        if note in notes:
+            return "Already in the notebook — skipped the duplicate."
+        notes.append(note)
+        _write_atomic(nb, _notebook_md(notes))
         ws.mark_read(nb)
-        return f"Noted in FORGE-NOTES.md: {note[:80]}"
+        if len(notes) > NOTE_CAP:
+            arch = ws.root / "FORGE-NOTES-archive.md"
+            threading.Thread(target=_compact_notebook_file,
+                             args=(str(nb), str(arch), NOTE_CAP), daemon=True).start()
+            return (f"Noted: {note[:80]} — notebook's at its {NOTE_CAP}-lesson cap, "
+                    f"so I'm folding it back down in the background.")
+        return f"Noted: {note[:80]}"
 
     def run_command(command: str, timeout: int = DEFAULT_TIMEOUT) -> str:
         blocked = _machine_killer(command)

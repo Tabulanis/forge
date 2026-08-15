@@ -9,6 +9,12 @@ The spectrum, left to right:
   Balanced — the even default (everyday work)
   Precise — most accurate (facts, code, verified answers)
   Deep   — most thorough (hard problems, careful builds)
+
+The reasoning phase ("thinking") is the speed dial: OFF for Flash/Muse/Balanced
+(snappy), ON for Precise/Deep (they sit and think). llama.cpp only takes the
+thinking-token budget globally at startup, so we can't set it per mode — instead
+it's set generous server-side (start-model.sh) and only the two thinking modes
+ever draw on it. That's how "budget scales with the mode" is faked.
 """
 
 # Tool tiers by name. None = every tool (no filter).
@@ -34,7 +40,10 @@ MODES = {
                  "brainstorming, not fact-checking; surprise beats caution here.",
     },
     "balanced": {
-        "label": "⚖️ Balanced", "thinking": True, "temperature": 0.7,
+        # Snappy everyday default: no reasoning phase (that's what keeps it
+        # quick), full tools + honesty check. Reach for Precise/Deep when a
+        # problem actually needs her to sit and think.
+        "label": "⚖️ Balanced", "thinking": False, "temperature": 0.7,
         "tools": None, "superego": True, "max_steps": 40,
         "nudge": "",
     },

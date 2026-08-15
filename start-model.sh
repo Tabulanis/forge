@@ -65,12 +65,14 @@ case "${1:-big}" in
     MODEL=~/forge/models/Qwen3.6-27B-Abliterated-Heretic-Q4_K_M.gguf
     MMPROJ=~/forge/models/Qwen3.6-27B-mmproj-F16.gguf
     PORT=8085; CTX=16384; NGL=99
-    # --reasoning-budget 256: she thinks before speaking (that's the depth),
-    # but capped tighter now — at 512 she spent up to ~35s deliberating before
-    # EVERY reply, even "yeah cool". 256 roughly halves that pre-reply pause
-    # while leaving real room to reason on hard questions. Raise back toward
-    # 512 if her answers to hard questions feel shallow; 0 turns thinking off.
-    EXTRA="-fa on -ctk q8_0 -ctv q8_0 --reasoning-budget 256" ;;
+    # --reasoning-budget 1024: her thinking-token headroom. It's now GENEROUS
+    # on purpose — only Precise/Deep turn thinking on (Flash/Muse/Balanced run
+    # with it off), so a big budget costs the fast modes nothing and just lets
+    # the deep gears finish reasoning through hard problems instead of getting
+    # guillotined mid-thought (which was producing empty answers). Per-mode
+    # budgets aren't possible — llama takes this globally at startup. Lower it
+    # if Precise/Deep feel too slow; -1 = unlimited, 0 = no thinking.
+    EXTRA="-fa on -ctk q8_0 -ctv q8_0 --reasoning-budget 1024" ;;
   *) echo "unknown model: $1  (try: big, tiny, little, coder14, vision, merge, imagegen)"; exit 1 ;;
 esac
 
