@@ -525,6 +525,15 @@ class Agent:
                             text="That input was big — I trimmed it to what fits in "
                                  "one pass. If you need the rest, hand it to me in "
                                  "chunks (or point me at the file and I'll page it).")
+            # The usage report only refreshes _ctx_used when a model call
+            # COMPLETES — tool results appended since then ride in uncounted, so
+            # a couple of fat search results can sail under the 70% compact
+            # threshold and overflow the engine mid-task (found live 2026-08-15:
+            # a 26k request into the 24.5k window while _ctx_used still read
+            # much less). Floor the estimate with what's actually in history.
+            est = sum(self._entry_chars(m) for m in self.history) // _CHARS_PER_TOKEN
+            if est > self._ctx_used:
+                self._ctx_used = est
             if self._will_compact():
                 yield Event(kind="note",
                             text="Tidying up my memory to make room — one moment…")

@@ -427,3 +427,94 @@ in testing were server infrastructure (fixed), never sympy.
     self-healing config.
   All verified: scripted deterministic test batteries per round + live
   qwen30b runs after each. User plans to bring Anthropic and Gemini keys.
+
+## 2026-08-15 — "Model call failed" root cause found + fixes proven, then reverted (Fable 5, Board session)
+
+> ✅ IMPLEMENTED 2026-08-15 by the Forge/Merge session: both fixes are
+> in (providers.py error-message enrichment + agent.py `_ctx_used` floor),
+> CTX=24576 kept, regression-checked. The pointer file in ~/aidojo was removed.
+
+While live-driving the Storyweave Board's mining passes I root-caused the
+recurring fatal "Model call failed (HTTPStatusError)" and proved two fixes
+live, then **reverted them** — the user ruled forge is yours+his to change,
+not mine. The diagnosis and the exact proven diff are below; re-implement
+in your own style.
+
+**Bug 1 — providers.py `_stream` swallows the recovery evidence.**
+On an engine refusal it raises `RuntimeError("The model server had trouble
+(HTTPStatusError)...")`, discarding status code and body. But agent.py's
+overflow recovery (line ~549) greps that very message for `"400"` /
+`"context"` to decide trim-and-retry. llama.cpp's overflow body says
+"request (N tokens) exceeds the available context size" — the word
+"context" is RIGHT THERE, but the wrapper hides it, so every recoverable
+overflow kills the run. Fix: include `e.response.status_code` + first
+200 chars of body in the raised message.
+
+**Bug 2 — `_ctx_used` lags one model call behind.**
+It only updates from usage reports when a call completes; tool results
+appended between calls ride in uncounted. Watched live: two fat searches
+pushed a request to 26,033 tokens into a 24,576 window while `_ctx_used`
+sat far below the 70% compact threshold. Fix: before each provider call,
+floor the estimate with `sum(_entry_chars(history)) // _CHARS_PER_TOKEN`.
+
+**Verified:** with both fixes a full Board mining pass ran clean — proactive
+trims fired within a minute, six drafts written, clean done event, zero
+engine errors. Without them the identical pass died mid-run.
+
+**Also:** `start-model.sh` line 67 now has `CTX=24576` (was 16384) — left
+IN PLACE deliberately; reverting it brings the overflows back constantly.
+21.2/24.5 GB VRAM at 24k, verified stable.
+
+The exact diff that was proven live, then reverted:
+
+```diff
+diff --git a/forge/agent.py b/forge/agent.py
+index 15b05ad..ec36c4a 100644
+--- a/forge/agent.py
++++ b/forge/agent.py
+@@ -525,6 +525,15 @@ class Agent:
+                             text="That input was big — I trimmed it to what fits in "
+                                  "one pass. If you need the rest, hand it to me in "
+                                  "chunks (or point me at the file and I'll page it).")
++            # The usage report only updates when a model call COMPLETES — tool
++            # results appended since then ride in uncounted. That's how a pair
++            # of fat search results sailed under the 70% check and overflowed
++            # the engine mid-task (found live 2026-08-15: 26k request into a
++            # 24.5k window while _ctx_used still said much less). Floor the
++            # estimate with the bytes actually sitting in history.
++            est = sum(self._entry_chars(m) for m in self.history) // _CHARS_PER_TOKEN
++            if est > self._ctx_used:
++                self._ctx_used = est
+             if self._will_compact():
+                 yield Event(kind="note",
+                             text="Tidying up my memory to make room — one moment…")
+diff --git a/forge/providers.py b/forge/providers.py
+index 35042cb..1304886 100644
+--- a/forge/providers.py
++++ b/forge/providers.py
+@@ -435,8 +435,23 @@ class OpenAICompatProvider(Provider):
+                 "your message again."
+             ) from None
+         except (httpx.TimeoutException, httpx.HTTPStatusError) as e:
++            # Keep the status code and the server's own words in the message —
++            # the agent's recovery path greps this text for "400"/"context" to
++            # decide whether trimming and retrying can save the turn. A
++            # friendly wrapper that hides those words turns a recoverable
++            # overflow into a dead run (found live 2026-08-15).
++            detail = type(e).__name__
++            if isinstance(e, httpx.HTTPStatusError):
++                body = ""
++                try:
++                    body = e.response.read().decode(errors="replace")[:200]
++                except Exception:
++                    pass
++                detail = f"HTTP {e.response.status_code}"
++                if body:
++                    detail += f": {body}"
+             raise RuntimeError(
+-                f"The model server had trouble ({type(e).__name__}). Try again "
++                f"The model server had trouble ({detail}). Try again "
+                 f"in a moment."
+             ) from None
+ 
+```

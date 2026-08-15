@@ -435,8 +435,23 @@ class OpenAICompatProvider(Provider):
                 "your message again."
             ) from None
         except (httpx.TimeoutException, httpx.HTTPStatusError) as e:
+            # Keep the status code and the server's own words in the message.
+            # The agent's overflow recovery greps this text for "400"/"context"
+            # to decide whether trimming and retrying can save the turn —
+            # llama.cpp's overflow body literally says "exceeds the available
+            # context size", so hiding it turns a RECOVERABLE overflow into a
+            # dead run (root-caused live 2026-08-15).
+            detail = type(e).__name__
+            if isinstance(e, httpx.HTTPStatusError):
+                detail = f"HTTP {e.response.status_code}"
+                try:
+                    body = e.response.read().decode(errors="replace")[:200]
+                    if body:
+                        detail += f": {body}"
+                except Exception:
+                    pass
             raise RuntimeError(
-                f"The model server had trouble ({type(e).__name__}). Try again "
+                f"The model server had trouble ({detail}). Try again "
                 f"in a moment."
             ) from None
 

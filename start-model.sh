@@ -64,7 +64,7 @@ case "${1:-big}" in
     # CTX=16384 is the safe start; try 32768 later and watch nvidia-smi.
     MODEL=~/forge/models/Qwen3.6-27B-Abliterated-Heretic-Q4_K_M.gguf
     MMPROJ=~/forge/models/Qwen3.6-27B-mmproj-F16.gguf
-    PORT=8085; CTX=16384; NGL=99
+    PORT=8085; CTX=24576; NGL=99
     # --reasoning-budget 1024: her thinking-token headroom. It's now GENEROUS
     # on purpose — only Precise/Deep turn thinking on (Flash/Muse/Balanced run
     # with it off), so a big budget costs the fast modes nothing and just lets
