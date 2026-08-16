@@ -130,18 +130,28 @@ def list_datasets() -> str:
     return "\n".join(lines)
 
 
+SHELF_MAX = 14   # most she carries in her always-on prompt; the rest via list_datasets
+
+
 def shelf_line() -> str:
-    """Compact one-liner of the dataset shelf, for her context. Empty if none."""
+    """Compact one-liner of the dataset shelf, for her context. Capped so a big
+    shelf can't bloat her prompt — newest first, pointer to list_datasets for the
+    rest. Empty if none."""
     cat = _load_catalog()
     if not cat:
         return ""
+    items = sorted(cat.items(), key=lambda kv: -(kv[1].get("saved") or 0))
     parts = []
-    for n, m in sorted(cat.items()):
+    for n, m in items[:SHELF_MAX]:
         srcs = m.get("sources") or ([m["source"]] if m.get("source") else [])
         mark = "✓" if (m.get("corroborated") or len(srcs) >= 2) else "⚠"
         desc = m.get("description", "")
         parts.append(f"{n} {mark}" + (f" — {desc}" if desc else ""))
-    return "; ".join(parts)
+    line = "; ".join(parts)
+    extra = len(items) - min(len(items), SHELF_MAX)
+    if extra > 0:
+        line += f"; …+{extra} more (use list_datasets for the full shelf)"
+    return line
 
 
 def load_data(name: str):

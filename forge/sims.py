@@ -164,18 +164,27 @@ def list_sims() -> str:
     return "\n".join(lines)
 
 
+SHELF_MAX = 14   # most she carries in her always-on prompt; the rest via list_sims
+
+
 def shelf_line() -> str:
     """Compact one-liner of what's on the sim shelf, for her context so she knows
-    her instruments without a tool call. Empty string if the shelf is empty."""
+    her instruments without a tool call. Capped so a big shelf can't bloat her
+    prompt — newest first, with a pointer to list_sims for the rest. Empty if bare."""
     cat = _load_catalog()
     if not cat:
         return ""
+    items = sorted(cat.items(), key=lambda kv: -(kv[1].get("updated") or 0))
     parts = []
-    for n, m in sorted(cat.items()):
+    for n, m in items[:SHELF_MAX]:
         mark = "✓" if m.get("validated") else "⚠"
         desc = m.get("description", "")
         parts.append(f"{n} {mark}" + (f" — {desc}" if desc else ""))
-    return "; ".join(parts)
+    line = "; ".join(parts)
+    extra = len(items) - min(len(items), SHELF_MAX)
+    if extra > 0:
+        line += f"; …+{extra} more (use list_sims for the full shelf)"
+    return line
 
 
 def read_sim(name: str) -> str:

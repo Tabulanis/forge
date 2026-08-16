@@ -6,6 +6,7 @@
 #   ./start-model.sh coder14  -> Qwen2.5-Coder 14B (port 8082)
 #   ./start-model.sh vision   -> shared 7B vision/mmproj on CPU (port 8090)
 #   ./start-model.sh merge    -> Merge's sighted 27B (port 8085)
+#   ./start-model.sh embed    -> nomic embedding organ, CPU (port 8086)
 #   ./start-model.sh imagegen -> SD-Turbo image server, CPU (port 8771)
 set -e
 LLAMA=~/llama.cpp/build/bin/llama-server
@@ -73,8 +74,24 @@ case "${1:-big}" in
     # budgets aren't possible — llama takes this globally at startup. Lower it
     # if Precise/Deep feel too slow; -1 = unlimited, 0 = no thinking.
     EXTRA="-fa on -ctk q8_0 -ctv q8_0 --reasoning-budget 1024" ;;
-  *) echo "unknown model: $1  (try: big, tiny, little, coder14, vision, merge, imagegen)"; exit 1 ;;
+  embed)
+    # Her associative sense-organ: nomic-embed-text on CPU, embedding-only.
+    # Turns memory into vectors so recall finds things by MEANING, not just
+    # matching words. Tiny + fast; the GPU stays entirely Merge's. Started
+    # separately (llama-server can't both generate and embed on one port).
+    MODEL=~/forge/models/nomic-embed-text-v1.5.f16.gguf
+    PORT=8086; CTX=2048; NGL=0; EMBED=1 ;;
+  *) echo "unknown model: $1  (try: big, tiny, little, coder14, vision, merge, embed, imagegen)"; exit 1 ;;
 esac
+
+if [ -n "${EMBED:-}" ]; then
+  # Embedding-only server: --pooling mean is what nomic-embed expects, and no
+  # --jinja (there's no chat here, just text -> vector). CUDA hidden so it can
+  # never touch the card even if a GPU build tries a cudaMalloc.
+  echo "starting $(basename "$MODEL") as an embedding organ on port $PORT (CPU) ..."
+  exec env CUDA_VISIBLE_DEVICES="" "$LLAMA" -m "$MODEL" --host 127.0.0.1 \
+    --port "$PORT" -c "$CTX" --embedding --pooling mean
+fi
 
 if [ -n "${MMPROJ:-}" ]; then
   echo "starting $(basename "$MODEL") with vision on port $PORT ..."
