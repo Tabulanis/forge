@@ -156,6 +156,20 @@ def list_sims() -> str:
     return "\n".join(lines)
 
 
+def shelf_line() -> str:
+    """Compact one-liner of what's on the sim shelf, for her context so she knows
+    her instruments without a tool call. Empty string if the shelf is empty."""
+    cat = _load_catalog()
+    if not cat:
+        return ""
+    parts = []
+    for n, m in sorted(cat.items()):
+        mark = "✓" if m.get("validated") else "⚠"
+        desc = m.get("description", "")
+        parts.append(f"{n} {mark}" + (f" — {desc}" if desc else ""))
+    return "; ".join(parts)
+
+
 def read_sim(name: str) -> str:
     name = _safe_name(name)
     path = SIMS_DIR / f"{name}.py"

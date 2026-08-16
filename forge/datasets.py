@@ -130,6 +130,20 @@ def list_datasets() -> str:
     return "\n".join(lines)
 
 
+def shelf_line() -> str:
+    """Compact one-liner of the dataset shelf, for her context. Empty if none."""
+    cat = _load_catalog()
+    if not cat:
+        return ""
+    parts = []
+    for n, m in sorted(cat.items()):
+        srcs = m.get("sources") or ([m["source"]] if m.get("source") else [])
+        mark = "✓" if (m.get("corroborated") or len(srcs) >= 2) else "⚠"
+        desc = m.get("description", "")
+        parts.append(f"{n} {mark}" + (f" — {desc}" if desc else ""))
+    return "; ".join(parts)
+
+
 def load_data(name: str):
     """For sims (via the injected dataset() helper): just the data, {} if missing."""
     path = DATASETS_DIR / f"{_safe_name(name)}.json"

@@ -29,6 +29,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterator
 
+from . import datasets, sims
 from .modes import get_mode, get_privacy, route_mode
 from .providers import Provider, ToolCall
 from .tools import Tool
@@ -406,6 +407,19 @@ class Agent:
                      "your own knowledge and your safe tools (web, calculator, "
                      "and the like). Nothing here is saved. If they need the "
                      "files, tell them to switch out of knowledge-only mode.")
+        shelf_sims = sims.shelf_line()
+        shelf_ds = datasets.shelf_line()
+        if shelf_sims or shelf_ds:
+            text += ("\n\n# Your shelf — instruments you've already built (USE THEM)\n"
+                     f"Sims: {shelf_sims or '(none yet)'}\n"
+                     f"Datasets: {shelf_ds or '(none yet)'}\n"
+                     "These are yours, on disk from past work (✓ = validated/corroborated, "
+                     "⚠ = not confirmed). If a question matches what one of these does, RUN it "
+                     "(run_sim / query_dataset) — do NOT re-derive the formula with compute or "
+                     "in your head. You WILL make an arithmetic slip (a dropped factor, a wrong "
+                     "sign) that a validated sim already got right and won't. The whole point of "
+                     "building it was so you never hand-compute this again. Reach for the shelf "
+                     "first; build a new one only if nothing here fits.")
         stale = self._stale_files()
         if stale:
             text += ("\n\n# Files changed since you read them\n"
