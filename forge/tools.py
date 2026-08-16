@@ -29,7 +29,7 @@ from typing import Callable
 
 import httpx
 
-from . import browser, datasets, identity, sims
+from . import browser, business, datasets, identity, sims
 from .codetools import syntax_check
 from .config import load_config
 from .dataops import data_ops, date_calc
@@ -1179,6 +1179,37 @@ def build_tools(ws: Workspace, fenced: bool = False) -> list[Tool]:
                 "required": ["scenario"],
             },
             run=_physics_sim,
+        ),
+        Tool(
+            name="business_calc",
+            description=(
+                "Exact business & finance math — the money mechanics, computed not guessed, "
+                "for an engineer's-eye read on a venture. kind is one of: unit_economics "
+                "(params: arpu, cac, gross_margin OR cogs, monthly_churn OR lifetime_periods) "
+                "· runway (cash, monthly_costs, monthly_revenue?, revenue_growth?) · "
+                "break_even (fixed_costs, price, variable_cost) · npv (rate, cashflows[]) · "
+                "irr (cashflows[]) · loan (principal, annual_rate, months) · pricing (cost, "
+                "margin OR markup) · dilution (pre_money, investment, option_pool?) · growth "
+                "(start, rate, periods) · cagr (start, end, periods). Pass params as an "
+                "object, e.g. {\"arpu\": 100, \"cac\": 300, \"gross_margin\": 0.6, "
+                "\"monthly_churn\": 0.05}. Every calc is selftest-verified — reach for this "
+                "instead of doing business arithmetic in your head. NOT for "
+                "jurisdiction-specific legal/tax/investment steps — those need a current "
+                "source or a real professional, not a formula; say so plainly."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "kind": {"type": "string",
+                             "enum": ["unit_economics", "runway", "break_even", "npv",
+                                      "irr", "loan", "pricing", "dilution", "growth", "cagr"]},
+                    "params": {"type": "object",
+                               "description": "Calculator inputs as an object, e.g. "
+                                              "{\"cash\": 500000, \"monthly_costs\": 50000}"},
+                },
+                "required": ["kind"],
+            },
+            run=lambda kind, params=None: business.calc(kind, params),
         ),
         Tool(
             name="build_sim",
