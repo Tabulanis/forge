@@ -30,7 +30,7 @@ from typing import Callable
 import httpx
 
 from . import (browser, business, datasets, frameworks, identity, markets,
-               market_regime, paper_market, sims)
+               market_regime, paper_market, sims, walkforward)
 from .codetools import syntax_check
 from .config import load_config
 from .dataops import data_ops, date_calc
@@ -1318,6 +1318,27 @@ def build_tools(ws: Workspace, fenced: bool = False) -> list[Tool]:
             },
             run=lambda pair="XBTUSD", strategy="sma_cross", strat_params=None:
                 market_regime.run(pair, strategy, strat_params),
+        ),
+        Tool(
+            name="walk_forward",
+            description=(
+                "The honesty rig for a strategy: out-of-sample / walk-forward test on real "
+                "daily data (read-only, no keys, no trades). Splits history into TRAIN (pick "
+                "the best params) and TEST (held out), grades the in-sample winner OUT of "
+                "sample, and reports the in-sample-vs-out-of-sample rank correlation — if it's "
+                "~0 or negative, the best backtest predicts NOTHING about the future (textbook "
+                "overfitting). ALWAYS run this before trusting a backtest; a strategy that "
+                "can't clear this bar is a curve-fit, not an edge. params: pair (XBTUSD, "
+                "ETHUSD), train_frac (0.6 = 60% train)."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "pair": {"type": "string", "description": "e.g. XBTUSD, ETHUSD"},
+                    "train_frac": {"type": "number", "description": "fraction for training, e.g. 0.6"},
+                },
+            },
+            run=lambda pair="XBTUSD", train_frac=0.6: walkforward.run(pair, 1440, train_frac),
         ),
         Tool(
             name="build_sim",
