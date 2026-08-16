@@ -29,7 +29,7 @@ from typing import Callable
 
 import httpx
 
-from . import browser, business, datasets, identity, sims
+from . import browser, business, datasets, frameworks, identity, markets, sims
 from .codetools import syntax_check
 from .config import load_config
 from .dataops import data_ops, date_calc
@@ -1210,6 +1210,61 @@ def build_tools(ws: Workspace, fenced: bool = False) -> list[Tool]:
                 "required": ["kind"],
             },
             run=lambda kind, params=None: business.calc(kind, params),
+        ),
+        Tool(
+            name="markets_calc",
+            description=(
+                "Opportunity & edge math — the quantitative half of evaluating any way to "
+                "make money (prediction markets, forex, commodities, real estate, betting, "
+                "arbitrage). kind is one of: ev (win_prob, win_payoff, loss_amount — or "
+                "outcomes:[{prob,payoff}]) · implied_prob (decimal_odds OR american_odds, "
+                "your_prob? for the edge) · kelly (win_prob, decimal_odds OR net_odds) · "
+                "arbitrage (odds_a, odds_b, cost_pct?) · carry (notional, rate_diff, "
+                "holding_months, leverage?) · cap_rate (noi, price) · cash_on_cash "
+                "(annual_cash_flow, cash_invested) · dscr (noi, annual_debt_service) · "
+                "contango (spot, futures, months) · risk_of_ruin (win_prob, bankroll_units). "
+                "Pass params as an object. Every calc is selftest-verified. Use it to "
+                "EVALUATE an opportunity the user brings — never to recommend a trade or "
+                "give personalized investment advice; and remember +EV on paper ≠ safe."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "kind": {"type": "string",
+                             "enum": ["ev", "implied_prob", "kelly", "arbitrage", "carry",
+                                      "cap_rate", "cash_on_cash", "dscr", "contango",
+                                      "risk_of_ruin"]},
+                    "params": {"type": "object",
+                               "description": "Calculator inputs as an object, e.g. "
+                                              "{\"decimal_odds\": 2.0, \"your_prob\": 0.6}"},
+                },
+                "required": ["kind"],
+            },
+            run=lambda kind, params=None: markets.calc(kind, params),
+        ),
+        Tool(
+            name="business_framework",
+            description=(
+                "Structured thinking scaffolds — the JUDGMENT half of business/opportunity "
+                "analysis (not math). Returns a template you fill in and reason through out "
+                "loud. name is one of: opportunity (the opportunity canvas — structure any "
+                "money idea: edge, why-not-arbitraged, EV, risk of ruin, what kills it) · "
+                "skeptic (red-team a 'pattern' to KILL it before trusting it — sample size, "
+                "overfitting, costs, already-priced-in) · business_model_canvas · swot · "
+                "positioning · lean_validation. Reach for `opportunity` + `skeptic` whenever "
+                "the user floats a way to make money: structure it, then try to destroy it, "
+                "and report where it fails — the honest filter, not a hype machine."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string",
+                             "enum": ["opportunity", "skeptic", "business_model_canvas",
+                                      "swot", "positioning", "lean_validation"]},
+                },
+                "required": ["name"],
+            },
+            run=lambda name: frameworks.get(name),
         ),
         Tool(
             name="build_sim",
