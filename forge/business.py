@@ -27,6 +27,8 @@ def _fmt(value, kind: str) -> str:
         return f"{value:.1f} months"
     if kind == "int":
         return f"{int(round(value)):,}"
+    if kind == "raw":
+        return str(value)
     return f"{value:,.2f}"
 
 

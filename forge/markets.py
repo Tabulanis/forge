@@ -157,10 +157,46 @@ def risk_of_ruin(p: dict):
             ("_note", "even a real edge blows up if the bet is big vs bankroll — sizing beats being right. Deeper bankroll, smaller bets → ruin falls fast.", "text")]
 
 
+def position(p: dict):
+    """Map a signal to an ACTION tier — hold / small buy / big buy / short —
+    sized by fractional Kelly. The gate: unless validated=true (the signal
+    survived out-of-sample), the honest action is HOLD. shorts need
+    allow_short=true and are the riskiest tier."""
+    validated = bool(p.get("validated", False))
+    if not validated:
+        return [("action", "HOLD (0%)", "raw"),
+                ("_note", "signal NOT validated out-of-sample → HOLD. Sizing an unproven signal "
+                          "just dresses noise up as graded conviction — worse than useless. Prove "
+                          "it (walk_forward) first.", "text")]
+    win, = _need(p, "win_prob")
+    if p.get("decimal_odds") is not None:
+        b = float(p["decimal_odds"]) - 1
+    else:
+        b = float(p.get("net_odds", 1) or 1)
+    full = (win * b - (1 - win)) / b if b else 0
+    half = full / 2
+    allow_short = bool(p.get("allow_short", False))
+    if full <= 0:
+        if allow_short and full < -0.02:
+            sz = min(abs(half), 0.15)
+            tier = "BIG SHORT" if sz >= 0.05 else "SMALL SHORT"
+            return [("action", f"{tier} ({sz*100:.1f}% of bankroll)", "raw"),
+                    ("_note", "validated NEGATIVE edge → short. But shorts add borrow cost, "
+                              "liquidation risk, and unbounded downside — the riskiest tier. "
+                              "Half-Kelly, hard stop, only on a strong edge that held out-of-sample.", "text")]
+        return [("action", "HOLD (0%)", "raw"),
+                ("_note", "no positive edge (Kelly ≤ 0) → HOLD. A validated signal doesn't always say 'buy'.", "text")]
+    sz = min(half, 0.15)
+    tier = "BIG BUY" if sz >= 0.05 else ("SMALL BUY" if sz >= 0.01 else "HOLD")
+    return [("action", f"{tier} ({sz*100:.1f}% of bankroll)", "raw"),
+            ("_note", "size = HALF Kelly, capped at 15%. 'big' vs 'small' is just how much edge you've "
+                      "PROVEN — never full Kelly; a slightly-wrong win_prob makes it ruinous.", "text")]
+
+
 _DISPATCH = {
     "ev": ev, "implied_prob": implied_prob, "kelly": kelly, "arbitrage": arbitrage,
     "carry": carry, "cap_rate": cap_rate, "cash_on_cash": cash_on_cash,
-    "dscr": dscr, "contango": contango, "risk_of_ruin": risk_of_ruin,
+    "dscr": dscr, "contango": contango, "risk_of_ruin": risk_of_ruin, "position": position,
 }
 KINDS = ", ".join(_DISPATCH)
 

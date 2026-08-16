@@ -1223,7 +1223,10 @@ def build_tools(ws: Workspace, fenced: bool = False) -> list[Tool]:
                 "arbitrage (odds_a, odds_b, cost_pct?) · carry (notional, rate_diff, "
                 "holding_months, leverage?) · cap_rate (noi, price) · cash_on_cash "
                 "(annual_cash_flow, cash_invested) · dscr (noi, annual_debt_service) · "
-                "contango (spot, futures, months) · risk_of_ruin (win_prob, bankroll_units). "
+                "contango (spot, futures, months) · risk_of_ruin (win_prob, bankroll_units) · "
+                "position (map a signal to an ACTION tier — HOLD / small buy / big buy / short — "
+                "sized by fractional Kelly, but it stays HOLD unless validated=true, i.e. the "
+                "signal actually survived out-of-sample; shorts need allow_short=true). "
                 "Pass params as an object. Every calc is selftest-verified. Use it to "
                 "EVALUATE an opportunity the user brings — never to recommend a trade or "
                 "give personalized investment advice; and remember +EV on paper ≠ safe."
@@ -1234,7 +1237,7 @@ def build_tools(ws: Workspace, fenced: bool = False) -> list[Tool]:
                     "kind": {"type": "string",
                              "enum": ["ev", "implied_prob", "kelly", "arbitrage", "carry",
                                       "cap_rate", "cash_on_cash", "dscr", "contango",
-                                      "risk_of_ruin"]},
+                                      "risk_of_ruin", "position"]},
                     "params": {"type": "object",
                                "description": "Calculator inputs as an object, e.g. "
                                               "{\"decimal_odds\": 2.0, \"your_prob\": 0.6}"},
