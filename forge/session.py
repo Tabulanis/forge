@@ -121,6 +121,9 @@ class Session:
         self.cond = threading.Condition()
         self.pending: PendingPermission | None = None
         self.busy = False
+        # Messages typed while she's mid-turn wait here (she works one at a
+        # time) and run in order when she frees up, instead of being dropped.
+        self.queued: list[str] = []
         # Set when a permission request times out unanswered: nobody is
         # watching this session right now, so further asks this message
         # auto-refuse instantly instead of stacking five-minute waits.
@@ -256,6 +259,8 @@ class Session:
         agent is blocked waiting on a permission card, that wait is answered
         'no' so the stop lands now instead of minutes from now."""
         self.agent.stop_requested = True
+        with self.lock:
+            self.queued.clear()   # Stop means stop — don't fire what was waiting.
         req = self.pending
         if req:
             req.allowed = False
@@ -303,7 +308,13 @@ class Session:
         """Drive one user message to completion. Runs on its own thread."""
         with self.lock:
             if self.busy:
-                self.emit("note", {"text": "Still working on the last one."})
+                self.queued.append(text)
+                ahead = len(self.queued)
+                self.emit("note", {"text": (
+                    "⏳ She's still finishing your last message — she takes one "
+                    "at a time. This one's queued"
+                    + (f" (#{ahead} in line)" if ahead > 1 else "")
+                    + " and runs the moment she's free.")})
                 return
             self.busy = True
         self.unattended = False   # someone just typed — they're watching again
@@ -350,6 +361,14 @@ class Session:
                 self.save()
                 # the librarian files an index card in the background
                 recall.remember_turn(text, final_text, str(self.workspace), self.id)
+            # Anything typed while she was busy runs now, in the order it came.
+            nxt = None
+            with self.lock:
+                if self.queued:
+                    nxt = self.queued.pop(0)
+            if nxt is not None:
+                threading.Thread(target=self.run_message, args=(nxt,),
+                                 daemon=True).start()
 
 
 class SessionStore:
@@ -441,6 +460,12 @@ class SessionStore:
 
     def get(self, session_id: str) -> Session | None:
         return self.sessions.get(session_id)
+
+    def busy_count(self, exclude: str | None = None) -> int:
+        """How many OTHER sessions are mid-turn right now. Used to warn a new
+        request that it'll queue behind them on the single-lane model."""
+        return sum(1 for sid, s in self.sessions.items()
+                   if s.busy and sid != exclude)
 
     def listing(self) -> list[dict]:
         out = []

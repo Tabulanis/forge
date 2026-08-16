@@ -253,6 +253,12 @@ def chat(spec: ChatSpec):
     sess.agent.privacy = _priv                               # privacy axis (tools + prompt)
     sess.ephemeral = sess.agent.ephemeral                    # gate all persistence
     sess.emit("user", {"text": spec.message})
+    # She runs one request at a time. If another chat is mid-turn, this one
+    # will wait its turn on the model — say so, so a queue doesn't read as a hang.
+    if not sess.busy and STORE.busy_count(exclude=sess.id):
+        sess.emit("note", {"text": (
+            "⏳ She's busy with another request right now — yours is queued "
+            "behind it and starts the moment she's free.")})
     threading.Thread(target=sess.run_message, args=(spec.message,),
                      daemon=True).start()
     return {"session": sess.id, "workspace": str(sess.workspace),
