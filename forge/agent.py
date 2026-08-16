@@ -109,6 +109,11 @@ VERDICT: bounce — <one short reason>"""
 
 COMPACT_AT = 0.70          # start compacting at 70% full
 COMPACT_KEEP = 0.25        # after compacting, recent turns may fill 25%
+# The summariser reads the whole compaction transcript in ONE pass, so keep
+# that chunk small: comfortably inside any small model's window AND fast to
+# prompt-process. A ~6k-token chunk on the CPU 3B froze compaction for ~3 min
+# (measured 161s); this budget keeps it quick even there, near-instant on GPU.
+SUMMARY_INPUT_TOKENS = 2500
 # Don't compact unless the part being summarized is at least this many
 # tokens. When one long tool-heavy turn fills the window by itself, the
 # compactable prefix shrinks to almost nothing — squeezing it again every
@@ -1047,15 +1052,21 @@ class Agent:
             elif role == "tool_result":
                 lines.append(f"  -> {str(m.get('content',''))[:400]}")
         transcript = "\n".join(lines)
-        # The summarization call must itself fit in the window — sized for
-        # code-dense content, which tokenizes far denser than prose.
-        max_transcript = int(limit * 0.25 * _CHARS_PER_TOKEN)
+        # Cap the transcript to a small FIXED budget — always inside a small
+        # model's window with room to spare, and fast to prompt-process (a big
+        # chunk on the CPU 3B froze compaction for minutes). Keep the most
+        # recent slice; older detail is dropped rather than stalling on it.
+        max_transcript = SUMMARY_INPUT_TOKENS * _CHARS_PER_TOKEN
         if len(transcript) > max_transcript:
             transcript = ("(earliest part omitted)\n"
                           + transcript[-max_transcript:])
 
         summary = ""
-        for prov in (self.summarizer, self.provider):
+        # The GPU main model prompt-processes ~10x faster than the CPU 3B and
+        # sits idle during compaction anyway, so summarise on it FIRST; the
+        # little brain is the fallback. Thinking OFF — this is a writing task,
+        # not a reasoning one, so thinking would only burn time.
+        for prov in (self.provider, self.summarizer):
             if prov is None:
                 continue
             try:
@@ -1063,6 +1074,7 @@ class Agent:
                     SUMMARY_PROMPT,
                     [{"role": "user", "content": transcript}],
                     [],   # no tools — this is a straight writing task
+                    extra_body={"chat_template_kwargs": {"enable_thinking": False}},
                 )
                 summary = (reply.text or "").strip()
                 if summary:
