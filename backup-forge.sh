@@ -17,12 +17,17 @@ STAMP="$(date +%Y%m%d-%H%M%S)"
 TARBALL="$DEST/forge-$STAMP.tar.gz"
 
 # Skip the transient bits: the librarian's in-tray and any half-written temp files.
+# Also grab her sim shelf (forge/sims) — those are hers, worth keeping even the
+# ones she builds between git commits. `forge/sims` is added only if it exists.
+SIMS_REL=""
+[ -d "$HOME/forge/sims" ] && SIMS_REL="forge/sims"
 tar -czf "$TARBALL" -C "$HOME" \
   --exclude='.forge/card-queue' \
   --exclude='.forge/*.tmp' \
   --exclude='.forge/.*.tmp' \
   --exclude='.forge/sessions/.*.tmp' \
-  .forge
+  --exclude='forge/sims/*.tmp' \
+  .forge $SIMS_REL
 
 # Retention: keep the newest $KEEP, drop the rest.
 ls -1t "$DEST"/forge-*.tar.gz 2>/dev/null | tail -n +$((KEEP + 1)) | xargs -r rm -f
