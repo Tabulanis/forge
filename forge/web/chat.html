@@ -258,6 +258,7 @@
   <button id="arBtn" style="display:none" title="Augmented reality (headset)">AR</button>
   <button id="speakBtn" title="Read her replies aloud">🔈</button>
   <button id="voiceBtn" style="display:none" title="Hands-free voice chat">🎙️</button>
+  <button id="fsBtn" title="Full screen">⛶</button>
   <div class="meta">
     <div><span class="dot" id="statusDot"></span><span id="mModel">—</span></div>
     <div id="mWs" style="max-width:44vw; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"></div>
@@ -712,6 +713,26 @@ $('chatsBtn').onclick = async () => {
 };
 
 $('cogBtn').onclick = () => openSettings();
+
+// Full-screen toggle. Hidden where the browser can't do it (iOS Safari only
+// allows fullscreen on video) — there, the home-screen app is the way.
+(function () {
+  const root = document.documentElement;
+  const enter = root.requestFullscreen || root.webkitRequestFullscreen;
+  const exit = document.exitFullscreen || document.webkitExitFullscreen;
+  if (!enter) { $('fsBtn').style.display = 'none'; return; }
+  const isFS = () => document.fullscreenElement || document.webkitFullscreenElement;
+  $('fsBtn').onclick = () => {
+    try { isFS() ? exit.call(document) : enter.call(root); } catch (_) {}
+  };
+  const sync = () => {
+    const on = !!isFS();
+    $('fsBtn').textContent = on ? '⤢' : '⛶';
+    $('fsBtn').title = on ? 'Exit full screen' : 'Full screen';
+  };
+  document.addEventListener('fullscreenchange', sync);
+  document.addEventListener('webkitfullscreenchange', sync);
+})();
 
 // ---- voice input: tap to talk, tap to stop -------------------------
 // Browsers only grant the microphone on secure (https) pages — the button
