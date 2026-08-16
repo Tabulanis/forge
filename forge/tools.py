@@ -29,7 +29,7 @@ from typing import Callable
 
 import httpx
 
-from . import browser, identity
+from . import browser, identity, sims
 from .codetools import syntax_check
 from .config import load_config
 from .dataops import data_ops, date_calc
@@ -1179,6 +1179,71 @@ def build_tools(ws: Workspace, fenced: bool = False) -> list[Tool]:
                 "required": ["scenario"],
             },
             run=_physics_sim,
+        ),
+        Tool(
+            name="build_sim",
+            description=(
+                "Write a NEW simulation and save it to your growing sim library — for "
+                "anything DETERMINISTIC you'd otherwise have to reason out and get shaky on "
+                "(physics, math, engineering). You write Python; pass the whole file as "
+                "`code`. Required shape:\n"
+                "  META = {\"name\": \"...\", \"description\": \"one line\", \"why\": \"why you built it\"}\n"
+                "  def run(params):    # params is a dict of inputs\n"
+                "      ...             # return a dict of results (numbers + short labels)\n"
+                "  SELFTEST = {\"params\": {...}, \"expect\": {...}, \"tol\": 0.05}\n"
+                "SELFTEST is a case whose answer you ALREADY KNOW — the sim only earns the "
+                "✓ 'validated' mark if run(SELFTEST['params']) reproduces `expect` within "
+                "`tol`. Without it, it saves but is flagged EXPERIMENTAL (numbers not "
+                "trusted). numpy is available. Then use run_sim to run it. Build the sim "
+                "instead of doing the arithmetic yourself — that's the whole point."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string",
+                             "description": "short name: letters, numbers, underscores"},
+                    "code": {"type": "string",
+                             "description": "the full sim file — META + run(params) + SELFTEST"},
+                },
+                "required": ["name", "code"],
+            },
+            run=lambda name, code: sims.save_sim(name, code),
+        ),
+        Tool(
+            name="run_sim",
+            description="Run a sim from your library with real inputs and get the numbers "
+                        "back. params is a dict matching what the sim's run() expects. The "
+                        "result is tagged validated ✓ or EXPERIMENTAL ⚠. Reason FROM these "
+                        "numbers — don't re-derive them in your head.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "params": {"type": "object",
+                               "description": "inputs for the sim, e.g. {\"power_kw\": 200}"},
+                },
+                "required": ["name"],
+            },
+            run=lambda name, params=None: sims.run_sim(name, params),
+        ),
+        Tool(
+            name="list_sims",
+            description="List every sim on your shelf — name, what it models, why you built "
+                        "it, and whether it's validated (✓) or experimental (⚠). Check here "
+                        "before building a new one; you may already have it.",
+            parameters={"type": "object", "properties": {}},
+            run=lambda: sims.list_sims(),
+        ),
+        Tool(
+            name="read_sim",
+            description="Show a sim's source — to check its equations or improve it (rebuild "
+                        "with build_sim under the same name to update it).",
+            parameters={
+                "type": "object",
+                "properties": {"name": {"type": "string"}},
+                "required": ["name"],
+            },
+            run=lambda name: sims.read_sim(name),
         ),
         Tool(
             name="data_ops",

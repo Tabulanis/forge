@@ -1,0 +1,9 @@
+{
+ "plasma_propulsion": {
+  "description": "Electric/plasma rocket thrust from power, efficiency, and Isp",
+  "why": "Need validated numbers for ion-drive performance without hand-calculating every time",
+  "validated": true,
+  "created": 1786858480.9863849,
+  "updated": 1786858480.9863865
+ }
+}
