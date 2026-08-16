@@ -30,7 +30,7 @@ from typing import Callable
 import httpx
 
 from . import (browser, business, datasets, frameworks, identity, markets,
-               market_regime, crossmap, paper_market, sims, walkforward)
+               market_regime, crossmap, paper_market, scanner, sims, walkforward)
 from .codetools import syntax_check
 from .config import load_config
 from .dataops import data_ops, date_calc
@@ -1357,6 +1357,26 @@ def build_tools(ws: Workspace, fenced: bool = False) -> list[Tool]:
             parameters={"type": "object", "properties": {
                 "lag": {"type": "integer", "description": "lead-lag in days, e.g. 1"}}},
             run=lambda lag=1: crossmap.run(lag),
+        ),
+        Tool(
+            name="signal_scan",
+            description=(
+                "The caged multi-signal scanner — throw EVERYTHING at forward returns "
+                "(price features, calendar, lunar, volume/return anomaly 'footprints', and "
+                "all their pairwise CROSS PRODUCTS) and it can only hand back what beats "
+                "luck. Gauntlet: a minimum-sample floor per bucket (sparse interactions "
+                "rejected), an out-of-sample split, and the kill-shot — it re-runs the WHOLE "
+                "search on SHUFFLED data to measure how many 'survivors' pure chance "
+                "produces. If real survivors ≤ the chance baseline, it's noise, full stop. "
+                "This is how you look wide (markets aren't textbook) WITHOUT fooling "
+                "yourself — more combos tested = a higher bar, measured directly. params: "
+                "pair (XBTUSD, ETHUSD), horizon (forward days), thresh (min OOS edge, e.g. 0.015)."
+            ),
+            parameters={"type": "object", "properties": {
+                "pair": {"type": "string", "description": "e.g. XBTUSD, ETHUSD"},
+                "horizon": {"type": "integer", "description": "forward-return days, e.g. 5"},
+                "thresh": {"type": "number", "description": "min out-of-sample edge, e.g. 0.015"}}},
+            run=lambda pair="XBTUSD", horizon=5, thresh=0.015: scanner.run(pair, horizon, thresh=thresh),
         ),
         Tool(
             name="build_sim",
