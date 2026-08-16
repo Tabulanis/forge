@@ -1251,10 +1251,12 @@ def build_tools(ws: Workspace, fenced: bool = False) -> list[Tool]:
                 "Save cited real-world reference DATA to your dataset shelf — the fuel your "
                 "sims run on (material properties, physical constants, empirical figures). "
                 "Gather the values first (web_search/fetch_url), then save the curated table. "
-                "`data` is a JSON object/table; `source` is REQUIRED — where the numbers came "
-                "from (a handbook, NASA, a paper). Real-world data can't be validated like a "
-                "sim, so the citation IS its trust. A sim pulls it with dataset('name'). "
-                "Kept forever; only a query's result enters your context."
+                "TRUST RULE: one source isn't fact. Pass `sources` as a LIST, and a dataset is "
+                "only marked ✓ CORROBORATED with TWO OR MORE INDEPENDENT sources that agree — "
+                "two sites both copying the same origin (or the same wiki) do NOT count. With "
+                "one source it saves but is flagged ⚠ SINGLE-SOURCE / provisional; say so when "
+                "you use it. Cross-check before you call something fact. A sim pulls it with "
+                "dataset('name'). Kept forever; only a query's result enters your context."
             ),
             parameters={
                 "type": "object",
@@ -1262,14 +1264,15 @@ def build_tools(ws: Workspace, fenced: bool = False) -> list[Tool]:
                     "name": {"type": "string"},
                     "data": {"type": "object",
                              "description": "the values, e.g. {\"tungsten\":{\"melting_k\":3695}}"},
-                    "source": {"type": "string",
-                               "description": "REQUIRED citation — where these numbers came from"},
+                    "sources": {"type": "array", "items": {"type": "string"},
+                                "description": "REQUIRED — the independent sources these numbers "
+                                               "came from; 2+ that agree to be fact-grade"},
                     "description": {"type": "string"},
                 },
-                "required": ["name", "data", "source"],
+                "required": ["name", "data", "sources"],
             },
-            run=lambda name, data, source, description="":
-                datasets.save_dataset(name, data, source, description),
+            run=lambda name, data, sources, description="":
+                datasets.save_dataset(name, data, sources, description),
         ),
         Tool(
             name="query_dataset",
