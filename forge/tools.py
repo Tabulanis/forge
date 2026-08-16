@@ -29,7 +29,7 @@ from typing import Callable
 
 import httpx
 
-from . import browser, business, datasets, frameworks, identity, markets, sims
+from . import browser, business, datasets, frameworks, identity, markets, paper_market, sims
 from .codetools import syntax_check
 from .config import load_config
 from .dataops import data_ops, date_calc
@@ -1265,6 +1265,35 @@ def build_tools(ws: Workspace, fenced: bool = False) -> list[Tool]:
                 "required": ["name"],
             },
             run=lambda name: frameworks.get(name),
+        ),
+        Tool(
+            name="paper_market",
+            description=(
+                "Honest paper-trading backtest — REAL market data, FAKE money, REAL costs. "
+                "No real trades, no keys, no risk, ever. Fetches public price history and "
+                "runs a long/flat strategy against it WITH fees + slippage, then scores it "
+                "against just holding AND against random — because a strategy that loses to "
+                "buy-and-hold or sits inside the noise of random has no edge. This is the "
+                "ONLY trading capability you have and the only one you'll get: evaluating "
+                "ideas on fake money. Never live execution, never real funds. Use it to TEST "
+                "whether a trading idea has any edge before anyone risks a cent — it almost "
+                "never does; most die right there to the fees, which is the honest lesson. "
+                "params: pair (e.g. XBTUSD, ETHUSD), interval (candle minutes, 60=hourly), "
+                "strategy (buy_and_hold or sma_cross), strat_params (e.g. "
+                "{\"short\":10,\"long\":30}), start_cash."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "pair": {"type": "string", "description": "e.g. XBTUSD, ETHUSD"},
+                    "interval": {"type": "integer", "description": "candle size in minutes, e.g. 60"},
+                    "strategy": {"type": "string", "enum": ["buy_and_hold", "sma_cross"]},
+                    "strat_params": {"type": "object", "description": "e.g. {\"short\": 10, \"long\": 30}"},
+                    "start_cash": {"type": "number", "description": "fake starting cash, default 1000"},
+                },
+            },
+            run=lambda pair="XBTUSD", interval=60, strategy="sma_cross", strat_params=None, start_cash=1000.0:
+                paper_market.run(pair, interval, strategy, strat_params, start_cash),
         ),
         Tool(
             name="build_sim",
