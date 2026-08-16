@@ -1190,12 +1190,18 @@ def build_tools(ws: Workspace, fenced: bool = False) -> list[Tool]:
                 "  META = {\"name\": \"...\", \"description\": \"one line\", \"why\": \"why you built it\"}\n"
                 "  def run(params):    # params is a dict of inputs\n"
                 "      ...             # return a dict of results (numbers + short labels)\n"
-                "  SELFTEST = {\"params\": {...}, \"expect\": {...}, \"tol\": 0.05}\n"
+                "  SELFTEST = {\"params\": {...}, \"expect\": {...}, \"tol\": 0.005}\n"
                 "SELFTEST is a case whose answer you ALREADY KNOW — the sim only earns the "
                 "✓ 'validated' mark if run(SELFTEST['params']) reproduces `expect` within "
                 "`tol`. Without it, it saves but is flagged EXPERIMENTAL (numbers not "
-                "trusted). numpy is available. Then use run_sim to run it. Build the sim "
-                "instead of doing the arithmetic yourself — that's the whole point."
+                "trusted). Two rules make that ✓ actually mean something: (1) get `expect` "
+                "from an INDEPENDENT source — a textbook, a worked example, an authoritative "
+                "reference — NOT a number you worked out in your own head, or the sim just "
+                "inherits your arithmetic slip and the test proves nothing. (2) Keep `tol` "
+                "TIGHT — 0.005 (0.5%) or less for an exact formula; only loosen it if the "
+                "known answer is itself rounded, and say so. A loose tolerance rubber-stamps "
+                "a subtly-wrong sim. numpy is available. Then use run_sim to run it. Build "
+                "the sim instead of doing the arithmetic yourself — that's the whole point."
             ),
             parameters={
                 "type": "object",

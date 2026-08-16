@@ -41,10 +41,15 @@ def run(params):
 
 # A known case so the sim can prove itself. It's marked VALIDATED only if run()
 # reproduces `expect` within `tol`. Leave SELFTEST out and it stays EXPERIMENTAL.
+# Make the ✓ mean something: `expect` should be an answer you KNOW is right from an
+# INDEPENDENT source (a textbook, a worked example) — NOT one you did in your own
+# head, or the sim just inherits your slip and the test proves nothing. Keep `tol`
+# tight (0.005 = 0.5% or less for an exact formula); a loose tolerance rubber-stamps
+# a subtly-wrong sim.
 SELFTEST = {
     "params": {"x": 21},
     "expect": {"answer": 42},
-    "tol": 0.02,
+    "tol": 0.005,
 }'''
 
 
@@ -123,7 +128,10 @@ def save_sim(name: str, code: str) -> str:
         return (f"Saved '{name}' as ⚠ EXPERIMENTAL — no SELFTEST, so its numbers "
                 f"aren't trusted yet. Add a known case (SELFTEST) to earn the ✓.")
     if validated:
-        return f"Saved '{name}' — ✓ VALIDATED. It reproduced its known case; trustworthy instrument."
+        return (f"Saved '{name}' — ✓ VALIDATED against its known case. (That ✓ is only as "
+                f"strong as the case: an independently-known `expect` and a tight `tol` "
+                f"≤0.5% are what make it airtight — a number from your own head with a loose "
+                f"tolerance can pass a subtly-wrong sim.)")
     return (f"Saved '{name}' as ⚠ EXPERIMENTAL — its SELFTEST did NOT match:\n"
             f"{json.dumps(st.get('detail'))[:400]}\n"
             f"The equations are off; don't trust its numbers until this passes.")

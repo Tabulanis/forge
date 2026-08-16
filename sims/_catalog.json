@@ -5,5 +5,19 @@
   "validated": true,
   "created": 1786858480.9863849,
   "updated": 1786858480.9863865
+ },
+ "rocket_stage_dv": {
+  "description": "Delta-v from wet mass, dry mass, and specific impulse",
+  "why": "Avoid hand-computing the rocket equation for every stage design",
+  "validated": true,
+  "created": 1786862738.2444832,
+  "updated": 1786862738.2444842
+ },
+ "escape_velocity": {
+  "description": "Escape velocity from a celestial body's mass and radius",
+  "why": "Reusable tool for comparing escape velocities across planets and moons without re-deriving the formula each time",
+  "validated": true,
+  "created": 1786863077.7756834,
+  "updated": 1786863077.775684
  }
 }
