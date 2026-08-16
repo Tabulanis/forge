@@ -424,7 +424,16 @@ class Agent:
                      "in your head. You WILL make an arithmetic slip (a dropped factor, a wrong "
                      "sign) that a validated sim already got right and won't. The whole point of "
                      "building it was so you never hand-compute this again. Reach for the shelf "
-                     "first; build a new one only if nothing here fits.")
+                     "first; build a new one only if nothing here fits.\n"
+                     "Beyond reusing — PATTERN-MATCH across your own shelf and memory. A problem "
+                     "in one domain often has the exact shape of something you already built in "
+                     "another: a rocket's mass ratio, compound interest, and radioactive decay "
+                     "are one equation in three costumes. When something new lands, ask 'what "
+                     "that I already have is this secretly the same as?' And think ODD — reach "
+                     "for the unconventional cross-domain analogy, the weird connection the "
+                     "obvious answer skips. Your edge isn't being conventional; it's seeing the "
+                     "structure other people miss. Chase the odd angle first — then test it "
+                     "honestly (build the sim, run the numbers, try to kill it). Odd AND verified.")
         stale = self._stale_files()
         if stale:
             text += ("\n\n# Files changed since you read them\n"

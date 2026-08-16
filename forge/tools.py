@@ -29,7 +29,8 @@ from typing import Callable
 
 import httpx
 
-from . import browser, business, datasets, frameworks, identity, markets, paper_market, sims
+from . import (browser, business, datasets, frameworks, identity, markets,
+               market_regime, paper_market, sims)
 from .codetools import syntax_check
 from .config import load_config
 from .dataops import data_ops, date_calc
@@ -1296,6 +1297,29 @@ def build_tools(ws: Workspace, fenced: bool = False) -> list[Tool]:
                 paper_market.run(pair, interval, strategy, strat_params, start_cash),
         ),
         Tool(
+            name="market_regime",
+            description=(
+                "Long-term regime analysis on real daily history (public, read-only, no keys, "
+                "no trades). Labels the market bull / bear / neutral via a 4-D state vector "
+                "[trend, momentum, volatility, drawdown], and — the key part — splits a "
+                "strategy's return BY regime versus buy-and-hold, so you can SEE a predictor "
+                "that wins in bulls but bleeds in bears (which means it has no real edge, just "
+                "a bet on the regime). Descriptive of the PAST, not predictive — regimes are "
+                "only clean in hindsight. params: pair (XBTUSD, ETHUSD), strategy "
+                "(buy_and_hold or sma_cross), strat_params (e.g. {\"short\": 10, \"long\": 50})."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "pair": {"type": "string", "description": "e.g. XBTUSD, ETHUSD"},
+                    "strategy": {"type": "string", "enum": ["buy_and_hold", "sma_cross"]},
+                    "strat_params": {"type": "object", "description": "e.g. {\"short\": 10, \"long\": 50}"},
+                },
+            },
+            run=lambda pair="XBTUSD", strategy="sma_cross", strat_params=None:
+                market_regime.run(pair, strategy, strat_params),
+        ),
+        Tool(
             name="build_sim",
             description=(
                 "Write a NEW simulation and save it to your growing sim library — for "
@@ -1315,7 +1339,11 @@ def build_tools(ws: Workspace, fenced: bool = False) -> list[Tool]:
                 "inherits your arithmetic slip and the test proves nothing. (2) Keep `tol` "
                 "TIGHT — 0.005 (0.5%) or less for an exact formula; only loosen it if the "
                 "known answer is itself rounded, and say so. A loose tolerance rubber-stamps "
-                "a subtly-wrong sim. numpy is available. Then use run_sim to run it. Build "
+                "a subtly-wrong sim. numpy, scipy (optimize / integrate / linalg / stats), "
+                "sympy (symbolic solving), pandas, scikit-learn, and networkx are ALL "
+                "available — reach for them to build genuinely complex solvers (ODEs, "
+                "optimization, root-finding, regression, symbolic algebra, graph/network "
+                "models), not just arithmetic. Then use run_sim to run it. Build "
                 "the sim instead of doing the arithmetic yourself — that's the whole point."
             ),
             parameters={
