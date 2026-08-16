@@ -30,7 +30,7 @@ from typing import Callable
 import httpx
 
 from . import (browser, business, datasets, frameworks, identity, markets,
-               market_regime, paper_market, sims, walkforward)
+               market_regime, crossmap, paper_market, sims, walkforward)
 from .codetools import syntax_check
 from .config import load_config
 from .dataops import data_ops, date_calc
@@ -1339,6 +1339,21 @@ def build_tools(ws: Workspace, fenced: bool = False) -> list[Tool]:
                 },
             },
             run=lambda pair="XBTUSD", train_frac=0.6: walkforward.run(pair, 1440, train_frac),
+        ),
+        Tool(
+            name="cross_map",
+            description=(
+                "Cross-asset coupling + residual influence map over a crypto universe "
+                "(real daily data, read-only). Measures the common market mode (PCA — how "
+                "coupled everything is / BTC-beta), strips it out, then maps directed "
+                "lead-lag on the RESIDUALS and keeps ONLY edges that survive out-of-sample. "
+                "Predictive influence, not proven cause; a wide scan is a spurious-pattern "
+                "factory, so most 'edges' die in the OOS filter (which is the honest point). "
+                "params: lag (days, default 1)."
+            ),
+            parameters={"type": "object", "properties": {
+                "lag": {"type": "integer", "description": "lead-lag in days, e.g. 1"}}},
+            run=lambda lag=1: crossmap.run(lag),
         ),
         Tool(
             name="build_sim",
