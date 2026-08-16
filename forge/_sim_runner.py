@@ -7,12 +7,26 @@ Usage:
 """
 import importlib.util
 import json
+import re
 import sys
+from pathlib import Path
+
+
+def _dataset(name):
+    """Injected into every sim so its run() can pull cited real-world data —
+    e.g. mats = dataset("rocket_materials"). Returns {} if the dataset is missing."""
+    n = re.sub(r"[^a-z0-9_]+", "_", (name or "").lower()).strip("_")
+    p = Path.home() / "forge" / "datasets" / f"{n}.json"
+    try:
+        return json.loads(p.read_text(encoding="utf-8")).get("data", {})
+    except Exception:
+        return {}
 
 
 def _load(path):
     spec = importlib.util.spec_from_file_location("sim", path)
     m = importlib.util.module_from_spec(spec)
+    m.dataset = _dataset          # grounded real values available inside the sim
     spec.loader.exec_module(m)
     return m
 

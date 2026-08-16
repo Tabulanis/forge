@@ -29,7 +29,7 @@ from typing import Callable
 
 import httpx
 
-from . import browser, identity, sims
+from . import browser, datasets, identity, sims
 from .codetools import syntax_check
 from .config import load_config
 from .dataops import data_ops, date_calc
@@ -1244,6 +1244,55 @@ def build_tools(ws: Workspace, fenced: bool = False) -> list[Tool]:
                 "required": ["name"],
             },
             run=lambda name: sims.read_sim(name),
+        ),
+        Tool(
+            name="build_dataset",
+            description=(
+                "Save cited real-world reference DATA to your dataset shelf — the fuel your "
+                "sims run on (material properties, physical constants, empirical figures). "
+                "Gather the values first (web_search/fetch_url), then save the curated table. "
+                "`data` is a JSON object/table; `source` is REQUIRED — where the numbers came "
+                "from (a handbook, NASA, a paper). Real-world data can't be validated like a "
+                "sim, so the citation IS its trust. A sim pulls it with dataset('name'). "
+                "Kept forever; only a query's result enters your context."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "data": {"type": "object",
+                             "description": "the values, e.g. {\"tungsten\":{\"melting_k\":3695}}"},
+                    "source": {"type": "string",
+                               "description": "REQUIRED citation — where these numbers came from"},
+                    "description": {"type": "string"},
+                },
+                "required": ["name", "data", "source"],
+            },
+            run=lambda name, data, source, description="":
+                datasets.save_dataset(name, data, source, description),
+        ),
+        Tool(
+            name="query_dataset",
+            description="Look up cited data from a dataset — a specific key, or the whole "
+                        "table. Always returns its source so you can trust and re-check it. "
+                        "Reason FROM these values; feed them to a sim rather than recalling "
+                        "numbers from memory.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "key": {"type": "string", "description": "optional — a single entry to fetch"},
+                },
+                "required": ["name"],
+            },
+            run=lambda name, key=None: datasets.query_dataset(name, key),
+        ),
+        Tool(
+            name="list_datasets",
+            description="List your dataset shelf — name, what it holds, entry count, and its "
+                        "cited source. Check here before gathering data you may already have.",
+            parameters={"type": "object", "properties": {}},
+            run=lambda: datasets.list_datasets(),
         ),
         Tool(
             name="data_ops",
