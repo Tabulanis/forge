@@ -60,11 +60,26 @@ MODES = {
         "nudge": "Take your time and be thorough. Work through edge cases, check "
                  "your own work, and don't stop until it's genuinely solid.",
     },
+    "teach": {
+        "label": "\U0001f393 Teach", "thinking": True, "temperature": 0.6,
+        "tools": None, "superego": True, "max_steps": 40,
+        "nudge": "Teach — don't just answer. The goal is that they UNDERSTAND, "
+                 "not that they walk away with a result. Start from first "
+                 "principles at their level, and build on what they already know: "
+                 "connect the new idea to something familiar to them. Make it "
+                 "concrete — use your tools (compute, the sims, business_calc, "
+                 "frameworks, etc.) to SHOW the thing working, not just describe "
+                 "it. Prefer one idea explained deeply over ten glossed over; "
+                 "always surface the WHY behind the WHAT. Check that it landed — a "
+                 "short question, or 'does that click?' — and if they've got it "
+                 "wrong, correct it kindly and clearly. Hand them understanding "
+                 "they can reuse, not just the fish.",
+    },
 }
 DEFAULT_MODE = "balanced"
 # "auto" isn't a preset — it's resolved per message by route_mode(). Listed
 # first so it can be the default choice in the UI.
-ORDER = ["auto", "flash", "muse", "balanced", "precise", "deep"]
+ORDER = ["auto", "flash", "muse", "balanced", "precise", "deep", "teach"]
 AUTO_LABEL = "\U0001f39b️ Auto"
 
 
@@ -104,6 +119,10 @@ import re as _re
 # user literally asks for in chat) come first so "be more careful" or "get
 # creative" always win over content guesses.
 _ROUTE_RULES = [
+    ("teach", r"\b(teach me|help me (understand|learn|grasp|wrap my head around)|"
+              r"walk me through|eli5|explain it like|i want to learn|"
+              r"learn (about|how)|break it down for me|"
+              r"how does .{0,40}\bwork|what.?s the (idea|concept|intuition|logic) behind)\b"),
     ("precise", r"\b(be precise|precise|accurate|accuracy|verify|fact.?check|"
                 r"double.?check|is it (true|real)|are you sure|really true|"
                 r"cite|source|look .*up|search the web|prove)\b"),
