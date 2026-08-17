@@ -30,7 +30,7 @@ from typing import Callable
 import httpx
 
 from . import (browser, business, datasets, frameworks, identity, markets,
-               market_regime, crossmap, paper_market, scanner, sims, walkforward)
+               market_regime, crossmap, news, paper_market, scanner, sims, walkforward)
 from .codetools import syntax_check
 from .config import load_config
 from .dataops import data_ops, date_calc
@@ -1377,6 +1377,22 @@ def build_tools(ws: Workspace, fenced: bool = False) -> list[Tool]:
                 "horizon": {"type": "integer", "description": "forward-return days, e.g. 5"},
                 "thresh": {"type": "number", "description": "min out-of-sample edge, e.g. 0.015"}}},
             run=lambda pair="XBTUSD", horizon=5, thresh=0.015: scanner.run(pair, horizon, thresh=thresh),
+        ),
+        Tool(
+            name="news_feed",
+            description=(
+                "Pull real-world crypto news — free, timestamped RSS headlines from major "
+                "outlets (cointelegraph, coindesk, decrypt, bitcoinmagazine, theblock) as "
+                "clean structured text you can read, embed, or tag. The world-data firehose, "
+                "the one signal frontier NOT derived from price. Honest caveat: public "
+                "headlines are usually already priced in — the edge (if any) is in "
+                "interpretation or niche feeds, not the headline. params: sources (list, "
+                "omit for all), limit (how many, default 25)."
+            ),
+            parameters={"type":"object","properties":{
+                "sources":{"type":"array","items":{"type":"string"},"description":"feed names, omit for all"},
+                "limit":{"type":"integer","description":"max headlines, default 25"}}},
+            run=lambda sources=None, limit=25: news.feed(sources, limit),
         ),
         Tool(
             name="build_sim",

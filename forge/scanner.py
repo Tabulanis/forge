@@ -116,11 +116,19 @@ def scan(pair: str = "XBTUSD", horizon: int = 5, min_n: int = 25,
 
     real, tested = survivors(fwd)
     rng = random.Random(7)
+
+    def _block_shuffle(x):
+        # shuffle in blocks of ~horizon so the null PRESERVES the autocorrelation
+        # of overlapping forward returns — otherwise long horizons throw false
+        # positives (a plain shuffle destroys the overlap and under-counts chance).
+        bs = max(horizon, 1)
+        blocks = [x[i:i + bs] for i in range(0, len(x), bs)]
+        rng.shuffle(blocks)
+        return np.concatenate(blocks)[:len(x)]
+
     null = []
     for _ in range(perms):
-        sh = fwd.copy()
-        rng.shuffle(sh)
-        null.append(len(survivors(sh)[0]))
+        null.append(len(survivors(_block_shuffle(fwd))[0]))
     null_avg = np.mean(null)
 
     return {"pair": pair, "horizon": horizon, "tested": tested, "perms": perms,
