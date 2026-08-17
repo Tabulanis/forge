@@ -782,7 +782,12 @@ class Agent:
                                        "— honesty about a gap always passes "
                                        "this review. Inventing evidence (a "
                                        "quote, a source, a citation) to "
-                                       "satisfy it is the only real failure."
+                                       "satisfy it is the only real failure. "
+                                       "Either way: this review is internal "
+                                       "machinery — NEVER mention it, its "
+                                       "wording, or your reaction to it in "
+                                       "your reply. Just deliver the corrected "
+                                       "(or unchanged) answer itself."
                                        + BOUNCE_TAIL,
                         })
                         continue
@@ -873,8 +878,17 @@ class Agent:
             return "error", f"{type(e).__name__}"
         low = text.lower()
         if "verdict: bounce" in low or low.startswith("bounce"):
-            reason = text.split("—", 1)[-1].split("-", 1)[-1].strip()[:200]
-            return "bounce", reason or "claim does not match evidence"
+            # The reason is everything AFTER the bounce keyword. (The old
+            # split-on-dash extraction ate everything before any hyphen the
+            # reason happened to contain, yielding garbage like "sentence".)
+            idx = low.find("bounce") + len("bounce")
+            reason = text[idx:].lstrip(" \t:—–-.").strip()[:200]
+            # A bounce is only actionable with a real, readable reason. A
+            # fragment or nothing means the judge glitched — fail OPEN, same
+            # as an unreachable judge: work passes, gibberish never bounces.
+            if len(reason.split()) < 4:
+                return "malformed", text[:120]
+            return "bounce", reason
         if "verdict: pass" in low or low.startswith("pass"):
             return "pass", ""
         return "malformed", text[:120]
