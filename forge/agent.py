@@ -534,7 +534,27 @@ class Agent:
         grounding_nudged = False
         turn_start = len(self.history) - 1   # index of this turn's user msg
 
-        for step in range(get_mode(self.active_mode)["max_steps"]):
+        _mode_steps = get_mode(self.active_mode)["max_steps"]
+        _wrap_at = max(3, int(_mode_steps * 0.8))
+        for step in range(_mode_steps):
+            # Final-approach warning: burning the WHOLE step budget kills the
+            # turn with nothing delivered ("stopped after 80 steps") — found
+            # live 2026-08-17 when an open-ended "test everything" request ran
+            # 83 tool calls into the wall, twice. Near the cap, stop exploring
+            # and land the plane: deliver what's in hand.
+            if step == _wrap_at:
+                self.history.append({
+                    "role": "user", "synthetic": True,
+                    "content": f"Automatic step check: you have used {step} of "
+                               f"{_mode_steps} steps for this message — the turn "
+                               "will be CUT OFF at the limit with nothing "
+                               "delivered. Stop investigating NOW. Consolidate "
+                               "what you have found so far into your answer, "
+                               "note anything still unverified as unverified, "
+                               "and finish. If real work remains, say exactly "
+                               "what is left so it can be a fresh message."
+                               + BOUNCE_TAIL,
+                })
             # The pal tap: on a long grind, hand her back her own trail
             # and ask if it still leads anywhere. Deterministic, compact,
             # and hers — the same digest the reviewer gets, minus verdicts.
