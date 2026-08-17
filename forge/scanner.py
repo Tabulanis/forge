@@ -76,8 +76,8 @@ def _features(t, c, v):
     return f
 
 
-def run(pair: str = "XBTUSD", horizon: int = 5, min_n: int = 25,
-        thresh: float = 0.015, perms: int = 25) -> str:
+def scan(pair: str = "XBTUSD", horizon: int = 5, min_n: int = 25,
+         thresh: float = 0.015, perms: int = 25) -> dict:
     t, c, vol_arr = _fetch(pair)
     n = len(c)
     fwd = c[horizon:] / c[:-horizon] - 1
@@ -123,9 +123,17 @@ def run(pair: str = "XBTUSD", horizon: int = 5, min_n: int = 25,
         null.append(len(survivors(sh)[0]))
     null_avg = np.mean(null)
 
+    return {"pair": pair, "horizon": horizon, "tested": tested, "perms": perms,
+            "thresh": thresh, "real": real, "chance": float(null_avg)}
+
+
+def run(pair: str = "XBTUSD", horizon: int = 5, min_n: int = 25,
+        thresh: float = 0.015, perms: int = 25) -> str:
+    r = scan(pair, horizon, min_n, thresh, perms)
+    real, null_avg, tested = r["real"], r["chance"], r["tested"]
     n_single = sum(1 for lbl, _ in real if "&" not in lbl)
-    lines = [f"[scanner · {pair} · {tested} combos with enough data (singles + cross products), "
-             f"5-day forward return, ≥{thresh*100:.1f}% out-of-sample]",
+    lines = [f"[scanner · {r['pair']} · {tested} combos with enough data (singles + cross products), "
+             f"{horizon}-day forward return, ≥{thresh*100:.1f}% out-of-sample]",
              f"  REAL survivors: {len(real)}  ({n_single} single, {len(real)-n_single} cross-product)",
              f"  survivors on PURE LUCK (shuffled data, avg of {perms} runs): {null_avg:.1f}",
              f"  VERDICT: " + (
