@@ -543,6 +543,9 @@ class Agent:
             # 83 tool calls into the wall, twice. Near the cap, stop exploring
             # and land the plane: deliver what's in hand.
             if step == _wrap_at:
+                yield Event(kind="note",
+                            text=f"⏳ Long task — {step} of {_mode_steps} steps "
+                                 "used; asked her to start wrapping up.")
                 self.history.append({
                     "role": "user", "synthetic": True,
                     "content": f"Automatic step check: you have used {step} of "
@@ -604,8 +607,16 @@ class Agent:
 
             try:
                 _m = get_mode(self.active_mode)
+                # Hard landing: in the last two steps the tools are withdrawn
+                # entirely — a persistent model can talk itself past a warning,
+                # but it cannot call tools that aren't offered. It MUST answer.
+                _schemas = self.tool_schemas if step < _mode_steps - 2 else []
+                if not _schemas and step == _mode_steps - 2:
+                    yield Event(kind="note",
+                                text="⏳ Running long — tools set down, wrapping "
+                                     "up with what's in hand.")
                 reply = self.provider.complete(
-                    self._system(), self.history, self.tool_schemas,
+                    self._system(), self.history, _schemas,
                     on_delta=on_delta,
                     extra_body={"temperature": _m["temperature"],
                                 "chat_template_kwargs": {"enable_thinking": _m["thinking"]}},
