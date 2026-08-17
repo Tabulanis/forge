@@ -74,6 +74,16 @@ case "${1:-big}" in
     # budgets aren't possible — llama takes this globally at startup. Lower it
     # if Precise/Deep feel too slow; -1 = unlimited, 0 = no thinking.
     EXTRA="-fa on -ctk q8_0 -ctv q8_0 --reasoning-budget 1024" ;;
+  merge38)
+    # CANDIDATE brain: Qwen3.8 27B abliterated (Blackfrost) WITH native vision
+    # (mmproj ships in the same repo — the hard rule held). Same port as merge:
+    # they can never run together on the 24GB card, so it's stop-one-start-other.
+    # Same launch recipe as 3.6 until testing says otherwise. 3.6 stays on disk
+    # and in its own case until this one has EARNED the seat (battery + probes).
+    MODEL=~/forge/models/Qwen3.8-27B-ABLITERATED-Q4_K_M.gguf
+    MMPROJ=~/forge/models/mmproj-Qwen3.8-27B-ABLITERATED-F16.gguf
+    PORT=8085; CTX=24576; NGL=99
+    EXTRA="-fa on -ctk q8_0 -ctv q8_0 --reasoning-budget 1024" ;;
   embed)
     # Her associative sense-organ: nomic-embed-text on CPU, embedding-only.
     # Turns memory into vectors so recall finds things by MEANING, not just
@@ -81,7 +91,7 @@ case "${1:-big}" in
     # separately (llama-server can't both generate and embed on one port).
     MODEL=~/forge/models/nomic-embed-text-v1.5.f16.gguf
     PORT=8086; CTX=2048; NGL=0; EMBED=1 ;;
-  *) echo "unknown model: $1  (try: big, tiny, little, coder14, vision, merge, embed, imagegen)"; exit 1 ;;
+  *) echo "unknown model: $1  (try: big, tiny, little, coder14, vision, merge, merge38, embed, imagegen)"; exit 1 ;;
 esac
 
 if [ -n "${EMBED:-}" ]; then

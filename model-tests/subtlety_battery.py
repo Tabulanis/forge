@@ -55,7 +55,7 @@ TESTS = [
 def call(prompt):
     body = {"messages": [{"role": "system", "content": PERSONA},
                          {"role": "user", "content": prompt}],
-            "max_tokens": 1000}
+            "max_tokens": 3000}
     req = urllib.request.Request(URL, json.dumps(body).encode(),
                                  {"Content-Type": "application/json"})
     with urllib.request.urlopen(req, timeout=600) as r:
