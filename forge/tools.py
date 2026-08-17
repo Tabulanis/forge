@@ -1283,7 +1283,8 @@ def build_tools(ws: Workspace, fenced: bool = False) -> list[Tool]:
                 "whether a trading idea has any edge before anyone risks a cent — it almost "
                 "never does; most die right there to the fees, which is the honest lesson. "
                 "params: pair (e.g. XBTUSD, ETHUSD), interval (candle minutes, 60=hourly), "
-                "strategy (buy_and_hold or sma_cross), strat_params (e.g. "
+                "strategy (buy_and_hold, sma_cross, or band — band = the classic buy-low/"
+                "sell-high-around-a-moving-average mechanic), strat_params (e.g. "
                 "{\"short\":10,\"long\":30}), start_cash."
             ),
             parameters={
@@ -1291,7 +1292,7 @@ def build_tools(ws: Workspace, fenced: bool = False) -> list[Tool]:
                 "properties": {
                     "pair": {"type": "string", "description": "e.g. XBTUSD, ETHUSD"},
                     "interval": {"type": "integer", "description": "candle size in minutes, e.g. 60"},
-                    "strategy": {"type": "string", "enum": ["buy_and_hold", "sma_cross"]},
+                    "strategy": {"type": "string", "enum": ["buy_and_hold", "sma_cross", "band"]},
                     "strat_params": {"type": "object", "description": "e.g. {\"short\": 10, \"long\": 30}"},
                     "start_cash": {"type": "number", "description": "fake starting cash, default 1000"},
                 },
@@ -1315,7 +1316,7 @@ def build_tools(ws: Workspace, fenced: bool = False) -> list[Tool]:
                 "type": "object",
                 "properties": {
                     "pair": {"type": "string", "description": "e.g. XBTUSD, ETHUSD"},
-                    "strategy": {"type": "string", "enum": ["buy_and_hold", "sma_cross"]},
+                    "strategy": {"type": "string", "enum": ["buy_and_hold", "sma_cross", "band"]},
                     "strat_params": {"type": "object", "description": "e.g. {\"short\": 10, \"long\": 50}"},
                 },
             },

@@ -87,8 +87,10 @@ def backtest(strategy, closes: list[float], params: dict | None = None,
         target = strategy(closes[:i + 1], params)
         if target == 1:
             p.go_long(price)
-        else:
+        elif target == 0:
             p.go_flat(price)
+        # any other value (e.g. -1) = HOLD current position — lets band/
+        # hysteresis strategies wait between their buy and sell lines.
         eq = p.equity(price)
         curve.append(eq)
         peak = max(peak, eq)
@@ -113,7 +115,25 @@ def strat_sma_cross(closes, params):
     return 1 if short_ma > long_ma else 0
 
 
-STRATEGIES = {"buy_and_hold": strat_buy_and_hold, "sma_cross": strat_sma_cross}
+def strat_band(closes, params):
+    """The classic hand-trader's routine, formalized: buy when price is
+    stretched LOW vs its recent average, sell when stretched HIGH, and WAIT
+    (hold whatever you're in) between the lines. 'Harvest the wiggle.'"""
+    win = int(params.get("win", 20))
+    band = float(params.get("band", 0.05))
+    if len(closes) < win:
+        return 0
+    ma = sum(closes[-win:]) / win
+    price = closes[-1]
+    if price < ma * (1 - band):
+        return 1        # low vs its own range -> buy
+    if price > ma * (1 + band):
+        return 0        # high vs its own range -> sell
+    return -1           # between the lines -> wait
+
+
+STRATEGIES = {"buy_and_hold": strat_buy_and_hold, "sma_cross": strat_sma_cross,
+              "band": strat_band}
 
 
 def _random_benchmark(closes, params, fee, slip, start_cash, runs=25):
