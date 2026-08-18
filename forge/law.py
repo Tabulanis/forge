@@ -241,3 +241,188 @@ def find_cases(topic: str, limit: int = 5) -> str:
 def legal_notice() -> str:
     """The standing disclaimer text."""
     return DISCLAIMER
+
+
+# ---------------------------------------------------------------------------
+# Statute verification (US Code via Cornell LII) — CIVIL + CRIMINAL branches
+# ---------------------------------------------------------------------------
+
+_LII_BASE = "https://www.law.cornell.edu/uscode/text/{title}/{section}"
+_LII_UA = {"User-Agent": "Mozilla/5.0 (research; citation-verification)"}
+_H1_RE = re.compile(r'<h1 class="title" id="page_title">(.*?)</h1>', re.S)
+
+
+def verify_statute(title, section) -> str:
+    """Verify a US Code section EXISTS before you cite it.
+
+    Fetches the Cornell LII page for the given title/section and parses the
+    authoritative <h1 class="title" id="page_title"> heading as ground truth.
+    A real section returns VERIFIED with the true section name and the LII
+    URL; a bogus title/section 404s or lacks the heading and returns NOT
+    FOUND with the same blunt no-citing language as verify_case.
+
+    RULES (read before using):
+    - This is the statute branch of the hallucination guard. NEVER state a
+      statute, code section, or regulation you have not checked this way.
+      Invented citations are how models fail at law.
+    - CRIMINAL: penal statutes (title 18) + elements + defenses. NEVER tell
+      someone whether they committed a crime or what to say to police - that
+      is "get a lawyer, and anything you say matters" territory. This is the
+      branch where bad information hurts real people most.
+    - CIVIL: contracts / torts / property / procedure. State law varies HARD
+      by state, and federal rules differ from state rules - always name the
+      jurisdiction, or say plainly you don't know it.
+    - US Code only. State statutes are out of reach - say so plainly and
+      verify against a local source instead of faking confidence.
+    - This is legal INFORMATION, not legal advice; no attorney-client
+      relationship. Law changes; anything time-sensitive must be re-checked
+      fresh. For anything real, get a licensed professional in that
+      jurisdiction.
+    """
+    try:
+        title_s, section_s = str(int(title)), str(int(section))
+    except (TypeError, ValueError):
+        title_s, section_s = str(title), str(section)
+    url = _LII_BASE.format(title=title_s, section=section_s)
+    try:
+        r = httpx.get(url, headers=_LII_UA, timeout=20)
+    except Exception as e:  # network failure is NOT a verdict
+        return (f"ERROR: Could not reach Cornell LII ({e!r}). Do not cite "
+                f"{title_s} U.S.C. {section_s} until it is verified.")
+    if r.status_code == 404:
+        return (f"NOT FOUND: No such section: {title_s} U.S. Code {section_s}. "
+                "Do NOT cite it. Verify against an authoritative "
+                "source before citing any statute.")
+    if r.status_code != 200:
+        return (f"NOT FOUND: Expected HTTP 200 from Cornell LII, got {r.status_code} "
+                f"for {url}. Do NOT cite {title_s} U.S. Code {section_s}.")
+    m = _H1_RE.search(r.text)
+    if not m:
+        return (f"NOT FOUND: Page loaded but carries no statute title heading - "
+                f"{title_s} U.S. Code {section_s} is not confirmed. "
+                "Do NOT cite it.")
+    name = re.sub(r"\s+", " ", m.group(1)).strip()
+    return (
+        "VERIFIED: " + name + "\n"
+        "URL: " + url + "\n"
+        + ("Legal information, not legal advice; no attorney-client "
+           "relationship. US Code only; state law varies by state and "
+           "federal rules differ from state rules - name the "
+           "jurisdiction or say you don't know it. Law changes - "
+           "anything time-sensitive must be re-checked fresh. For "
+           "anything real, get a licensed professional in that "
+           "jurisdiction.")
+    )
+
+
+# ---------------------------------------------------------------------------
+# Regulation search (eCFR JSON API) - FINANCIAL branch (SEC 17 CFR, banking
+# 12 CFR, etc.)
+# ---------------------------------------------------------------------------
+
+_ECFR_SEARCH = "https://www.ecfr.gov/api/search/v1/results"
+_ECFR_UA = {"User-Agent": "Mozilla/5.0 (research; regulation-verification)"}
+
+
+def find_regulation(query, limit=5) -> str:
+    """Find real regulations (eCFR) before you cite them.
+
+    Searches the eCFR public search API (no key) and returns real hits with
+    their title/part/section, a citation string like "17 CFR 229.408", and
+    the eCFR current-text URL. If nothing comes back, says so plainly.
+
+    RULES (read before using):
+    - FINANCIAL branch: securities / tax / banking regulations. These rules
+      change constantly - anything time-sensitive must be re-checked fresh.
+    - NEVER state a regulation you have not checked this way. This ties to
+      the trading rule: no investment advice ever, and any claim of the
+      form "the regulation says X" needs the actual regulation cited.
+    - US federal regulations only (eCFR). State rules and foreign regimes
+      are out of reach - say so plainly and verify against a local source
+      instead of faking confidence.
+    - This is legal INFORMATION, not legal advice; no attorney-client
+      relationship. For anything real, get a licensed professional in that
+      jurisdiction.
+    """
+    try:
+        limit = int(limit)
+    except (TypeError, ValueError):
+        limit = 5
+    try:
+        r = httpx.get(_ECFR_SEARCH,
+                      params={"query": str(query), "per_page": limit},
+                      headers=_ECFR_UA, timeout=20)
+    except Exception as e:  # network failure is NOT a verdict
+        return f"ERROR: Could not reach the eCFR API ({e!r})."
+    if r.status_code != 200:
+        return (f"NOT FOUND: eCFR search returned HTTP {r.status_code}. "
+                f"No regulation confirmed for {query!r} - do NOT cite one.")
+    try:
+        data = r.json()
+    except Exception as e:
+        return f"ERROR: eCFR returned non-JSON ({e!r})."
+    results = data.get("results") or []
+    if not results:
+        return (f"NOT FOUND: No regulation hits for {query!r}. "
+                "Say so plainly; do NOT invent a citation.")
+    hits = []
+    for item in results[:limit]:
+        h = item.get("hierarchy") or {}
+        title = h.get("title")
+        part = h.get("part")
+        section = h.get("section")
+        citation = None
+        if title and part and section:
+            citation = f"{title} CFR {section}"
+        elif title and part:
+            citation = f"{title} CFR Part {part}"
+        url = None
+        if title and part and section:
+            url = (f"https://www.ecfr.gov/current/title-{title}/"
+                   f"part-{part}/section-{section}")
+        elif title and part:
+            url = f"https://www.ecfr.gov/current/title-{title}/part-{part}"
+        heading = ""
+        hh = item.get("hierarchy_headings") or {}
+        for k in ("part", "subpart", "section"):
+            if hh.get(k):
+                heading = (heading + " " + str(hh[k])).strip()
+        hits.append({
+            "citation": citation,
+            "heading": heading or None,
+            "url": url,
+            "excerpt": (item.get("full_text_excerpt") or "")[:300] or None,
+        })
+    # Dedupe by citation: the search API sometimes returns the same
+    # section several times; five hits should be five DIFFERENT sections.
+    seen = set()
+    deduped = []
+    for h in hits:
+        key = h.get("citation")
+        if key is not None and key in seen:
+            continue
+        if key is not None:
+            seen.add(key)
+        deduped.append(h)
+    if not deduped:
+        return (f"NOT FOUND: No regulation hits for {query!r} after "
+                "deduplication. Say so plainly; do NOT invent a citation.")
+    lines = [f"FOUND {len(deduped)} regulation hit(s) for: {query}"]
+    for i, h in enumerate(deduped, 1):
+        lines.append("")
+        lines.append(f"  [{i}] {h.get('citation') or '(uncited)'}")
+        if h.get("heading"):
+            lines.append(f"      {h['heading']}")
+        if h.get("url"):
+            lines.append(f"      {h['url']}")
+        if h.get("excerpt"):
+            lines.append(f"      excerpt: {h['excerpt']}")
+    lines.append("")
+    lines.append("Legal information, not legal advice; no attorney-client "
+                 "relationship. US federal regulations (eCFR) only - foreign "
+                 "or state-level rules are out of reach; say so plainly. No "
+                 "investment advice ever. Rules change constantly - anything "
+                 "time-sensitive must be re-checked fresh, and any claim of what "
+                 "a rule says needs the actual reg cited. For anything real, get "
+                 "a licensed professional in that jurisdiction.")
+    return "\n".join(lines)

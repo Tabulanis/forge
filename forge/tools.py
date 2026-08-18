@@ -1119,6 +1119,64 @@ def build_tools(ws: Workspace, fenced: bool = False) -> list[Tool]:
             run=law.find_cases,
         ),
         Tool(
+            name="verify_statute",
+            description="Verify a US Code statute EXISTS before you cite it. Searches "
+                        "Cornell LII (uscode) and returns the REAL section name and the "
+                        "LII URL on a hit, or a blunt NOT FOUND if the title/section does "
+                        "not exist. Covers both CIVIL branches (contracts/torts/property/"
+                        "procedure) and CRIMINAL penal statutes (e.g. title 18). RULES: "
+                        "verify EVERY statute before citing it; NEVER state a statute or "
+                        "its elements that you have not verified this way, because "
+                        "invented sections are how models fail at law; this is legal "
+                        "INFORMATION, not legal advice, and there is no attorney-client "
+                        "relationship; state law varies HARD by state and federal rules "
+                        "differ from state rules, so always name the jurisdiction or say "
+                        "you don't know it; law changes, so anything time-sensitive must "
+                        "be re-checked fresh; US only, so for foreign law say plainly "
+                        "this check does not reach it and verify with a local source; "
+                        "and for anything real, get a licensed professional in that "
+                        "jurisdiction.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string",
+                              "description": "US Code title, e.g. 18 (criminal), 42"},
+                    "section": {"type": "string",
+                                "description": "Section number within the title"},
+                },
+                "required": ["title", "section"],
+            },
+            run=law.verify_statute,
+        ),
+        Tool(
+            name="find_regulation",
+            description="Verify a US federal regulation EXISTS before you cite it. "
+                        "Searches the eCFR (SEC 17 CFR, banking 12 CFR, etc.) and "
+                        "returns real hits with their title/part/section, a citation "
+                        "string like \"17 CFR 229.408\", and the eCFR URL. This is "
+                        "the FINANCIAL-branch guard: securities/tax/banking rules change "
+                        "constantly, and \"the regulation says X\" needs the actual "
+                        "reg cited - never state one you have not verified this way. "
+                        "Ties to the trading rule already in place: no investment advice "
+                        "ever. RULES: this is legal INFORMATION, not advice, no "
+                        "attorney-client relationship; US only; rules change, so "
+                        "anything time-sensitive must be re-checked fresh; and for "
+                        "anything real, get a licensed professional in that "
+                        "jurisdiction.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string",
+                              "description": "Terms to search for, e.g. \"insider "
+                                             "trading\""},
+                    "limit": {"type": "integer",
+                              "description": "How many results (default 5)"},
+                },
+                "required": ["query"],
+            },
+            run=law.find_regulation,
+        ),
+        Tool(
             name="web_search",
             description="Search the web (current, live results — use this for anything "
                         "you don't know, anything recent, or to check a fact). Returns "
