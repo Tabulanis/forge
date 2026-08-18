@@ -29,7 +29,7 @@ from typing import Callable
 
 import httpx
 
-from . import (browser, business, datasets, frameworks, identity, markets,
+from . import (browser, business, datasets, frameworks, identity, law, markets,
                market_regime, crossmap, news, paper_market, scanner, sims, walkforward)
 from .codetools import syntax_check
 from .config import load_config
@@ -1075,6 +1075,48 @@ def build_tools(ws: Workspace, fenced: bool = False) -> list[Tool]:
             run=run_compute,
             needs_permission=True,
             summarize=lambda a: f"compute: {a.get('code', '')[:100]}",
+        ),
+        Tool(
+            name="verify_case",
+            description="Verify a court case EXISTS before you cite it. Searches the "
+                        "CourtListener/Free Law Project US case database. Returns the real "
+                        "case name, citation, court, filing date, and URL on a hit, or a "
+                        "blunt NOT FOUND if nothing matches. RULES: verify EVERY case "
+                        "before citing it; NEVER cite a case you have not verified this "
+                        "way, because invented cases are how models fail at law; this is "
+                        "legal INFORMATION, not legal advice, and there is no "
+                        "attorney-client relationship; jurisdiction matters and law "
+                        "changes, so anything time-sensitive must be re-checked fresh; "
+                        "coverage is US only, so for foreign or international law say "
+                        "plainly that this check does not reach it and verify with a "
+                        "local source instead of faking confidence.",
+            parameters={
+                "type": "object",
+                "properties": {"query": {"type": "string",
+                                      "description": "Case name or citation to verify"}},
+                "required": ["query"],
+            },
+            run=law.verify_case,
+        ),
+        Tool(
+            name="find_cases",
+            description="Find real US court cases on a topic via the "
+                        "CourtListener/Free Law Project database. Returns real hits with "
+                        "citations and URLs. Same rules as verify_case: cite ONLY what "
+                        "this returns; never cite an unverified case; legal "
+                        "INFORMATION, not advice, no attorney-client relationship; US "
+                        "coverage only, so foreign or international law must be checked "
+                        "against a local source, stated plainly, never faked.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "topic": {"type": "string"},
+                    "limit": {"type": "integer",
+                              "description": "How many results (default 5)"},
+                },
+                "required": ["topic"],
+            },
+            run=law.find_cases,
         ),
         Tool(
             name="web_search",
