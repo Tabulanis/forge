@@ -29,7 +29,7 @@ from typing import Callable
 
 import httpx
 
-from . import (browser, business, cad, datasets, medical, frameworks, identity, law, markets,
+from . import (audio_nerve, browser, business, cad, datasets, medical, frameworks, identity, law, markets,
                market_regime, crossmap, news, paper_market, scanner, sims, walkforward)
 from .codetools import syntax_check
 from .config import load_config
@@ -1270,6 +1270,25 @@ def build_tools(ws: Workspace, fenced: bool = False) -> list[Tool]:
                         "properties": {"term": {"type": "string"}},
                         "required": ["term"]},
             run=medical.explain_plain,
+        ),
+        Tool(
+            name="see_sound",
+            description="Your EARS, through your eyes. Turns a sound into a picture "
+                        "of its structure you can look_at_image: waveform, spectrogram "
+                        "(time x frequency), the harmonic spectrum (a pitched note is "
+                        "overtones stacked at integer ratios), and a pitch-class "
+                        "mandala (the harmony drawn as geometry — consonant and dissonant "
+                        "chords draw visibly different shapes). source is an "
+                        "AUDIO FILE path (any format) OR a synth spec to study a pure "
+                        "structure: 'note:A4', 'chord:major:C', 'chord:min7:F', "
+                        "'interval:fifth', 'interval:tritone', 'harmonics:220'. Renders "
+                        "a PNG and returns its path — it shows in the chat and you "
+                        "look_at_image it to actually perceive the sound.",
+            parameters={"type": "object",
+                        "properties": {"source": {"type": "string",
+                            "description": "audio file path, or synth spec like 'chord:major:C'"}},
+                        "required": ["source"]},
+            run=audio_nerve.see_sound,
         ),
         Tool(
             name="web_search",
