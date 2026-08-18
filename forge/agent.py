@@ -532,6 +532,8 @@ class Agent:
         force_compacted = False
         superego_bounced = False
         grounding_nudged = False
+        _tidy_noted = False       # near-cap notes: once per turn, not per step
+        _trim_noted = False
         turn_start = len(self.history) - 1   # index of this turn's user msg
 
         _mode_steps = get_mode(self.active_mode)["max_steps"]
@@ -598,12 +600,22 @@ class Agent:
             est = sum(self._entry_chars(m) for m in self.history) // _CHARS_PER_TOKEN
             if est > self._ctx_used:
                 self._ctx_used = est
-            if self._will_compact():
+            # Near the cap on ONE long task, every step re-trips the threshold
+            # (a single trim never drops it below the line) — announcing that
+            # 20 times reads as a malfunction. Say each thing once per turn;
+            # the trims themselves still run every time.
+            if self._will_compact() and not _tidy_noted:
+                _tidy_noted = True
                 yield Event(kind="note",
                             text="Tidying up my memory to make room — one moment…")
             note = self._maybe_compact()
             if note:
-                yield Event(kind="note", text=note)
+                if note.startswith("One long task"):
+                    if not _trim_noted:
+                        _trim_noted = True
+                        yield Event(kind="note", text=note)
+                else:
+                    yield Event(kind="note", text=note)
 
             try:
                 _m = get_mode(self.active_mode)
