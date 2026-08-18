@@ -77,6 +77,15 @@
   .err { color:var(--bad); font-size:13.5px; }
   .note { color:var(--gold); font-size:13px; font-style:italic; }
   .recbtn { background:#c0392b !important; color:#fff !important; }
+  /* AR-lite: rear camera as a live backdrop, chat floating translucent on top.
+     No WebXR/ARCore needed — works on any phone that grants the camera. */
+  #arVideo { position:fixed; inset:0; width:100vw; height:100vh; object-fit:cover;
+             z-index:-1; display:none; }
+  body.arlite { background:transparent; }
+  body.arlite #arVideo { display:block; }
+  body.arlite header, body.arlite footer { background:rgba(23,26,35,.75); }
+  body.arlite #log { background:transparent; }
+  body.arlite .msg { opacity:.94; }
   .spk-on { background:var(--accent) !important; color:#06131a !important; }
   #privacyBanner { padding:7px 14px; font-size:12.5px; text-align:center;
     border-bottom:1px solid var(--line); letter-spacing:.2px; }
@@ -256,7 +265,7 @@
     <option value="offrec">🕶️ Off the record</option>
     <option value="sandbox">🔒 Knowledge only</option>
   </select>
-  <button id="arBtn" style="display:none" title="Augmented reality (headset)">AR</button>
+  <button id="arBtn" style="display:none" title="AR — camera view with chat on top">AR</button>
   <button id="speakBtn" title="Read her replies aloud">🔈</button>
   <button id="voiceBtn" style="display:none" title="Hands-free voice chat">🎙️</button>
   <button id="fsBtn" title="Full screen">⛶</button>
@@ -891,8 +900,9 @@ function setVoiceUI(on) {
 $('voiceBtn').onclick = () => {
   if (vpLong) { vpLong = false; return; }           // that was a long-press (settings)
   if (voiceMode) {
-    voiceMode = false; setVoiceUI(false);
+    voiceMode = false; setVoiceUI(false);   // flag first: stops monitor + cancels pending loops
     stopSpeaking();
+    if (voiceRec) { try { voiceRec.stop(); } catch (_) {} voiceRec = null; }   // release the mic
     stopWave();
     $('mode').value = voicePrevMode;               // restore the style
     el('note', 'Voice chat off.');
@@ -919,7 +929,8 @@ async function voiceListen() {
     ? {mimeType: 'audio/webm;codecs=opus'} : undefined);
   const chunks = []; rec.ondataavailable = e => chunks.push(e.data);
   const data = new Uint8Array(analyser.frequencyBinCount);
-  let spoke = false, silence = null, floor = 0, calibN = 0;
+  let voiceDropped = false;
+  let spoke = false, silence = null, floor = 0, calibN = 0, dip = null;
   const t0 = performance.now();
   const monitor = () => {
     if (!voiceMode || rec.state !== 'recording') return;
@@ -936,10 +947,22 @@ async function voiceListen() {
     }
     const f = Math.min(floor, 10);   // cap so a noisy calibration can't go deaf
     const speakLevel = Math.max(f + 4, f * 1.9, 6);
-    if (level > speakLevel) { spoke = true; silence = null; }      // clearly talking
-    else if (spoke) {                                              // trailing quiet → end soon
-      if (!silence) silence = now;
-      else if (now - silence > 1300) { rec.stop(); return; }
+    if (level > speakLevel) {
+      // Speech onset requires a brief dip below the line first — music and
+      // hums stay high without that dip, so they can't start a turn.
+      if (spoke) { silence = null; }
+      else if (dip && now - dip > 120) { spoke = true; silence = null; }
+    } else {
+      if (level < f) dip = now;              // genuine quiet marks a valid dip
+      else if (spoke) {                      // trailing quiet → end soon
+        if (!silence) silence = now;
+        else if (now - silence > 1300) { rec.stop(); return; }
+      }
+    }
+    if (spoke && level > speakLevel && silence === null && dip !== null && now - t0 > 2200 && now - dip > 1500) {
+      // Sustained constant-level audio with no quiet dips since the onset —
+      // music, not talk. Abort before whisper hallucinates on it.
+      rec.stop(); voiceDropped = true; return;
     }
     if (now - t0 > 20000) { rec.stop(); return; }    // 20s safety cap
     requestAnimationFrame(monitor);
@@ -949,6 +972,7 @@ async function voiceListen() {
     try { actx.close(); } catch (_) {}
     stopWave();
     if (!voiceMode) return;
+    if (voiceDropped) { el('note', 'That sounded like music — listening again.'); voiceDropped = false; voiceListen(); return; }
     if (!spoke) { voiceListen(); return; }            // heard nothing → keep listening
     try {
       const blob = new Blob(chunks, {type: rec.mimeType || 'audio/webm'});
@@ -1279,15 +1303,53 @@ $('voiceBtn').addEventListener('pointerdown', () => {
 ['pointerup', 'pointerleave', 'pointercancel'].forEach(ev =>
   $('voiceBtn').addEventListener(ev, () => clearTimeout(vpTimer)));
 
-// ---- AR mode (Quest and friends) -----------------------------------
-// WebXR immersive-ar with the page as a DOM overlay: the room stays
-// visible in passthrough, the chat floats on top, taps and the mic keep
-// working. Requires https, hence the certificate.
-if (navigator.xr && navigator.xr.isSessionSupported) {
-  navigator.xr.isSessionSupported('immersive-ar').then(ok => {
-    if (!ok) return;
-    $('arBtn').style.display = '';
-    const enterAR = async () => {
+// ---- AR mode -----------------------------------
+// Two tiers. Real WebXR immersive-ar (headsets, ARCore phones): the room in
+// passthrough, chat as a DOM overlay. And AR-LITE for everything else — the
+// rear camera as a live backdrop with the chat floating translucent on top.
+// Lite needs no Google AR services at all (Huawei-friendly), just the camera.
+(function () {
+  let xrOK = false;
+  let liteStream = null;
+
+  const exitLite = () => {
+    if (liteStream) { liteStream.getTracks().forEach(t => t.stop()); liteStream = null; }
+    document.body.classList.remove('arlite');
+    arActive = false;
+    $('arBtn').textContent = 'AR';
+    $('arBtn').onclick = enterAR;
+  };
+
+  const enterLite = async () => {
+    try {
+      liteStream = await navigator.mediaDevices.getUserMedia({
+        video: {facingMode: {ideal: 'environment'}}, audio: false});
+    } catch (err) {
+      el('err', 'Camera blocked — AR needs it. Tap the padlock by the address ' +
+                'and allow Camera for this site. (Full WebXR AR additionally ' +
+                'needs "Google Play Services for AR" from the Play Store, which ' +
+                'some phones — Huawei especially — lack; this camera mode ' +
+                'works without it.)');
+      return;
+    }
+    let v = $('arVideo');
+    if (!v) {
+      v = document.createElement('video');
+      v.id = 'arVideo'; v.muted = true; v.playsInline = true;
+      v.setAttribute('playsinline', '');
+      document.body.prepend(v);
+    }
+    v.srcObject = liteStream;
+    try { await v.play(); } catch (e) {}
+    document.body.classList.add('arlite');
+    arActive = true;                   // she'll be told she's in AR now
+    showCamButton();                   // camera-send is most useful here
+    $('arBtn').textContent = 'Exit AR';
+    $('arBtn').onclick = exitLite;
+  };
+
+  const enterAR = async () => {
+    if (xrOK) {
       try {
         const session = await navigator.xr.requestSession('immersive-ar', {
           optionalFeatures: ['dom-overlay'],
@@ -1298,8 +1360,8 @@ if (navigator.xr && navigator.xr.isSessionSupported) {
         await session.updateRenderState({baseLayer: new XRWebGLLayer(session, gl)});
         const loop = () => { session.requestAnimationFrame(loop); };
         session.requestAnimationFrame(loop);
-        arActive = true;                 // she'll be told she's in AR now
-        showCamButton();                 // camera-send is most useful here
+        arActive = true;
+        showCamButton();
         $('arBtn').textContent = 'Exit AR';
         $('arBtn').onclick = () => session.end().catch(() => {});
         session.addEventListener('end', () => {
@@ -1307,13 +1369,28 @@ if (navigator.xr && navigator.xr.isSessionSupported) {
           $('arBtn').textContent = 'AR';
           $('arBtn').onclick = enterAR;
         });
+        return;
       } catch (err) {
-        el('err', 'Could not start AR: ' + err.message);
+        // Headset-grade AR refused (missing/stale ARCore, browser shields…)
+        // — fall through to the camera backdrop instead of a dead red error.
+        el('err', 'Full AR unavailable (' + err.message + ') — using camera ' +
+                  'mode instead.');
       }
-    };
+    }
+    await enterLite();
+  };
+
+  // Show the button whenever EITHER tier could work.
+  if (navigator.xr && navigator.xr.isSessionSupported) {
+    navigator.xr.isSessionSupported('immersive-ar')
+      .then(ok => { xrOK = !!ok; }).catch(() => {});
+  }
+  if ((navigator.mediaDevices && navigator.mediaDevices.getUserMedia) ||
+      (navigator.xr && navigator.xr.isSessionSupported)) {
+    $('arBtn').style.display = '';
     $('arBtn').onclick = enterAR;
-  }).catch(() => {});
-}
+  }
+})();
 
 function newChat(confirmFirst) {
   if (confirmFirst && !confirm('Start a fresh conversation?')) return;
