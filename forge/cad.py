@@ -12,12 +12,31 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
+import sys
+from pathlib import Path
 
 import httpx
 
 STUDIO = "http://127.0.0.1:8840"
+STUDIO_DIR = Path.home() / "aidojo" / "current" / "MakerStudio"
+RENDERS = STUDIO_DIR / "renders"
 SHAPES = {"box", "cylinder", "sphere", "cone"}
 OPS = {None, "add", "cut", "keep"}
+
+
+def _render(name: str) -> str | None:
+    """Screenshot a saved part so the user SEES it. Returns the PNG path, or
+    None if rendering isn't available — the caller still hands back the link."""
+    try:
+        RENDERS.mkdir(exist_ok=True)
+        out = RENDERS / f"{name}.png"
+        r = subprocess.run(
+            [sys.executable, str(STUDIO_DIR / "render.py"), name, str(out)],
+            capture_output=True, text=True, timeout=60)
+        return str(out) if (r.returncode == 0 and out.is_file()) else None
+    except Exception:
+        return None
 
 
 def _validate(part: dict) -> str | None:
@@ -68,10 +87,14 @@ def design_part(part) -> str:
     if not data.get("ok"):
         return f"Studio rejected it: {data.get('error')}"
     name = data["name"]
-    return (f"Saved part '{name}' ({data['features']} features). "
-            f"Open it to see the 3D model: {STUDIO}/?load={name}\n"
-            f"(Use look_at_image on a screenshot of that page to see your own "
-            f"design, then adjust params or features and resave.)")
+    png = _render(name)
+    msg = f"Saved part '{name}' ({data['features']} features)."
+    if png:
+        # The path in this line makes the picture appear in the user's chat,
+        # and lets you look_at_image your own design to check and refine it.
+        msg += f"\nRendered to {png}"
+    msg += f"\nSpin it live in 3D: {STUDIO}/?load={name}"
+    return msg
 
 
 def list_parts() -> str:

@@ -1179,19 +1179,29 @@ def build_tools(ws: Workspace, fenced: bool = False) -> list[Tool]:
         Tool(
             name="design_part",
             description="Design a 3D part in the Maker Studio (a tiny parametric "
-                        "CAD / solid modeler). You write the part as JSON - named "
-                        "params plus a feature tree of primitives (box, cylinder, "
-                        "sphere, cone) that get ADDED, CUT, or KEPT against each "
-                        "other via constructive solid geometry. Number fields can be "
-                        "params or expressions over them like \"w/2\". Saving "
-                        "returns a URL; screenshot that page and look_at_image to "
-                        "SEE your own design in 3D, then tweak params/features and "
-                        "resave. This is real modeling: box then cut a cylinder = a "
-                        "block with a hole. Example: {\"name\":\"bracket\","
-                        "\"params\":{\"w\":40,\"hole\":5},\"features\":["
-                        "{\"shape\":\"box\",\"w\":\"w\",\"h\":20,\"d\":8},"
-                        "{\"shape\":\"cylinder\",\"op\":\"cut\",\"r\":\"hole/2\","
-                        "\"h\":10}]}",
+                        "CAD / solid modeler). Write the part as JSON: named params "
+                        "plus a feature tree of primitives combined by constructive "
+                        "solid geometry. Saving AUTO-RENDERS the part to an image and "
+                        "returns its path — look_at_image that path to SEE your design "
+                        "(no browser needed), and it also shows in the user's chat, so "
+                        "this is how you SHOW them what you're making. Then tweak and "
+                        "resave. Box then cut a cylinder = a block with a hole. "
+                        "SHAPES (all centered at origin): box{w,h,d}; "
+                        "cylinder{r,h} — axis is Y (upright); sphere{r}; cone{r,h}. "
+                        "op: 'add' (default, fuse on) / 'cut' (carve out) / 'keep' "
+                        "(overlap only). Numbers may be params or expressions like "
+                        "\"w/2\". POSITIONING (this is how you place holes): every "
+                        "feature takes at:[x,y,z] to MOVE it and rotate:[x,y,z] "
+                        "(degrees) to TURN it — cut cylinders default vertical (Y), so "
+                        "a hole through an X-facing wall needs rotate:[0,0,90], through "
+                        "a Z-facing wall rotate:[90,0,0], then at:[...] to slide it to "
+                        "the spot. Make the cutter longer than the wall so it punches "
+                        "clean through. Example — a plate with two holes drilled down "
+                        "through it: {\"name\":\"plate\",\"params\":{\"w\":60,\"hole\":5},"
+                        "\"features\":[{\"shape\":\"box\",\"w\":\"w\",\"h\":4,\"d\":20},"
+                        "{\"shape\":\"cylinder\",\"op\":\"cut\",\"r\":\"hole/2\",\"h\":8,"
+                        "\"at\":[\"-w/2+8\",0,0]},{\"shape\":\"cylinder\",\"op\":\"cut\","
+                        "\"r\":\"hole/2\",\"h\":8,\"at\":[\"w/2-8\",0,0]}]}",
             parameters={
                 "type": "object",
                 "properties": {"part": {"type": "object",
