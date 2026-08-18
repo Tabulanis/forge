@@ -1224,12 +1224,41 @@ class Agent:
                 yield Event(kind="tool_result", tool=call.name, text="declined")
                 return
 
+        # A long tool used to be a silent black hole — `sleep 300` blocked
+        # everything for five minutes with no sign of life, and Stop only
+        # landed after the nap finished. Run the tool on a worker thread:
+        # heartbeat notes while it grinds (30s, then every minute), and Stop
+        # abandons the wait within ~15s instead of politely finishing it.
+        import concurrent.futures as _cf
+        _ex = _cf.ThreadPoolExecutor(max_workers=1)
         try:
-            result = tool.run(**call.args)
+            _fut = _ex.submit(lambda: tool.run(**call.args))
+            _waited = 0
+            while True:
+                try:
+                    result = _fut.result(timeout=15)
+                    break
+                except _cf.TimeoutError:
+                    _waited += 15
+                    if self.stop_requested:
+                        result = (f"[stopped by user after {_waited}s — this "
+                                  f"{call.name} call was abandoned mid-run; "
+                                  "its effects may be incomplete]")
+                        yield Event(kind="note",
+                                    text=f"🛑 Stopped — cut {call.name} loose "
+                                         f"after {_waited}s.")
+                        break
+                    if _waited == 30 or (_waited >= 60 and _waited % 60 == 0):
+                        yield Event(kind="note",
+                                    text=f"⏳ Still working — {call.name} has "
+                                         f"been running {_waited}s. (Stop cuts "
+                                         "it loose if you'd rather move on.)")
         except TypeError as e:
             result = f"Error: wrong arguments for {call.name}: {e}"
         except Exception as e:
             result = f"Error running {call.name}: {e}"
+        finally:
+            _ex.shutdown(wait=False)
 
         result = str(result)
         self._tools_ran = True
