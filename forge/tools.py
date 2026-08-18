@@ -29,7 +29,7 @@ from typing import Callable
 
 import httpx
 
-from . import (browser, business, cad, datasets, frameworks, identity, law, markets,
+from . import (browser, business, cad, datasets, medical, frameworks, identity, law, markets,
                market_regime, crossmap, news, paper_market, scanner, sims, walkforward)
 from .codetools import syntax_check
 from .config import load_config
@@ -1224,6 +1224,52 @@ def build_tools(ws: Workspace, fenced: bool = False) -> list[Tool]:
                         "properties": {"name": {"type": "string"}},
                         "required": ["name"]},
             run=cad.get_part,
+        ),
+        Tool(
+            name="verify_drug",
+            description="Confirm a MEDICATION is real and give its precise names, "
+                        "so a patient can tell the doctor/pharmacist the exact drug "
+                        "and not be misread. Checks NLM RxNorm; returns the generic "
+                        "(clinical) name, brand names, and drug class, or NOT FOUND if "
+                        "the name doesn't verify. THE POINT is communication: patients "
+                        "mix up brand and generic constantly (Glucophage = metformin). "
+                        "RULES: never state a drug, dose, interaction, or effect you "
+                        "have not verified; give FACTS only, never dosing or 'should "
+                        "you take it' — that's the pharmacist/prescriber. Medical "
+                        "INFORMATION, not advice; emergencies -> 911.",
+            parameters={"type": "object",
+                        "properties": {"name": {"type": "string",
+                            "description": "Medication name (brand or generic)"}},
+                        "required": ["name"]},
+            run=medical.verify_drug,
+        ),
+        Tool(
+            name="find_condition",
+            description="Turn a patient's plain or garbled words for a health problem "
+                        "into the PRECISE clinical term(s) and ICD-10 code(s) the "
+                        "doctor uses, so they can say the exact thing and not be "
+                        "misread. Searches NLM ClinicalTables (ICD-10-CM + conditions). "
+                        "CRITICAL: this is VOCABULARY, never a diagnosis — it returns "
+                        "the words for what was DESCRIBED, not a claim the patient has "
+                        "any of them. Only a clinician diagnoses. Medical INFORMATION, "
+                        "not advice; emergencies -> 911.",
+            parameters={"type": "object",
+                        "properties": {"term": {"type": "string",
+                            "description": "Plain or partial description of the problem"}},
+                        "required": ["term"]},
+            run=medical.find_condition,
+        ),
+        Tool(
+            name="explain_plain",
+            description="Translate a medical term or topic into plain language "
+                        "(NLM MedlinePlus, the consumer-health service), for turning a "
+                        "doctor's jargon into words the patient actually understands. "
+                        "Returns a real sourced summary or says nothing matched — never "
+                        "improvise a definition. Medical INFORMATION, not advice.",
+            parameters={"type": "object",
+                        "properties": {"term": {"type": "string"}},
+                        "required": ["term"]},
+            run=medical.explain_plain,
         ),
         Tool(
             name="web_search",
