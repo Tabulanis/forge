@@ -154,6 +154,34 @@ def shelf_line() -> str:
     return line
 
 
+def verify_shelf() -> str:
+    """Integrity pass over the dataset shelf: every cataloged dataset must
+    exist, parse, and still carry its data + sources. Flags orphans both ways.
+    (Can't re-verify facts against the world — that's what corroboration was
+    for at save time — but a corrupt or half-written file gets caught here.)"""
+    cat = _load_catalog()
+    lines = []
+    for name in sorted(cat):
+        path = DATASETS_DIR / f"{name}.json"
+        if not path.exists():
+            lines.append(f"  ✗ {name}: FILE MISSING — catalog orphan")
+            continue
+        try:
+            rec = json.loads(path.read_text(encoding="utf-8"))
+            srcs = rec.get("sources") or []
+            if rec.get("data") is None or not srcs:
+                lines.append(f"  ⚠ {name}: file loads but data/sources incomplete")
+            else:
+                mark = "✓" if len(srcs) >= 2 else "⚠ single-source"
+                lines.append(f"  {name}: {mark} intact ({len(srcs)} source(s))")
+        except Exception as e:
+            lines.append(f"  ✗ {name}: CORRUPT — {type(e).__name__}")
+    for f in DATASETS_DIR.glob("*.json"):
+        if f.stem not in cat and f.name != "_catalog.json":
+            lines.append(f"  ? {f.stem}: on disk but not in catalog")
+    return "Dataset shelf verification:\n" + ("\n".join(lines) or "  (empty shelf)")
+
+
 def load_data(name: str):
     """For sims (via the injected dataset() helper): just the data, {} if missing."""
     path = DATASETS_DIR / f"{_safe_name(name)}.json"

@@ -177,6 +177,12 @@ offset/limit; if a pasted block was trimmed to fit, say so and ask for the rest
 in chunks. A note that an input was "trimmed to what fits" means exactly that —
 you're seeing the front of it, not the whole thing.
 
+Know when you're hiccuping. If this turn hit tool failures, aborted calls, or
+memory trims, treat your own picture of the world as SUSPECT — re-verify inputs
+before persisting anything durable (a sim, a dataset, a saved note). A wrong
+artifact saved with a confident ✓ poisons every future turn that trusts it;
+verify_shelf re-checks the whole shelf whenever things felt off.
+
 The same goes for OUTPUT: sanity-check the scale of what's being asked before
 starting. "Count to a million out loud," "list every prime under a billion,"
 "repeat this forever" — mechanically impossible in one reply (millions of
@@ -542,6 +548,11 @@ class Agent:
         grounding_nudged = False
         _tidy_noted = False       # near-cap notes: once per turn, not per step
         _trim_noted = False
+        # Hiccup ledger: everything that degraded THIS turn (failed tools,
+        # aborts, memory trims). Persist-tools check it — an artifact built on
+        # a wobbly turn gets flagged at the moment of saving, because a wrong
+        # sim/dataset/note in a forever-store poisons every future turn.
+        self._turn_hiccups = []
         turn_start = len(self.history) - 1   # index of this turn's user msg
 
         _mode_steps = get_mode(self.active_mode)["max_steps"]
@@ -553,6 +564,7 @@ class Agent:
             # 83 tool calls into the wall, twice. Near the cap, stop exploring
             # and land the plane: deliver what's in hand.
             if step == _wrap_at:
+                self._turn_hiccups.append("step budget nearly exhausted")
                 yield Event(kind="note",
                             text=f"⏳ Long task — {step} of {_mode_steps} steps "
                                  "used; asked her to start wrapping up.")
@@ -621,6 +633,7 @@ class Agent:
                 if note.startswith("One long task"):
                     if not _trim_noted:
                         _trim_noted = True
+                        self._turn_hiccups.append("older tool outputs trimmed for memory")
                         yield Event(kind="note", text=note)
                 else:
                     yield Event(kind="note", text=note)
@@ -1266,6 +1279,21 @@ class Agent:
         failed = result.startswith("Error") or (
             result.startswith("[exit ") and not result.startswith("[exit 0]"))
         self._last_failed_call = fingerprint if failed else None
+        if failed:
+            self._turn_hiccups.append(f"{call.name} failed")
+        elif result.startswith("[stopped by user"):
+            self._turn_hiccups.append(f"{call.name} abandoned mid-run")
+        # The forever-store gate: saving into a persistent shelf right after a
+        # hiccup is how confident garbage gets a ✓ and poisons the future.
+        if call.name in ("build_sim", "build_dataset", "save_note") \
+                and self._turn_hiccups and not failed:
+            recent = "; ".join(self._turn_hiccups[-4:])
+            result += ("\n\n[HEALTH CHECK — this turn hit hiccups BEFORE this "
+                       f"save: {recent}. If any of that fed what you just "
+                       "persisted, re-verify the inputs and rebuild it NOW — a "
+                       "wrong artifact in a forever-store poisons every future "
+                       "turn that trusts it. If the inputs were clean, say so "
+                       "explicitly in your answer.]")
 
         # Verification tracking: a successful write/edit sets the flag; any
         # later successful run or read-back clears it.

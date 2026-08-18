@@ -187,6 +187,44 @@ def shelf_line() -> str:
     return line
 
 
+def verify_shelf() -> str:
+    """The immune system: re-run every cataloged sim's SELFTEST right now.
+    A sim that no longer reproduces its known answer gets DEMOTED to ⚠ in the
+    catalog — a stale ✓ is how confident garbage poisons future work. Also
+    flags catalog/disk mismatches (orphans both ways)."""
+    cat = _load_catalog()
+    lines, changed = [], False
+    for name, meta in sorted(cat.items()):
+        path = SIMS_DIR / f"{name}.py"
+        if not path.exists():
+            lines.append(f"  ✗ {name}: FILE MISSING — catalog orphan (rebuild or remove)")
+            continue
+        ok, out = _subprocess(path, "check")
+        if not ok:
+            now_valid, status = False, f"BROKEN — won't run ({out[:70]})"
+        else:
+            try:
+                info = json.loads(out)
+            except Exception:
+                info = {}
+            st = info.get("selftest")
+            now_valid = bool(st and st.get("pass"))
+            status = ("✓ revalidated" if now_valid
+                      else ("⚠ SELFTEST NOW FAILING" if st else "⚠ no selftest"))
+        was = bool(meta.get("validated"))
+        if was != now_valid:
+            meta["validated"] = now_valid
+            changed = True
+            status += "  << DEMOTED from ✓" if was else "  << promoted"
+        lines.append(f"  {name}: {status}")
+    for f in SIMS_DIR.glob("*.py"):
+        if f.stem not in cat:
+            lines.append(f"  ? {f.stem}: on disk but not in catalog")
+    if changed:
+        _save_catalog(cat)
+    return "Sim shelf verification:\n" + ("\n".join(lines) or "  (empty shelf)")
+
+
 def read_sim(name: str) -> str:
     name = _safe_name(name)
     path = SIMS_DIR / f"{name}.py"

@@ -35,3 +35,7 @@ tar -czf "$TARBALL" -C "$HOME" \
 ls -1t "$DEST"/forge-*.tar.gz 2>/dev/null | tail -n +$((KEEP + 1)) | xargs -r rm -f
 
 echo "backed up → $TARBALL ($(du -h "$TARBALL" | cut -f1)); $(ls -1 "$DEST"/forge-*.tar.gz | wc -l) kept"
+
+# Nightly shelf immune-system pass: re-validate every sim + dataset; a sim
+# whose SELFTEST no longer passes gets demoted from ✓ in the catalog.
+~/forge/.venv/bin/python -c "from forge import sims, datasets; print(sims.verify_shelf()); print(datasets.verify_shelf())" >> ~/forge/datasets/shelf-verify.log 2>&1

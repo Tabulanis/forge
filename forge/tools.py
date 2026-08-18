@@ -1396,6 +1396,20 @@ def build_tools(ws: Workspace, fenced: bool = False) -> list[Tool]:
             run=lambda sources=None, limit=25: news.feed(sources, limit),
         ),
         Tool(
+            name="verify_shelf",
+            description=(
+                "The immune system for your forever-stores: re-run every sim's SELFTEST "
+                "and integrity-check every dataset RIGHT NOW. A sim that no longer "
+                "reproduces its known answer gets demoted from ✓ to ⚠ on the spot; "
+                "corrupt or orphaned files get flagged. Run this whenever a turn felt "
+                "off (hiccups, aborts, weird results) before trusting or building on "
+                "the shelf — and any time the user asks 'is the shelf healthy?'. "
+                "Costs nothing, catches poison."
+            ),
+            parameters={"type": "object", "properties": {}},
+            run=lambda: sims.verify_shelf() + "\n\n" + datasets.verify_shelf(),
+        ),
+        Tool(
             name="build_sim",
             description=(
                 "Write a NEW simulation and save it to your growing sim library — for "

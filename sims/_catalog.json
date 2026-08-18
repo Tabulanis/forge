@@ -19,5 +19,33 @@
   "validated": true,
   "created": 1786863077.7756834,
   "updated": 1786863077.775684
+ },
+ "vtol_circular_wing": {
+  "description": "Physics check for VTOL aircraft with circular wing",
+  "why": "Need to understand if circular wing VTOL is physically possible and what constraints exist",
+  "validated": true,
+  "created": 1786868402.2530398,
+  "updated": 1786868516.226092
+ },
+ "circular_wing_aerodynamics": {
+  "description": "Aerodynamic analysis of circular wing configurations",
+  "why": "Need to understand lift/drag properties of non-conventional wing shapes",
+  "validated": true,
+  "created": 1786868690.8985577,
+  "updated": 1786868822.7622836
+ },
+ "circular_wing_structure": {
+  "description": "Structural load analysis for circular wing designs",
+  "why": "Need to know if circular wing can survive aerodynamic forces",
+  "validated": true,
+  "created": 1786869032.204709,
+  "updated": 1786869136.5565975
+ },
+ "vtol_transition_mechanics": {
+  "description": "Transition mechanics analysis for VTOL aircraft",
+  "why": "Need to understand if and how VTOL transition can work safely",
+  "validated": true,
+  "created": 1786869328.9737935,
+  "updated": 1786869328.973794
  }
 }
