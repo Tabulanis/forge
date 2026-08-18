@@ -553,6 +553,7 @@ class Agent:
         # a wobbly turn gets flagged at the moment of saving, because a wrong
         # sim/dataset/note in a forever-store poisons every future turn.
         self._turn_hiccups = []
+        self._call_counts = {}    # successful-call fingerprints -> times this turn
         turn_start = len(self.history) - 1   # index of this turn's user msg
 
         _mode_steps = get_mode(self.active_mode)["max_steps"]
@@ -1283,6 +1284,22 @@ class Agent:
             self._turn_hiccups.append(f"{call.name} failed")
         elif result.startswith("[stopped by user"):
             self._turn_hiccups.append(f"{call.name} abandoned mid-run")
+        else:
+            # The read-loop rut: memory trims erase a big result, the model
+            # re-reads it, the re-read triggers another trim — a spiral that
+            # burned 25 straight read_file calls (found live 2026-08-18).
+            # Repeating the SAME successful call is legal twice; the third
+            # time, the result itself says stop.
+            if not hasattr(self, "_call_counts"):
+                self._call_counts = {}
+            n = self._call_counts[fingerprint] = self._call_counts.get(fingerprint, 0) + 1
+            if n >= 3:
+                result += (f"\n\n[LOOP WARNING: this is the {n}th time this turn "
+                           "you've made this exact call — memory trimming keeps "
+                           "erasing the result and re-reading re-triggers the trim. "
+                           "STOP repeating it. Extract what you need from THIS "
+                           "result right now and act on it, or request a narrower "
+                           "slice (offset/limit, grep) instead.]")
         # The forever-store gate: saving into a persistent shelf right after a
         # hiccup is how confident garbage gets a ✓ and poisons the future.
         if call.name in ("build_sim", "build_dataset", "save_note") \
