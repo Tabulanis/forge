@@ -29,7 +29,7 @@ from typing import Callable
 
 import httpx
 
-from . import (browser, business, datasets, frameworks, identity, law, markets,
+from . import (browser, business, cad, datasets, frameworks, identity, law, markets,
                market_regime, crossmap, news, paper_market, scanner, sims, walkforward)
 from .codetools import syntax_check
 from .config import load_config
@@ -1175,6 +1175,45 @@ def build_tools(ws: Workspace, fenced: bool = False) -> list[Tool]:
                 "required": ["query"],
             },
             run=law.find_regulation,
+        ),
+        Tool(
+            name="design_part",
+            description="Design a 3D part in the Maker Studio (a tiny parametric "
+                        "CAD / solid modeler). You write the part as JSON - named "
+                        "params plus a feature tree of primitives (box, cylinder, "
+                        "sphere, cone) that get ADDED, CUT, or KEPT against each "
+                        "other via constructive solid geometry. Number fields can be "
+                        "params or expressions over them like \"w/2\". Saving "
+                        "returns a URL; screenshot that page and look_at_image to "
+                        "SEE your own design in 3D, then tweak params/features and "
+                        "resave. This is real modeling: box then cut a cylinder = a "
+                        "block with a hole. Example: {\"name\":\"bracket\","
+                        "\"params\":{\"w\":40,\"hole\":5},\"features\":["
+                        "{\"shape\":\"box\",\"w\":\"w\",\"h\":20,\"d\":8},"
+                        "{\"shape\":\"cylinder\",\"op\":\"cut\",\"r\":\"hole/2\","
+                        "\"h\":10}]}",
+            parameters={
+                "type": "object",
+                "properties": {"part": {"type": "object",
+                    "description": "The part: {name, params:{...}, features:[...]}"}},
+                "required": ["part"],
+            },
+            run=cad.design_part,
+        ),
+        Tool(
+            name="list_parts",
+            description="List the CAD parts saved in the Maker Studio.",
+            parameters={"type": "object", "properties": {}},
+            run=cad.list_parts,
+        ),
+        Tool(
+            name="get_part",
+            description="Fetch a saved CAD part's JSON so you can read or modify "
+                        "its feature tree, then resave with design_part.",
+            parameters={"type": "object",
+                        "properties": {"name": {"type": "string"}},
+                        "required": ["name"]},
+            run=cad.get_part,
         ),
         Tool(
             name="web_search",
