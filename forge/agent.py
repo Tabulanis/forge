@@ -546,6 +546,7 @@ class Agent:
         force_compacted = False
         superego_bounced = False
         grounding_nudged = False
+        _empty_retried = False
         _tidy_noted = False       # near-cap notes: once per turn, not per step
         _trim_noted = False
         # Hiccup ledger: everything that degraded THIS turn (failed tools,
@@ -700,6 +701,24 @@ class Agent:
                 yield Event(kind="text", text=reply.text, usage=reply.usage)
 
             if not reply.wants_tools:
+                if not (reply.text or "").strip():
+                    # An empty reply with no tool calls is a stall — and
+                    # appending it is POISON: the model pattern-matches its own
+                    # history, so one empty assistant turn breeds another
+                    # forever (found live 2026-08-18: a session fell into an
+                    # empty-reply attractor and every later turn died
+                    # instantly, including brand-new questions). Never let an
+                    # empty into history. Retry once; then fail loudly.
+                    if not _empty_retried:
+                        _empty_retried = True
+                        yield Event(kind="note",
+                                    text="The model came back empty — nudging it once.")
+                        continue
+                    yield Event(kind="error",
+                                text="The model returned an empty reply twice — "
+                                     "ending this turn cleanly. Rephrasing usually "
+                                     "fixes it; a fresh chat definitely does.")
+                    return
                 self.history.append({"role": "assistant", "content": reply.text or ""})
                 # The lie the system prompt forbids hardest: claiming work
                 # when no tool ever ran this message. One bounce back, so a
