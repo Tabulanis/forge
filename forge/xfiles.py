@@ -84,16 +84,35 @@ def _series(name: str) -> dict:
     return _fetch_fred(code) if src == "fred" else _fetch_kraken(code)
 
 
-def _aligned_returns(names, n=400):
-    """Daily log-returns for each name, aligned on common trading days."""
-    series = {nm: _series(nm) for nm in names}
-    common = set.intersection(*(set(s) for s in series.values())) if series else set()
+def _aligned_returns(names, n=400, required=2):
+    """Daily log-returns aligned on common trading days. The first `required`
+    names (the odd couple) define the window and MUST fetch; the rest (suspects)
+    are optional — one that fails to fetch or doesn't cover the window is
+    dropped, not fatal. Returns (dates, rets, dropped)."""
+    series, dropped = {}, []
+    for i, nm in enumerate(names):
+        try:
+            s = _series(nm)
+            if not s:
+                raise ValueError("no data")
+            series[nm] = s
+        except Exception:
+            if i < required:
+                raise ValueError(f"couldn't fetch '{nm}' — can't run without it")
+            dropped.append(nm)
+    base = [series[names[i]] for i in range(required)]
+    common = set.intersection(*(set(s) for s in base))
     dates = sorted(common)[-n:]
     if len(dates) < 30:
-        raise ValueError(f"only {len(dates)} common days across {names} — not enough overlap")
-    lv = {nm: np.array([series[nm][d] for d in dates]) for nm in names}
-    rets = {nm: np.diff(np.log(np.clip(lv[nm], 1e-9, None))) for nm in names}
-    return dates, rets
+        raise ValueError(f"only {len(dates)} common days for {names[:required]} — not enough overlap")
+    rets = {}
+    for nm, s in series.items():
+        if all(d in s for d in dates):
+            lv = np.array([s[d] for d in dates])
+            rets[nm] = np.diff(np.log(np.clip(lv, 1e-9, None)))
+        elif nm not in names[:required]:
+            dropped.append(nm)
+    return dates, rets, dropped
 
 
 def _corr(x, y):
@@ -120,13 +139,18 @@ def find_third_party(a: str, b: str, suspects=None, n: int = 400) -> str:
     suspects = [s.strip() for s in (suspects or DEFAULT_SUSPECTS) if _norm(s.strip()) not in (_norm(a), _norm(b))]
     names = [a, b] + suspects
     try:
-        dates, rets = _aligned_returns(names, n)
+        dates, rets, dropped = _aligned_returns(names, n)
     except Exception as e:
         return f"Couldn't assemble the data: {e}"
+    suspects = [z for z in suspects if z in rets]      # keep only those that aligned
     A, B = rets[a], rets[b]
     cut = int(len(A) * 0.6)
 
     base_all = _corr(A, B)
+    if abs(base_all) > 0.999:
+        return (f"'{a}' and '{b}' are effectively the SAME asset (correlation "
+                f"{base_all:+.2f}) — two names for one thing. Pick two genuinely "
+                "different markets to make an odd couple.")
     base_tr, base_te = _corr(A[:cut], B[:cut]), _corr(A[cut:], B[cut:])
     crit = 2.6 / np.sqrt(max(len(A) - cut, 2))     # ~99% critical |r| for the test window
     real = (abs(base_te) > max(0.12, crit) and abs(base_tr) > crit

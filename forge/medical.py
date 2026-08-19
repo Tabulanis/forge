@@ -41,7 +41,9 @@ def _get(url: str, params: dict, kind: str = "json"):
 def _strip(s: str) -> str:
     # Unescape FIRST, then remove tags: MedlinePlus double-escapes its markup
     # (&lt;span&gt;), so stripping before unescaping leaves the tags behind.
-    return re.sub(r"<[^>]+>", "", html.unescape(s or "")).strip()
+    # Only strip REAL html tags (start with a letter or /), so clinical text
+    # like "keep below (<70) and above (>200)" survives instead of being eaten.
+    return re.sub(r"</?[a-zA-Z][^<>]*>", "", html.unescape(s or "")).strip()
 
 
 # --------------------------------------------------------------------------
@@ -119,6 +121,10 @@ def find_condition(term: str) -> str:
     term = (term or "").strip()
     if not term:
         return "CHECK FAILED — nothing to look up. " + DISCLAIMER
+    meaningful = re.sub(r"[^a-zA-Z]+", " ", term).strip()
+    if len(meaningful) < 3 or not any(len(w) >= 3 for w in meaningful.split()):
+        return ("NOT FOUND — that doesn't look like a health term to describe. "
+                "Say the problem in plain words (e.g. 'high blood sugar'). " + DISCLAIMER)
     try:
         icd = _get(f"{CT}/icd10cm/v3/search",
                    {"sf": "code,name", "terms": term, "maxList": 6})

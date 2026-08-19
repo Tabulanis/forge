@@ -127,7 +127,19 @@ def _is_name_match(query: str, rec: dict) -> bool:
     """
     q = _norm(query)
     name = _norm(rec.get("caseName") or "")
-    return bool(q) and (q in name or name in q)
+    if not q or not name:
+        return False
+    # A bare fragment ("Smith", "In re", "United States") is a substring of
+    # thousands of real case names but is NOT itself a case — accepting it
+    # defeats the whole anti-hallucination guard. Require a real case-shaped
+    # query: it carries a party separator ("v"), OR it covers most of the
+    # matched name, OR it's an exact match.
+    if q == name:
+        return True
+    has_vs = "v" in re.split(r"[^a-z]+", q.lower())  # a 'versus' token
+    substantial = len(q) >= 8 and (q in name) and len(q) >= 0.6 * len(name)
+    vs_match = has_vs and len(q) >= 8 and (q in name or name in q)
+    return substantial or vs_match
 
 
 def _first_exact(query: str, results: list) -> dict | None:
@@ -344,6 +356,10 @@ def find_regulation(query, limit=5) -> str:
       relationship. For anything real, get a licensed professional in that
       jurisdiction.
     """
+    if not query or not str(query).strip():
+        return ("No regulation query given — nothing was searched. Name a topic "
+                "or a CFR cite (e.g. 'insider trading' or '17 CFR 240').")
+    query = str(query).strip()
     try:
         limit = int(limit)
     except (TypeError, ValueError):

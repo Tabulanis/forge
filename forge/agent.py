@@ -561,7 +561,8 @@ class Agent:
         by token as it's written (the chat UI uses this). Only the reply is
         streamed; the superego and summarizer stay one-shot.
         """
-        self.history.append({"role": "user", "content": user_message})
+        _turn_user_msg = {"role": "user", "content": user_message}
+        self.history.append(_turn_user_msg)
 
         # Resolve the style for this turn. "auto" reads the message's intent and
         # picks — which also means asking in chat ("be more careful", "get
@@ -686,6 +687,12 @@ class Agent:
                 yield Event(kind="note",
                             text="Tidying up my memory to make room — one moment…")
             note = self._maybe_compact()
+            if note:   # compaction shrank history — re-anchor turn_start to the
+                # current turn's user message so the superego/grounding digest
+                # still sees THIS turn's request and evidence (found live: a
+                # mid-turn compaction handed the sealed reviewer blank evidence).
+                turn_start = next((i for i, m in enumerate(self.history)
+                                   if m is _turn_user_msg), turn_start)
             if note:
                 if note.startswith("One long task"):
                     if not _trim_noted:
@@ -730,6 +737,9 @@ class Agent:
                     if not force_compacted:
                         force_compacted = True
                         note = self._maybe_compact(force=True)
+                        if note:
+                            turn_start = next((i for i, m in enumerate(self.history)
+                                               if m is _turn_user_msg), turn_start)
                         if note:
                             yield Event(kind="note", text=note + " (emergency)")
                             continue
@@ -1020,8 +1030,12 @@ class Agent:
             # The reason is everything AFTER the bounce keyword. (The old
             # split-on-dash extraction ate everything before any hyphen the
             # reason happened to contain, yielding garbage like "sentence".)
-            idx = low.find("bounce") + len("bounce")
-            reason = text[idx:].lstrip(" \t:—–-.").strip()[:200]
+            # Anchor to the VERDICT line so prose containing the word "bounce"
+            # before it cannot hijack the split (and leak the internal token).
+            vpos = low.rfind("verdict:")
+            tail = text[vpos:] if vpos >= 0 else text
+            bidx = tail.lower().find("bounce") + len("bounce")
+            reason = tail[bidx:].lstrip(" \t:—–-.").strip()[:200]
             # A bounce is only actionable with a real, readable reason. A
             # fragment or nothing means the judge glitched — fail OPEN, same
             # as an unreachable judge: work passes, gibberish never bounces.

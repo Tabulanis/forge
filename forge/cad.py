@@ -48,10 +48,16 @@ def _validate(part: dict) -> str | None:
     for i, f in enumerate(feats):
         if not isinstance(f, dict):
             return f"feature {i} must be an object"
-        if f.get("shape") not in SHAPES:
+        if not isinstance(f.get("shape"), str) or f.get("shape") not in SHAPES:
             return f"feature {i}: shape must be one of {sorted(SHAPES)}, got {f.get('shape')!r}"
-        if f.get("op") not in OPS:
+        if not (f.get("op") is None or (isinstance(f.get("op"), str) and f.get("op") in OPS)):
             return f"feature {i}: op must be add/cut/keep, got {f.get('op')!r}"
+        for key, val in f.items():
+            if isinstance(val, (int, float)) and abs(val) > 1e7:
+                return f"feature {i}: {key}={val} is absurdly large — parts are in mm, keep it under ~1e7"
+        seg = f.get("seg")
+        if isinstance(seg, (int, float)) and seg > 512:
+            return f"feature {i}: seg={seg} too high (max 512) — would blow up the mesh"
     if feats[0].get("op") in ("cut", "keep"):
         return "feature 0 can't be a cut/keep — the first feature is the base to build on"
     return None
