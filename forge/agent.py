@@ -788,8 +788,16 @@ class Agent:
                 # The lie the system prompt forbids hardest: claiming work
                 # when no tool ever ran this message. One bounce back, so a
                 # model describing genuinely old work can just say so.
-                if (not self._tools_ran and not nudged
-                        and _CLAIMS_ACTION.search(reply.text or "")):
+                # Only a work CLAIM matters — one that names a file or a
+                # concrete work object. Figurative chat ("I made a mistake",
+                # "I ran this morning") mentions no artifact and is left alone.
+                _txt = reply.text or ""
+                _claims_work = (_CLAIMS_ACTION.search(_txt) and
+                                (_FILE_MENTION.search(_txt) or re.search(
+                                    r"\b(the |a |your )?(command|script|test|tests|"
+                                    r"directory|folder|function|module|class|the code|"
+                                    r"the file|the files)\b", _txt, re.I)))
+                if (not self._tools_ran and not nudged and _claims_work):
                     nudged = True
                     self.history.append({
                         "role": "user", "synthetic": True,
