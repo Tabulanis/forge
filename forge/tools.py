@@ -29,7 +29,7 @@ from typing import Callable
 
 import httpx
 
-from . import (audio_nerve, browser, business, cad, datasets, medical, frameworks, identity, law, markets,
+from . import (audio_nerve, bioacoustics, browser, business, cad, datasets, medical, frameworks, identity, law, markets,
                market_regime, crossmap, news, paper_market, scanner, sims, walkforward)
 from .codetools import syntax_check
 from .config import load_config
@@ -1304,6 +1304,25 @@ def build_tools(ws: Workspace, fenced: bool = False) -> list[Tool]:
                                        "top": {"type": "integer"}},
                         "required": ["source"]},
             run=audio_nerve.match_sound,
+        ),
+        Tool(
+            name="study_calls",
+            description="Look for STRUCTURE in a recording of animal (or any) "
+                        "vocalizations — the honest groundwork toward decoding, NOT "
+                        "decoding itself. It segments the recording into individual "
+                        "calls, clusters them into a repertoire of recurring call-"
+                        "types, and TESTS whether the sequence of calls is non-random "
+                        "(a testable fingerprint of proto-syntax) against shuffled "
+                        "nulls so a false pattern can't slip through. Renders a picture "
+                        "(call timeline + repertoire + transition grammar) you "
+                        "look_at_image. HARD RULE: this finds whether there's a SYSTEM, "
+                        "never what a call MEANS — nobody can translate animal language "
+                        "yet, and you must not pretend to. source = audio file path.",
+            parameters={"type": "object",
+                        "properties": {"source": {"type": "string",
+                            "description": "path to an audio recording of calls"}},
+                        "required": ["source"]},
+            run=bioacoustics.study_calls,
         ),
         Tool(
             name="web_search",
