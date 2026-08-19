@@ -29,7 +29,7 @@ from typing import Callable
 
 import httpx
 
-from . import (audio_nerve, bioacoustics, browser, business, cad, datasets, medical, xfiles, frameworks, identity, law, markets,
+from . import (audio_nerve, bioacoustics, browser, business, cad, datasets, doolittle, medical, xfiles, frameworks, identity, law, markets,
                market_regime, crossmap, news, paper_market, scanner, sims, walkforward)
 from .codetools import syntax_check
 from .config import load_config
@@ -1341,6 +1341,32 @@ def build_tools(ws: Workspace, fenced: bool = False) -> list[Tool]:
                         "properties": {"source": {"type": "string"}},
                         "required": ["source"]},
             run=bioacoustics.language_scorecard,
+        ),
+        Tool(
+            name="deduce_meaning",
+            description="The DEDUCTION PAD — corner an animal call's meaning by "
+                        "ELIMINATION, Clue-style, never by claiming to read its mind. "
+                        "You feed it a log of OBSERVATIONS: each time a call fired, what "
+                        "was true in the world (threat present? food? did it flee after? "
+                        "juvenile calling?). It holds a library of a dozen candidate "
+                        "meanings (alarm/food/contact/greeting/mating/play/territory…), "
+                        "each tied to the context cues it predicts, and RULES OUT every "
+                        "meaning whose context the call fires without — leaving the "
+                        "survivors standing. Renders a Clue sheet (calls × meanings, "
+                        "green standing / red ruled out) to look_at_image. HARD LIMIT: it "
+                        "ELIMINATES, it does not translate — a surviving meaning is a lead "
+                        "to field-test, never a claim about what the animal said; on "
+                        "noisy/thin logs it honestly reports INCONCLUSIVE. observations = "
+                        "list of {\"call\": name, \"cues\": {\"threat\": true, …}}.",
+            parameters={"type": "object",
+                        "properties": {
+                            "observations": {"type": "array",
+                                "description": "list of {call, cues:{cue:bool}} sightings",
+                                "items": {"type": "object"}},
+                            "title": {"type": "string",
+                                "description": "a label for this case/pad"}},
+                        "required": ["observations"]},
+            run=doolittle.deduce_meaning,
         ),
         Tool(
             name="find_third_party",
