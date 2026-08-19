@@ -212,12 +212,33 @@ def _signal_score(call, by_call, all_obs, cues, rng, n_null=200):
 SIGNAL_BAR = 0.90    # must beat 90% of shuffles to count as a confirmed signal
 
 
+def _clean_obs(observations):
+    """Merge hands this model-written JSON, so treat every input as hostile:
+    keep only dict entries, coerce an unhashable call to a string, and force a
+    non-dict cues into an empty dict. Anything unparseable is dropped, not fatal."""
+    if not isinstance(observations, list):
+        return []
+    clean = []
+    for o in observations:
+        if not isinstance(o, dict):
+            continue
+        call = o.get("call")
+        if isinstance(call, (dict, list, set)):
+            call = str(call)
+        cues = o.get("cues")
+        if not isinstance(cues, dict):
+            cues = {}
+        clean.append({"call": call, "cues": cues})
+    return clean
+
+
 def deduce(observations, labels=None, signal_scores=None):
     """Run the pad. observations = list of {"call": <id/label>, "cues": {cue: bool}}.
     Returns per-call: ruled_out, standing (with support + lift), % of deck
     eliminated, and a signal_score (is it even communication?). signal_scores =
     optional {call: 0..1} to override the log-based test with a real study_calls
     result. Empty structure if there's nothing to work with."""
+    observations = _clean_obs(observations)
     if not observations:
         return {"calls": [], "note": "no observations — log some crime scenes first."}
     by_call = {}
@@ -230,7 +251,7 @@ def deduce(observations, labels=None, signal_scores=None):
     multi = len(by_call) >= 2
     cues_seen = sorted({k for o in observations for k in (o.get("cues") or {})})
     rng = np.random.RandomState(0)   # fixed seed -> the pad is reproducible
-    ext_signal = signal_scores or {}
+    ext_signal = signal_scores if isinstance(signal_scores, dict) else {}
     pad = {"calls": []}
     for call, obs in sorted(by_call.items(), key=lambda x: str(x[0])):
         ruled_out, standing = [], []
@@ -260,6 +281,11 @@ def deduce(observations, labels=None, signal_scores=None):
         # the prior question first: is this call even a signal? A real
         # study_calls result (ext_signal) wins; else test the log itself.
         sig = ext_signal.get(call)
+        if sig is not None:
+            try:
+                sig = min(1.0, max(0.0, float(sig)))   # clamp a hand-fed override
+            except (TypeError, ValueError):
+                sig = None
         if sig is None:
             sig = _signal_score(call, by_call, observations, cues_seen, rng)
         # cornered only if the lead is strong AND clearly ahead — else the cues
@@ -342,6 +368,8 @@ def deduce_meaning(observations, title: str = "case", signal_scores=None) -> str
             observations = json.loads(observations)
         except Exception as e:
             return f"observations wasn't valid JSON: {e}"
+    observations = _clean_obs(observations)   # count the header off the CLEAN log
+    title = str(title)[:80]                    # keep the header/filename sane
     pad = deduce(observations, signal_scores=signal_scores)
     if not pad["calls"]:
         return pad.get("note", "nothing to deduce.")
