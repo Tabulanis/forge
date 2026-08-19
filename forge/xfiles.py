@@ -108,11 +108,21 @@ def _aligned_returns(names, n=400, required=2):
         raise ValueError(f"only {len(dates)} common days for {names[:required]} — not enough overlap")
     rets = {}
     for nm, s in series.items():
-        if all(d in s for d in dates):
-            lv = np.array([s[d] for d in dates])
-            rets[nm] = np.diff(np.log(np.clip(lv, 1e-9, None)))
-        elif nm not in names[:required]:
+        is_pair = nm in names[:required]
+        have = [d for d in dates if d in s]
+        # a suspect used to be dropped WHOLESALE for one missing holiday (VIX
+        # covered 399/400 and got tossed). Keep any that covers ~90%+ of the
+        # window and forward-fill the handful of gaps; only truly sparse series
+        # (e.g. weekly M2 at ~17%) are too thin to trust and get dropped.
+        if not is_pair and len(have) < max(int(0.9 * len(dates)), 100):
             dropped.append(nm)
+            continue
+        lv, last = [], None
+        for d in dates:
+            if d in s:
+                last = s[d]
+            lv.append(last if last is not None else s[have[0]])
+        rets[nm] = np.diff(np.log(np.clip(np.array(lv, dtype=float), 1e-9, None)))
     return dates, rets, dropped
 
 
