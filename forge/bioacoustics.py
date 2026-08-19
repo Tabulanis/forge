@@ -104,20 +104,46 @@ def _repertoire(vecs, max_types=12):
         return np.ones(len(vecs), dtype=int), 1
     X = np.array(vecs)
     Z = linkage(X, method="ward")
-    # auto cut: largest gap in merge distances (a simple, honest heuristic),
-    # bounded to a sane number of types
-    dists = Z[:, 2]
-    if len(dists) >= 2:
-        gaps = np.diff(dists)
-        cut_at = len(dists) - 1 - int(np.argmax(gaps[-max_types:][::-1]))
-        thresh = (dists[cut_at] + dists[min(cut_at + 1, len(dists) - 1)]) / 2
-        labels = fcluster(Z, t=thresh, criterion="distance")
-    else:
-        labels = fcluster(Z, t=2, criterion="maxclust")
-    # cap the number of types
-    if labels.max() > max_types:
-        labels = fcluster(Z, t=max_types, criterion="maxclust")
-    return labels, int(labels.max())
+    # Pick the number of call-types by SILHOUETTE — try each k and keep the
+    # cleanest split. The old largest-merge-gap heuristic under-counted badly
+    # (it merged two strictly-alternating callers into one type, erasing a
+    # perfect duet), so choose k by how well-separated the clusters actually
+    # are, not by where the dendrogram happens to jump.
+    from sklearn.metrics import silhouette_score
+    # Near-identical calls (a monotone chirp repeated) must stay ONE type —
+    # otherwise segmentation jitter invents spurious clusters and fake grammar.
+    X0 = np.array(vecs)
+    if float(np.mean(np.var(X0, axis=0))) < 1e-4:
+        return np.ones(len(vecs), dtype=int), 1
+    kmax = min(max_types, len(vecs) // 3)
+    best_k, best_s, best_lab = 1, -1.0, np.ones(len(vecs), dtype=int)
+    for k in range(2, max(3, kmax + 1)):
+        lab = fcluster(Z, t=k, criterion="maxclust")
+        if lab.max() < 2:
+            continue
+        try:
+            s = silhouette_score(X, lab)
+        except Exception:
+            continue
+        if s > best_s:
+            best_k, best_s, best_lab = int(lab.max()), s, lab
+    # only accept a split if it's GENUINELY clean (silhouette well clear of a
+    # noise split); else it's one type. 0.4 keeps real distinct calls apart
+    # while refusing to shatter one repeated call into fake types.
+    if best_s < 0.4:
+        return np.ones(len(vecs), dtype=int), 1
+    # RECURRENCE guard: a real call-type reappears INTERLEAVED through time
+    # (A-B-A-B), while a drift/noise artifact is one clumped block (AAAA-BBBB).
+    # Count runs of same label; if far fewer than chance expects, the clusters
+    # are temporal blocks, not recurring types — reject the split.
+    seq = list(best_lab)
+    runs = 1 + sum(1 for i in range(1, len(seq)) if seq[i] != seq[i - 1])
+    _, counts = np.unique(best_lab, return_counts=True)
+    p2 = float(((counts / counts.sum()) ** 2).sum())
+    exp_runs = 1 + (len(seq) - 1) * (1 - p2)          # expected runs if interleaved
+    if runs < 0.5 * exp_runs:
+        return np.ones(len(vecs), dtype=int), 1
+    return best_lab, best_k
 
 
 # ---- sequence structure: is the order non-random? ----------------------
