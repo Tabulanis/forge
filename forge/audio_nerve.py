@@ -104,8 +104,11 @@ def _load(source: str, max_sec: float = 8.0):
          "-ar", str(SR), "-t", str(max_sec), "-"],
         capture_output=True).stdout
     a = np.frombuffer(out, dtype="<f4").copy()
+    if a.size == 0:
+        return None, f"couldn't decode any audio from {p.name} (unsupported/corrupt?)"
     if a.size < SR // 10:
-        return None, f"couldn't decode audio from {p.name}"
+        return None, (f"{p.name} is too short to analyze "
+                      f"({a.size / SR:.2f}s) — need about a tenth of a second or more")
     return a, p.name
 
 
