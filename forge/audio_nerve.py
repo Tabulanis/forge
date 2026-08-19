@@ -52,6 +52,7 @@ def _note_hz(name: str, default_oct: int = 4) -> float:
         return 261.63
     pc = _NOTES.get(m.group(1).upper(), 0)
     octv = int(m.group(2)) if m.group(2) else default_oct
+    octv = max(-1, min(12, octv))          # audible range; avoids 2**huge overflow
     midi = 12 * (octv + 1) + pc
     return 440.0 * 2 ** ((midi - 69) / 12)
 
@@ -69,7 +70,12 @@ def _synth(spec: str, dur: float = 2.0):
         sig = _tone(_note_hz(parts[1] if len(parts) > 1 else "A4"), t)
         label = f"note {parts[1] if len(parts) > 1 else 'A4'}"
     elif kind == "harmonics":
-        f0 = float(parts[1]) if len(parts) > 1 else 220.0
+        try:
+            f0 = float(parts[1]) if len(parts) > 1 else 220.0
+        except (ValueError, IndexError):
+            f0 = 220.0
+        if not np.isfinite(f0) or f0 <= 0:
+            f0 = 220.0
         sig = _tone(f0, t, partials=10)
         label = f"harmonic series on {f0:g} Hz"
     elif kind == "interval":
@@ -88,13 +94,15 @@ def _synth(spec: str, dur: float = 2.0):
         sig = _tone(_note_hz("A4"), t)
         label = "note A4"
     env = np.minimum(1, np.minimum(t * 20, (dur - t) * 8))     # gentle fade
-    return (sig * env).astype(np.float32), label
+    out = np.nan_to_num(sig * env, nan=0.0, posinf=0.0, neginf=0.0)
+    return out.astype(np.float32), label
 
 
 def _load(source: str, max_sec: float = 8.0):
     """Return (samples float32 mono @ SR, human label). File path -> ffmpeg
     decode; 'kind:...' -> synth."""
-    if ":" in source and not Path(source).exists():
+    _kind = source.split(":", 1)[0].lower()
+    if _kind in ("note", "harmonics", "interval", "chord") and not Path(source).exists():
         return _synth(source)
     p = Path(source)
     if not p.exists():
@@ -104,6 +112,7 @@ def _load(source: str, max_sec: float = 8.0):
          "-ar", str(SR), "-t", str(max_sec), "-"],
         capture_output=True).stdout
     a = np.frombuffer(out, dtype="<f4").copy()
+    a = np.nan_to_num(a, nan=0.0, posinf=0.0, neginf=0.0)   # a NaN/inf sample must not poison analysis
     if a.size == 0:
         return None, f"couldn't decode any audio from {p.name} (unsupported/corrupt?)"
     if a.size < SR // 10:
@@ -119,6 +128,7 @@ _CMAP = np.array([(0, 0, 4), (40, 11, 84), (101, 21, 110), (159, 42, 99),
 
 
 def _color(x):
+    x = np.nan_to_num(np.asarray(x, dtype=float), nan=0.0, posinf=1.0, neginf=0.0)
     x = np.clip(x, 0, 1) * (len(_CMAP) - 1)
     i = np.floor(x).astype(int); f = (x - i)[..., None]
     i2 = np.minimum(i + 1, len(_CMAP) - 1)
@@ -257,7 +267,10 @@ def match_sound(source: str, top: int = 5) -> str:
     if sig is None:
         return f"Couldn't hear that: {label}"
     q = embed(sig / (np.abs(sig).max() or 1))
-    rows = _load_store()
+    if not np.isfinite(q).all():
+        return "Couldn't fingerprint that sound — its features weren't finite."
+    rows = [r for r in _load_store()
+            if r["v"].shape == q.shape and np.isfinite(r["v"]).all()]
     if not rows:
         return ("No sounds remembered yet — use see_sound on a few first "
                 "(each one it shows also gets saved as a vector).")
