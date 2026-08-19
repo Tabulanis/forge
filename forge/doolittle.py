@@ -167,10 +167,57 @@ def _base_rate(all_obs, meaning):
                           for o in all_obs]))
 
 
-def deduce(observations, labels=None):
+# ---- the prior question: is this call even a SIGNAL? --------------------
+# Before you ask what a call MEANS you have to earn the assumption that it's
+# communication at all, not a meaningless byproduct (a sneeze). The honest test
+# from a context log: does knowing THIS call fired reduce your uncertainty about
+# the world? A real signal reliably marks a specific context (low uncertainty);
+# noise leaves the context a coin-flip. That's mutual information — and we hold
+# it to a shuffle null, so a lucky-looking fit can't pass for a signal. The
+# score becomes the CEILING on how hard the pad may chisel: no signal, no
+# meaning. (A real study_calls result can override this from the audio itself.)
+def _consistency(obs_for_call, cues, thresh=0.15):
+    """How REPEATABLE is the context this call fires in, over the cues it
+    actually engages (present in >=thresh of its sightings)? 1.0 = fires in a
+    fixed context every time (deterministic); 0 = every cue a coin-flip. Only
+    counts cues the call uses, so it's never credited for 'reliably lacking'
+    something it simply never logged (missing != confirmed-absent)."""
+    if not obs_for_call:
+        return 0.0
+    rates = {c: float(np.mean([1.0 if o.get("cues", {}).get(c) else 0.0 for o in obs_for_call]))
+             for c in cues}
+    active = [c for c in cues if rates[c] >= thresh]
+    if not active:
+        return 0.0
+    return float(np.mean([abs(2 * rates[c] - 1) for c in active]))
+
+
+def _signal_score(call, by_call, all_obs, cues, rng, n_null=200):
+    """0..1: fraction of shuffle-nulls this call's context-consistency beats. A
+    real signal fires in a repeatable context (beats a random draw of the same
+    size from the pooled observations); noise doesn't. None = uncomputable (only
+    one call — no background to tell signal from noise off a single log)."""
+    if len(by_call) < 2 or len(all_obs) < 6:
+        return None
+    observed = _consistency(by_call[call], cues)
+    n, L = len(by_call[call]), len(all_obs)
+    beat = 0
+    for _ in range(n_null):
+        idx = rng.choice(L, size=n, replace=False)
+        if _consistency([all_obs[i] for i in idx], cues) < observed:
+            beat += 1
+    return round(beat / float(n_null), 2)
+
+
+SIGNAL_BAR = 0.90    # must beat 90% of shuffles to count as a confirmed signal
+
+
+def deduce(observations, labels=None, signal_scores=None):
     """Run the pad. observations = list of {"call": <id/label>, "cues": {cue: bool}}.
     Returns per-call: ruled_out, standing (with support + lift), % of deck
-    eliminated. Empty structure if there's nothing to work with."""
+    eliminated, and a signal_score (is it even communication?). signal_scores =
+    optional {call: 0..1} to override the log-based test with a real study_calls
+    result. Empty structure if there's nothing to work with."""
     if not observations:
         return {"calls": [], "note": "no observations — log some crime scenes first."}
     by_call = {}
@@ -181,6 +228,9 @@ def deduce(observations, labels=None):
     # contrast population, so specificity is uncomputable — fall back to support
     # + the strict conclusiveness gate instead of wiping the whole board.
     multi = len(by_call) >= 2
+    cues_seen = sorted({k for o in observations for k in (o.get("cues") or {})})
+    rng = np.random.RandomState(0)   # fixed seed -> the pad is reproducible
+    ext_signal = signal_scores or {}
     pad = {"calls": []}
     for call, obs in sorted(by_call.items(), key=lambda x: str(x[0])):
         ruled_out, standing = [], []
@@ -207,11 +257,24 @@ def deduce(observations, labels=None):
         elim_pct = round(100 * len(ruled_out) / len(MEANINGS))
         top_sup = standing[0]["support"] if standing else 0.0
         runner = standing[1]["support"] if len(standing) > 1 else 0.0
+        # the prior question first: is this call even a signal? A real
+        # study_calls result (ext_signal) wins; else test the log itself.
+        sig = ext_signal.get(call)
+        if sig is None:
+            sig = _signal_score(call, by_call, observations, cues_seen, rng)
         # cornered only if the lead is strong AND clearly ahead — else the cues
         # just don't discriminate (honest 'inconclusive', not a lucky pin)
         conclusive = bool(standing) and top_sup >= STRONG and (top_sup - runner) >= 0.12
+        # ...and NO meaning may collapse unless the call clears the signal bar.
+        # If signalhood is uncomputable (single call, no background) the lead is
+        # allowed but flagged provisional; if it's computed and weak, the pad
+        # stays a blob no matter how tidy the cues looked — no signal, no meaning.
+        signal_ok = (sig is None) or (sig >= SIGNAL_BAR)
+        provisional = conclusive and sig is None
+        conclusive = conclusive and signal_ok
         pad["calls"].append({"call": call, "n_obs": len(obs),
                              "eliminated_pct": elim_pct, "conclusive": conclusive,
+                             "provisional": provisional, "signal_score": sig,
                              "ruled_out": ruled_out, "standing": standing})
     return pad
 
@@ -256,7 +319,7 @@ def _render(pad, title):
     return out
 
 
-def deduce_meaning(observations, title: str = "case") -> str:
+def deduce_meaning(observations, title: str = "case", signal_scores=None) -> str:
     """Play Clue with animal calls: given a log of OBSERVATIONS (each = a call
     plus the context cues true when it fired), rule out the meanings it CAN'T
     carry and report what's left standing. `observations` is a list of
@@ -266,25 +329,37 @@ def deduce_meaning(observations, title: str = "case") -> str:
     novel_object, then_flee_or_freeze, food, resource_rich, then_approach,
     then_group_move, conspecific_near, conspecific_far, then_regroup, movement,
     calm, breeding, opposite_sex_near, intruder, boundary, isolation_or_injury,
-    conflict, competitor, juvenile, parent_near, repeated_bout. Renders the pad.
-    It starts as a BLOB of candidate PHRASES and chisels down by elimination.
-    NEVER claims a call's meaning — it
-    corners it by elimination; a surviving lead is for field-testing, not a
-    translation."""
+    conflict, competitor, juvenile, parent_near, repeated_bout. It first asks
+    the PRIOR question — is this call even a signal, or noise? (mutual info vs a
+    shuffle null); a call that doesn't clear the bar stays a blob no matter how
+    tidy its cues. Optional signal_scores = {call: 0..1} to feed a real
+    study_calls result in as that answer. Renders the pad. Starts as a BLOB of
+    candidate PHRASES and chisels down by elimination. NEVER claims a call's
+    meaning — a surviving lead is for field-testing, not a translation."""
     if isinstance(observations, str):
         import json
         try:
             observations = json.loads(observations)
         except Exception as e:
             return f"observations wasn't valid JSON: {e}"
-    pad = deduce(observations)
+    pad = deduce(observations, signal_scores=signal_scores)
     if not pad["calls"]:
         return pad.get("note", "nothing to deduce.")
     out = _render(pad, title)
     lines = [f"THE DEDUCTION PAD — {title} ({len(observations)} observations):"]
     for c in pad["calls"]:
+        sig = c.get("signal_score")
+        if sig is None:
+            sigline = "signal check: uncomputable (only one call — no background to contrast; " \
+                      "lead below is PROVISIONAL until you log other calls or a study_calls score)"
+        elif sig >= SIGNAL_BAR:
+            sigline = f"signal check: {sig} — reliably carries information; reads as a real signal ✓"
+        else:
+            sigline = f"signal check: {sig} — barely departs from noise; can't confirm it's even " \
+                      "communication, so meaning stays a blob by rule"
         lines.append(f"\n● call '{c['call']}' ({c['n_obs']} sightings) — "
                      f"{c['eliminated_pct']}% of the meaning-deck ruled out")
+        lines.append(f"    {sigline}")
         if c["standing"]:
             lead = c["standing"][0]
             # the BLOB shape first: which angles survived, grouped by lens, so
@@ -298,9 +373,23 @@ def deduce_meaning(observations, title: str = "case") -> str:
                 tag = "".join(" ⚡" if g["kind"] == "wild" else "" for g in group[:1])
                 lines.append(f"      • {lens}{tag}: " + "; ".join(
                     f"{g['label']} ({g['support']})" for g in group[:3]))
+            # would this have collapsed on strength+separation, only for the
+            # signal gate to hold it back? (strong lead, clearly ahead, weak signal)
+            _sep = lead["support"] - (c["standing"][1]["support"] if len(c["standing"]) > 1 else 0.0)
+            gated = (c.get("signal_score") is not None
+                     and c["signal_score"] < SIGNAL_BAR
+                     and lead["support"] >= STRONG and _sep >= 0.12)
             if c.get("conclusive"):
-                lines.append(f"    → CHISELED DOWN to: {lead['label']} — strong and clearly "
-                             "ahead of the rest. A lead worth field-testing.")
+                lines.append(f"    → CHISELED DOWN to: {lead['label']} — strong, clearly ahead, "
+                             "AND the call clears the signal bar. A lead worth field-testing.")
+            elif c.get("provisional"):
+                lines.append(f"    → PROVISIONAL lead: {lead['label']} — strong and clearly ahead, "
+                             "but signalhood is unconfirmed (one call, no background). Treat as a "
+                             "hunch, not a finding, until you can contrast it against other calls.")
+            elif gated:
+                lines.append(f"    → HELD as a blob: {lead['label']} leads the cues, but the call "
+                             "didn't clear the signal bar — no signal, no meaning. Confirm it's "
+                             "communication first (more calls to contrast, or a study_calls score).")
             else:
                 lines.append("    → STILL A BLOB — nothing is strong-and-separated enough to "
                              "collapse to one meaning yet. The survivors above are the shape so "
