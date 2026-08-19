@@ -1325,6 +1325,24 @@ def build_tools(ws: Workspace, fenced: bool = False) -> list[Tool]:
             run=bioacoustics.study_calls,
         ),
         Tool(
+            name="language_scorecard",
+            description="How LANGUAGE-LIKE is a recording's animal calls? Segments and "
+                        "clusters them, then scores the call SEQUENCE on the universal "
+                        "properties of human language — Zipf's law (word-frequency "
+                        "shape), grammar depth (entropy that drops as context grows), "
+                        "combinatoriality (reusing specific call-combinations beyond "
+                        "chance), and Menzerath's law — against two poles: RANDOM noise "
+                        "and real human language. Says where the animal falls between "
+                        "them, and renders a scorecard to look_at_image. HARD LIMIT: "
+                        "measures statistical resemblance, NEVER meaning — language-like "
+                        "structure is not language, and no call can be translated. "
+                        "source = audio file path.",
+            parameters={"type": "object",
+                        "properties": {"source": {"type": "string"}},
+                        "required": ["source"]},
+            run=bioacoustics.language_scorecard,
+        ),
+        Tool(
             name="find_third_party",
             description="The X-Files hunt: given an odd couple of markets that move "
                         "together (e.g. ETH and SPX), find WHO DRIVES BOTH. Pulls "
