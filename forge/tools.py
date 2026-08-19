@@ -1291,6 +1291,21 @@ def build_tools(ws: Workspace, fenced: bool = False) -> list[Tool]:
             run=audio_nerve.see_sound,
         ),
         Tool(
+            name="match_sound",
+            description="Recall the remembered sounds most like a given one — your "
+                        "ear-memory searched by similarity. Every sound see_sound "
+                        "shows is saved as a vector (pitch + timbre + spectral "
+                        "character); this embeds `source` (audio file path OR synth "
+                        "spec like 'chord:major:C') and returns the nearest saved "
+                        "sounds by cosine similarity. Use it to compare sounds, find "
+                        "what a sound resembles, or notice patterns across sounds.",
+            parameters={"type": "object",
+                        "properties": {"source": {"type": "string"},
+                                       "top": {"type": "integer"}},
+                        "required": ["source"]},
+            run=audio_nerve.match_sound,
+        ),
+        Tool(
             name="web_search",
             description="Search the web (current, live results — use this for anything "
                         "you don't know, anything recent, or to check a fact). Returns "

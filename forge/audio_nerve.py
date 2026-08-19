@@ -15,6 +15,7 @@ numpy + scipy + PIL only. No matplotlib, no librosa.
 """
 from __future__ import annotations
 
+import json
 import re
 import subprocess
 import time
@@ -22,7 +23,10 @@ from pathlib import Path
 
 import numpy as np
 from PIL import Image, ImageDraw
+from scipy.fft import dct
 from scipy.signal import stft
+
+VEC_STORE = Path.home() / "forge" / "datasets" / "audio-nerve" / "vectors.jsonl"
 
 SR = 22050
 RENDERS = Path.home() / "forge" / "datasets" / "audio-nerve"
@@ -179,6 +183,95 @@ def _chroma_vector(sig):
     return chroma / (chroma.max() or 1)
 
 
+# ---- the audio embedding: a sound as a vector ----------------------------
+def _mel_fb(n_filts, nfft, fmin=40, fmax=None):
+    fmax = fmax or SR / 2
+    hz2mel = lambda h: 2595 * np.log10(1 + h / 700)
+    mel2hz = lambda m: 700 * (10 ** (m / 2595) - 1)
+    pts = mel2hz(np.linspace(hz2mel(fmin), hz2mel(fmax), n_filts + 2))
+    bins = np.floor((nfft + 1) * pts / SR).astype(int)
+    fb = np.zeros((n_filts, nfft // 2 + 1))
+    for i in range(1, n_filts + 1):
+        l, c, r = bins[i - 1], bins[i], bins[i + 1]
+        for k in range(l, c):
+            fb[i - 1, k] = (k - l) / (c - l or 1)
+        for k in range(c, r):
+            fb[i - 1, k] = (r - k) / (r - c or 1)
+    return fb
+
+
+def embed(sig) -> np.ndarray:
+    """A sound → one compact, L2-normalized feature vector: pitch content
+    (chroma, 12) + timbre (MFCC-like, 13) + spectral character (6). Two sounds
+    that feel alike sit close in this space, so she can compare and recall
+    sounds by similarity — the way her memory recalls meaning."""
+    chroma = _chroma_vector(sig)                          # 12: what notes
+    f, tt, Z = stft(sig, SR, nperseg=1024, noverlap=512)
+    P = np.abs(Z) ** 2                                    # power: freq x frames
+    Pm = P.mean(axis=1) + 1e-10                           # avg power spectrum
+    # timbre: log-mel → DCT (MFCC), mean across time
+    mel = _mel_fb(26, 1024) @ P
+    mfcc = dct(np.log(mel + 1e-10), axis=0, norm="ortho")[:13].mean(axis=1)
+    # spectral character
+    centroid = float((f * Pm).sum() / Pm.sum())
+    spread = float(np.sqrt(((f - centroid) ** 2 * Pm).sum() / Pm.sum()))
+    cs = np.cumsum(Pm)
+    rolloff = float(f[np.searchsorted(cs, 0.85 * cs[-1])])
+    flatness = float(np.exp(np.log(Pm).mean()) / Pm.mean())     # tonal↔noisy
+    zcr = float(np.mean(np.abs(np.diff(np.sign(sig)))) / 2)
+    rms = float(np.sqrt(np.mean(sig ** 2)))
+    nyq = SR / 2
+    spec = np.array([centroid / nyq, spread / nyq, rolloff / nyq, flatness, zcr, rms])
+    feat = np.concatenate([chroma, mfcc / 20.0, spec]).astype(np.float32)
+    return feat / (np.linalg.norm(feat) or 1)
+
+
+def _remember(label: str, source: str, vec: np.ndarray) -> None:
+    VEC_STORE.parent.mkdir(parents=True, exist_ok=True)
+    with VEC_STORE.open("a", encoding="utf-8") as fp:
+        fp.write(json.dumps({"t": time.time(), "label": label,
+                             "source": source, "vec": vec.round(4).tolist()}) + "\n")
+
+
+def _load_store():
+    rows = []
+    if VEC_STORE.exists():
+        for ln in VEC_STORE.read_text(encoding="utf-8").splitlines():
+            try:
+                r = json.loads(ln)
+                r["v"] = np.array(r["vec"], dtype=np.float32)
+                rows.append(r)
+            except Exception:
+                continue
+    return rows
+
+
+def match_sound(source: str, top: int = 5) -> str:
+    """Hear a sound and recall the ones most like it. Embeds `source` (audio
+    file path OR synth spec like 'chord:major:C') and returns the nearest
+    remembered sounds by similarity — her ear-memory, searched by likeness."""
+    sig, label = _load(source)
+    if sig is None:
+        return f"Couldn't hear that: {label}"
+    q = embed(sig / (np.abs(sig).max() or 1))
+    rows = _load_store()
+    if not rows:
+        return ("No sounds remembered yet — use see_sound on a few first "
+                "(each one it shows also gets saved as a vector).")
+    scored = sorted(((float(q @ r["v"]), r) for r in rows),
+                    key=lambda x: -x[0])
+    seen, out = set(), []
+    for sim, r in scored:
+        if r["label"] in seen:
+            continue
+        seen.add(r["label"])
+        out.append(f"  {sim:+.3f}  {r['label']}")
+        if len(out) >= top:
+            break
+    return (f"'{label}' is most like these remembered sounds "
+            f"(cosine similarity, 1.0 = identical):\n" + "\n".join(out))
+
+
 def _mandala(sig, W, H):
     """The 12 pitch classes on a circle, each lit by its energy, with the
     harmony's geometry drawn between the active tones. Consonant shapes read
@@ -255,6 +348,12 @@ def see_sound(source: str) -> str:
     safe = re.sub(r"[^A-Za-z0-9_-]+", "_", label)[:40]
     out = RENDERS / f"{safe}.png"
     portrait.save(out)
+    # Remember the sound as a vector — every sound she sees also enters her
+    # ear-memory, searchable later by similarity (match_sound).
+    try:
+        _remember(label, source, embed(sig))
+    except Exception:
+        pass
     return (f"Heard it: {label}. Rendered its structure to {out}\n"
             f"look_at_image that to SEE the sound — the spectrogram is time×"
             f"pitch, the harmonic spectrum shows the overtone ladder, and the "
