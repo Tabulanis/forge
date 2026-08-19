@@ -262,6 +262,7 @@ def study_calls(source: str) -> str:
     sig, label = AN._load(source, max_sec=30.0)
     if sig is None:
         return f"Couldn't hear that: {label}"
+    sig = sig - float(np.mean(sig))          # strip DC bias
     sig = sig / (np.abs(sig).max() or 1)
     sr = AN.SR
 
@@ -489,6 +490,7 @@ def language_scorecard(source: str) -> str:
     sig, label = AN._load(source, max_sec=30.0)
     if sig is None:
         return f"Couldn't hear that: {label}"
+    sig = sig - float(np.mean(sig))          # strip DC bias
     sig = sig / (np.abs(sig).max() or 1)
     units = _segment(sig, AN.SR)
     if len(units) < 10:
