@@ -285,7 +285,8 @@ def match_sound(source: str, top: int = 5) -> str:
         if len(out) >= top:
             break
     return (f"'{label}' is most like these remembered sounds "
-            f"(cosine similarity, 1.0 = identical):\n" + "\n".join(out))
+            f"(cosine similarity; these fingerprints run high, ~0.5\u20131.0, so "
+            f"the RANKING matters more than the raw number):\n" + "\n".join(out))
 
 
 def _mandala(sig, W, H):

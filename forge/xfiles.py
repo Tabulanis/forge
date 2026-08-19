@@ -114,6 +114,9 @@ def find_third_party(a: str, b: str, suspects=None, n: int = 400) -> str:
     it's real out-of-sample, then for each suspect Z reports how much the a–b
     link collapses once Z is accounted for. A suspect that kills the link (on
     held-out data too) is the third party."""
+    if _norm(a) == _norm(b):
+        return (f"'{a}' and '{b}' are the same thing — an odd couple needs two "
+                "different assets. Pick a real pair.")
     suspects = [s.strip() for s in (suspects or DEFAULT_SUSPECTS) if _norm(s.strip()) not in (_norm(a), _norm(b))]
     names = [a, b] + suspects
     try:
@@ -125,7 +128,9 @@ def find_third_party(a: str, b: str, suspects=None, n: int = 400) -> str:
 
     base_all = _corr(A, B)
     base_tr, base_te = _corr(A[:cut], B[:cut]), _corr(A[cut:], B[cut:])
-    real = abs(base_te) > 0.12 and np.sign(base_tr) == np.sign(base_te)
+    crit = 2.6 / np.sqrt(max(len(A) - cut, 2))     # ~99% critical |r| for the test window
+    real = (abs(base_te) > max(0.12, crit) and abs(base_tr) > crit
+            and np.sign(base_tr) == np.sign(base_te))
 
     lines = [f"THE ODD COUPLE: {a} vs {b}  ({len(A)} aligned days)",
              f"  correlation: {base_all:+.2f} overall  "

@@ -286,7 +286,7 @@ def study_calls(source: str) -> str:
         real, nullm, p = st
         ordered = p < 0.05
         struct_line = (
-            f"Order is {'NON-RANDOM (structured)' if ordered else 'not distinguishable from random'}: "
+            f"Adjacent order is {'NON-RANDOM (structured)' if ordered else 'no more predictable than chance'}: "
             f"predictability {real:.2f} bits vs {nullm:.2f} shuffled, p={p:.3f}.")
         verdict = struct_line
 
@@ -298,8 +298,10 @@ def study_calls(source: str) -> str:
         lines.append("→ There IS non-random ordering here — a testable fingerprint "
                      "of structure (NOT meaning). Worth a closer look.")
     elif st:
-        lines.append("→ No ordering structure beyond chance in this sample. Either "
-                     "there's none, or we need more/cleaner calls.")
+        lines.append("→ No ADJACENT (call-to-call) structure beyond chance. Note this "
+                     "test only sees one-step patterns — longer-range or nested "
+                     "structure (every 3rd call, motifs of motifs) it cannot see, so "
+                     "'no adjacent structure' is NOT 'no structure'.")
     lines.append(f"Rendered to {out} — look_at_image it to SEE the repertoire, the "
                  "call timeline, and the transition grammar.")
     lines.append("Honest limit: this finds STRUCTURE, never meaning. It cannot "
