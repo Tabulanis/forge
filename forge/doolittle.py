@@ -35,23 +35,108 @@ RENDERS = Path.home() / "forge" / "datasets" / "doolittle"
 BG = (13, 16, 23); INK = (230, 236, 245); SOFT = (150, 162, 178)
 CYAN = (59, 214, 228); GOLD = (245, 174, 61); GREEN = (111, 208, 140); RED = (200, 90, 74)
 
-# The polymath meaning library. Each candidate gloss predicts which context
-# CUES should hold when a call carrying it fires. Drawn from ethology across
-# taxa — the breadth IS the method. `cues` = must tend to be present; `absent`
-# = should tend to be ABSENT (helps eliminate look-alikes).
+# The polymath meaning library — a BLOB, not a word-list. Animals don't talk
+# in single words; they talk in whole MEANINGS. So each candidate is a PHRASE,
+# and we throw the whole rough mass on the pad first — every angle a polymath
+# would try (predator-type, direction, urgency, who it's aimed at, mood,
+# resource, coordination, identity) — including WILD guesses and SECONDARY /
+# compound ones. Elimination is the chisel: it knocks away the phrases the call
+# can't carry until a tight shape is left, and only then does the blob collapse
+# toward a word. A wild guess getting crossed off is information; a wild one
+# surviving is a lead. `lens` = which angle it came from (so survivors cluster
+# into a shape). `kind`: primary / secondary (compound/derived) / wild (a long
+# shot we keep BECAUSE ruling it out is progress). `cues` = context that should
+# tend to hold; `absent` = context that should tend to be MISSING.
 MEANINGS = [
-    {"id": "alarm",     "label": "Alarm / predator",     "cues": ["threat", "then_flee_or_freeze"], "absent": ["calm"]},
-    {"id": "food",      "label": "Food / foraging",      "cues": ["food", "then_approach"],          "absent": ["threat"]},
-    {"id": "contact",   "label": "Contact / 'where are you'", "cues": ["conspecific_far", "then_regroup"], "absent": []},
-    {"id": "affil",     "label": "Affiliation / greeting", "cues": ["conspecific_near", "calm"],      "absent": ["threat", "conflict"]},
-    {"id": "mate",      "label": "Mating / courtship",   "cues": ["breeding", "opposite_sex_near"],   "absent": ["threat"]},
-    {"id": "territory", "label": "Territory / boundary", "cues": ["intruder", "boundary"],            "absent": ["calm"]},
-    {"id": "distress",  "label": "Distress / pain",      "cues": ["isolation_or_injury"],             "absent": ["calm"]},
-    {"id": "dominance", "label": "Dominance / aggression", "cues": ["conflict", "competitor"],        "absent": ["calm"]},
-    {"id": "play",      "label": "Play",                 "cues": ["juvenile", "calm"],                "absent": ["threat", "conflict"]},
-    {"id": "id",        "label": "Location / self-ID",   "cues": ["movement"],                        "absent": []},
-    {"id": "beg",       "label": "Begging",              "cues": ["juvenile", "parent_near", "food"], "absent": ["threat"]},
-    {"id": "recruit",   "label": "Recruitment / rally",  "cues": ["resource_found", "then_group_move"], "absent": []},
+    # --- THREAT, sculpted by what & where (prairie dogs really do resolve this)
+    {"id": "air_pred",  "lens": "threat", "kind": "primary",
+     "label": "\"raptor overhead — dive for cover NOW\"",
+     "cues": ["threat", "predator_above", "then_flee_or_freeze"], "absent": ["calm"]},
+    {"id": "ground_pred", "lens": "threat", "kind": "primary",
+     "label": "\"ground predator close — get up / bolt\"",
+     "cues": ["threat", "predator_ground", "then_flee_or_freeze"], "absent": ["calm"]},
+    {"id": "human",     "lens": "threat", "kind": "primary",
+     "label": "\"a human is coming\"",
+     "cues": ["threat", "human_present"], "absent": ["calm"]},
+    {"id": "urgent",    "lens": "threat", "kind": "primary",
+     "label": "\"danger RIGHT NOW — everyone scatter\"",
+     "cues": ["threat", "high_intensity", "then_flee_or_freeze"], "absent": ["calm"]},
+    {"id": "unease",    "lens": "threat", "kind": "secondary",
+     "label": "\"something's off — stay sharp\" (alert, not flight)",
+     "cues": ["novel_object"], "absent": ["then_flee_or_freeze", "calm"]},
+    {"id": "warn_young", "lens": "threat", "kind": "secondary",
+     "label": "\"kids, hide — danger\"",
+     "cues": ["juvenile", "threat", "then_flee_or_freeze"], "absent": ["calm"]},
+    # --- FOOD & RESOURCE
+    {"id": "food_here", "lens": "resource", "kind": "primary",
+     "label": "\"food here — come eat\"",
+     "cues": ["food", "then_approach"], "absent": ["threat"]},
+    {"id": "food_rich", "lens": "resource", "kind": "primary",
+     "label": "\"a LOT of food — everybody come\"",
+     "cues": ["food", "resource_rich", "then_group_move"], "absent": ["threat"]},
+    {"id": "good_spot", "lens": "resource", "kind": "wild",
+     "label": "\"good place here — settle\"",
+     "cues": ["resource_rich", "calm"], "absent": ["threat"]},
+    # --- CONTACT & COORDINATION
+    {"id": "where_you", "lens": "coord", "kind": "primary",
+     "label": "\"where are you?\"",
+     "cues": ["conspecific_far", "then_regroup"], "absent": []},
+    {"id": "here_me",   "lens": "coord", "kind": "primary",
+     "label": "\"I'm over here\"",
+     "cues": ["conspecific_far", "movement"], "absent": ["threat"]},
+    {"id": "regroup",   "lens": "coord", "kind": "primary",
+     "label": "\"regroup on me\"",
+     "cues": ["conspecific_far", "then_regroup", "movement"], "absent": []},
+    {"id": "move_out",  "lens": "coord", "kind": "primary",
+     "label": "\"time to move — follow\"",
+     "cues": ["then_group_move", "movement"], "absent": ["threat"]},
+    # --- SOCIAL
+    {"id": "greet",     "lens": "social", "kind": "primary",
+     "label": "\"hello, friend\"",
+     "cues": ["conspecific_near", "calm"], "absent": ["threat", "conflict"]},
+    {"id": "court",     "lens": "social", "kind": "primary",
+     "label": "\"courting — come closer\"",
+     "cues": ["breeding", "opposite_sex_near"], "absent": ["threat"]},
+    {"id": "back_off",  "lens": "social", "kind": "primary",
+     "label": "\"back off — I'm boss here\"",
+     "cues": ["conflict", "competitor"], "absent": ["calm"]},
+    {"id": "my_turf",   "lens": "social", "kind": "primary",
+     "label": "\"this is my turf — keep out\"",
+     "cues": ["intruder", "boundary"], "absent": ["calm"]},
+    {"id": "submit",    "lens": "social", "kind": "secondary",
+     "label": "\"you win — don't hurt me\"",
+     "cues": ["conflict", "isolation_or_injury"], "absent": ["competitor"]},
+    # --- PARENTAL
+    {"id": "feed_me",   "lens": "parental", "kind": "primary",
+     "label": "\"feed me\" (begging)",
+     "cues": ["juvenile", "parent_near", "food"], "absent": ["threat"]},
+    {"id": "come_back",  "lens": "parental", "kind": "secondary",
+     "label": "\"pup, come back to me\"",
+     "cues": ["juvenile", "then_regroup"], "absent": ["threat"]},
+    # --- AFFECT (mood, not referent — wilder)
+    {"id": "hurt",      "lens": "affect", "kind": "primary",
+     "label": "\"I'm hurt / trapped\"",
+     "cues": ["isolation_or_injury"], "absent": ["calm"]},
+    {"id": "excited",   "lens": "affect", "kind": "wild",
+     "label": "\"so excited!\" (arousal, no referent)",
+     "cues": ["high_intensity", "calm"], "absent": ["threat"]},
+    {"id": "content",   "lens": "affect", "kind": "wild",
+     "label": "\"all's well\" (contentment hum)",
+     "cues": ["calm", "conspecific_near"], "absent": ["threat", "conflict"]},
+    {"id": "play",      "lens": "affect", "kind": "primary",
+     "label": "\"let's play\"",
+     "cues": ["juvenile", "calm"], "absent": ["threat", "conflict"]},
+    # --- IDENTITY & the deliberately-probably-wrong (kept BECAUSE crossing them
+    #     off is progress; if one survives unexpectedly, that's the real find)
+    {"id": "self_name", "lens": "identity", "kind": "wild",
+     "label": "\"it's me\" (signature / name call)",
+     "cues": ["repeated_bout"], "absent": ["threat", "food"]},
+    {"id": "status",    "lens": "identity", "kind": "wild",
+     "label": "\"I'm here and I'm strong\" (status broadcast)",
+     "cues": ["repeated_bout", "competitor"], "absent": ["calm"]},
+    {"id": "babble",    "lens": "identity", "kind": "wild",
+     "label": "\"just noise / practice\" (no referent at all)",
+     "cues": ["juvenile", "repeated_bout"], "absent": ["threat", "food", "conspecific_far"]},
 ]
 RULE_OUT = 0.30      # support below this -> the call fires mostly without the context -> ruled out
 STRONG = 0.60        # support above this AND specific -> a live lead
@@ -91,6 +176,11 @@ def deduce(observations, labels=None):
     by_call = {}
     for o in observations:
         by_call.setdefault(o.get("call"), []).append(o)
+    # lift (how call-SPECIFIC a cue-set is) only means something when there are
+    # other calls to contrast against. With a single call in the log there's no
+    # contrast population, so specificity is uncomputable — fall back to support
+    # + the strict conclusiveness gate instead of wiping the whole board.
+    multi = len(by_call) >= 2
     pad = {"calls": []}
     for call, obs in sorted(by_call.items(), key=lambda x: str(x[0])):
         ruled_out, standing = [], []
@@ -103,13 +193,15 @@ def deduce(observations, labels=None):
             # is far more telling than a 1-cue coincidence)
             depth = min(1.0, 0.55 + 0.25 * len(m["cues"]))
             sup *= depth
-            if sup < RULE_OUT or lift < 1.35:
+            too_common = multi and lift < 1.35   # only judge specificity with a contrast pop.
+            if sup < RULE_OUT or too_common:
                 ruled_out.append({"id": m["id"], "label": m["label"],
                                   "support": round(sup, 2),
                                   "why": ("fires mostly without its context" if sup < RULE_OUT
                                           else "no more specific than chance")})
             else:
                 standing.append({"id": m["id"], "label": m["label"],
+                                 "lens": m.get("lens", "?"), "kind": m.get("kind", "primary"),
                                  "support": round(sup, 2), "lift": round(lift, 1)})
         standing.sort(key=lambda x: -x["support"])
         elim_pct = round(100 * len(ruled_out) / len(MEANINGS))
@@ -169,11 +261,14 @@ def deduce_meaning(observations, title: str = "case") -> str:
     plus the context cues true when it fired), rule out the meanings it CAN'T
     carry and report what's left standing. `observations` is a list of
     {"call": <name>, "cues": {"threat": true, "then_flee_or_freeze": true, ...}}.
-    Known cues: threat, then_flee_or_freeze, food, then_approach,
-    conspecific_near, conspecific_far, then_regroup, calm, breeding,
-    opposite_sex_near, intruder, boundary, isolation_or_injury, conflict,
-    competitor, juvenile, parent_near, movement, resource_found,
-    then_group_move. Renders the pad. NEVER claims a call's meaning — it
+    Known cues (log the ones you saw; more/finer cues chisel a sharper shape):
+    threat, predator_above, predator_ground, human_present, high_intensity,
+    novel_object, then_flee_or_freeze, food, resource_rich, then_approach,
+    then_group_move, conspecific_near, conspecific_far, then_regroup, movement,
+    calm, breeding, opposite_sex_near, intruder, boundary, isolation_or_injury,
+    conflict, competitor, juvenile, parent_near, repeated_bout. Renders the pad.
+    It starts as a BLOB of candidate PHRASES and chisels down by elimination.
+    NEVER claims a call's meaning — it
     corners it by elimination; a surviving lead is for field-testing, not a
     translation."""
     if isinstance(observations, str):
@@ -192,14 +287,24 @@ def deduce_meaning(observations, title: str = "case") -> str:
                      f"{c['eliminated_pct']}% of the meaning-deck ruled out")
         if c["standing"]:
             lead = c["standing"][0]
-            lines.append(f"    still standing: " + ", ".join(
-                f"{s['label']} (support {s['support']})" for s in c["standing"][:4]))
+            # the BLOB shape first: which angles survived, grouped by lens, so
+            # you see the rough form of the meaning before it collapses to words
+            shape = {}
+            for s in c["standing"]:
+                shape.setdefault(s["lens"], []).append(s)
+            lines.append("    blob shape — what's left, by angle:")
+            for lens, group in sorted(shape.items(), key=lambda kv: -max(s["support"] for s in kv[1])):
+                group.sort(key=lambda s: -s["support"])
+                tag = "".join(" ⚡" if g["kind"] == "wild" else "" for g in group[:1])
+                lines.append(f"      • {lens}{tag}: " + "; ".join(
+                    f"{g['label']} ({g['support']})" for g in group[:3]))
             if c.get("conclusive"):
-                lines.append(f"    → prime suspect: {lead['label']} — strong and clearly ahead; "
-                             "a lead worth field-testing.")
+                lines.append(f"    → CHISELED DOWN to: {lead['label']} — strong and clearly "
+                             "ahead of the rest. A lead worth field-testing.")
             else:
-                lines.append("    → INCONCLUSIVE — nothing is strong-and-separated enough to pin. "
-                             "The cues logged don't discriminate yet; log more sightings.")
+                lines.append("    → STILL A BLOB — nothing is strong-and-separated enough to "
+                             "collapse to one meaning yet. The survivors above are the shape so "
+                             "far; log more sightings (or finer cues) to keep chiseling.")
         else:
             lines.append("    nothing survived — the cues logged don't fit any candidate, "
                          "or the observations are too thin/noisy. Log more, or add candidates.")
