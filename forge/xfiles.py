@@ -1,0 +1,202 @@
+"""The X-Files — a casebook of market anomalies, and the hunt for the third party.
+
+An "odd couple" is two assets that move together when they've no business to
+(Ethereum tracking the S&P). The interesting question isn't THAT they correlate
+— it's WHO'S PULLING BOTH STRINGS. This module:
+
+  * pulls aligned daily data across asset classes (crypto via Kraken, stocks &
+    macro via FRED — keyless),
+  * measures whether an odd couple's correlation is even real (out-of-sample),
+  * and hunts the THIRD PARTY: for each candidate driver Z, computes the partial
+    correlation of A,B controlling for Z — if the A–B link collapses once you
+    account for Z, Z is the puppet master. Ranked, and confirmed out-of-sample.
+
+Honest to the bone (the market-rig rule): a correlation that dies out-of-sample
+is reported as noise, and a "third party" only counts if removing it actually
+kills the link on data it never saw. It finds the SUSPECT, not a conviction.
+"""
+from __future__ import annotations
+
+import json
+import time
+from pathlib import Path
+
+import httpx
+import numpy as np
+
+UA = {"User-Agent": "Mozilla/5.0 (research)"}
+FRED = "https://fred.stlouisfed.org/graph/fredgraph.csv"
+KRAKEN = "https://api.kraken.com/0/public/OHLC"
+CASES = Path.home() / "forge" / "datasets" / "xfiles"
+
+# Friendly name -> (source, code). Crypto is Kraken; the rest are FRED series.
+TICKERS = {
+    "ETH": ("kraken", "ETHUSD"), "BTC": ("kraken", "XXBTZUSD"),
+    "SOL": ("kraken", "SOLUSD"), "ADA": ("kraken", "ADAUSD"),
+    "XRP": ("kraken", "XRPUSD"), "LINK": ("kraken", "LINKUSD"),
+    "SPX": ("fred", "SP500"), "SP500": ("fred", "SP500"), "S&P": ("fred", "SP500"),
+    "VIX": ("fred", "VIXCLS"), "DXY": ("fred", "DTWEXBGS"), "DOLLAR": ("fred", "DTWEXBGS"),
+    "US10Y": ("fred", "DGS10"), "RATES": ("fred", "DGS10"),
+    "OIL": ("fred", "DCOILWTICO"), "NASDAQ": ("fred", "NASDAQCOM"),
+    "HYSPREAD": ("fred", "BAMLH0A0HYM2"),   # high-yield credit spread = risk appetite
+    "M2": ("fred", "WM2NS"),                # money supply = liquidity
+}
+# default third-party suspects when none named
+DEFAULT_SUSPECTS = ["SPX", "VIX", "DXY", "US10Y", "OIL", "BTC", "HYSPREAD"]
+
+
+def _norm(name: str) -> str:
+    return name.strip().upper().replace("USD", "").replace("-", "").replace(" ", "") or name
+
+
+def _fetch_fred(code: str) -> dict:
+    r = httpx.get(FRED, params={"id": code}, headers=UA, timeout=25, follow_redirects=True)
+    r.raise_for_status()
+    out = {}
+    for ln in r.text.splitlines()[1:]:
+        parts = ln.split(",")
+        if len(parts) >= 2 and parts[-1] not in ("", ".", "null"):
+            try:
+                out[parts[0]] = float(parts[-1])
+            except ValueError:
+                continue
+    return out
+
+
+def _fetch_kraken(pair: str) -> dict:
+    r = httpx.get(KRAKEN, params={"pair": pair, "interval": 1440}, headers=UA, timeout=25)
+    r.raise_for_status()
+    res = r.json().get("result", {})
+    rows = next((v for k, v in res.items() if k != "last"), [])
+    out = {}
+    for row in rows:
+        d = time.strftime("%Y-%m-%d", time.gmtime(int(row[0])))
+        out[d] = float(row[4])          # close
+    return out
+
+
+def _series(name: str) -> dict:
+    key = _norm(name)
+    src, code = TICKERS.get(key, TICKERS.get(name.upper(), (None, None)))
+    if src is None:
+        # bare crypto pair like "DOTUSD"
+        return _fetch_kraken(name.upper() if name.upper().endswith("USD") else name.upper() + "USD")
+    return _fetch_fred(code) if src == "fred" else _fetch_kraken(code)
+
+
+def _aligned_returns(names, n=400):
+    """Daily log-returns for each name, aligned on common trading days."""
+    series = {nm: _series(nm) for nm in names}
+    common = set.intersection(*(set(s) for s in series.values())) if series else set()
+    dates = sorted(common)[-n:]
+    if len(dates) < 30:
+        raise ValueError(f"only {len(dates)} common days across {names} — not enough overlap")
+    lv = {nm: np.array([series[nm][d] for d in dates]) for nm in names}
+    rets = {nm: np.diff(np.log(np.clip(lv[nm], 1e-9, None))) for nm in names}
+    return dates, rets
+
+
+def _corr(x, y):
+    if x.std() == 0 or y.std() == 0:
+        return 0.0
+    return float(np.corrcoef(x, y)[0, 1])
+
+
+def _partial(a, b, z):
+    """First-order partial correlation of a,b controlling for z."""
+    rab, raz, rbz = _corr(a, b), _corr(a, z), _corr(b, z)
+    denom = np.sqrt(max(1e-9, (1 - raz ** 2) * (1 - rbz ** 2)))
+    return float((rab - raz * rbz) / denom)
+
+
+def find_third_party(a: str, b: str, suspects=None, n: int = 400) -> str:
+    """The hunt: who drives BOTH `a` and `b`? Measures their correlation, checks
+    it's real out-of-sample, then for each suspect Z reports how much the a–b
+    link collapses once Z is accounted for. A suspect that kills the link (on
+    held-out data too) is the third party."""
+    suspects = [s.strip() for s in (suspects or DEFAULT_SUSPECTS) if _norm(s.strip()) not in (_norm(a), _norm(b))]
+    names = [a, b] + suspects
+    try:
+        dates, rets = _aligned_returns(names, n)
+    except Exception as e:
+        return f"Couldn't assemble the data: {e}"
+    A, B = rets[a], rets[b]
+    cut = int(len(A) * 0.6)
+
+    base_all = _corr(A, B)
+    base_tr, base_te = _corr(A[:cut], B[:cut]), _corr(A[cut:], B[cut:])
+    real = abs(base_te) > 0.12 and np.sign(base_tr) == np.sign(base_te)
+
+    lines = [f"THE ODD COUPLE: {a} vs {b}  ({len(A)} aligned days)",
+             f"  correlation: {base_all:+.2f} overall  "
+             f"(train {base_tr:+.2f} / out-of-sample {base_te:+.2f})"]
+    if not real:
+        lines.append("  ⚠ the link itself doesn't hold out-of-sample — it may be "
+                     "noise or a passing phase. Hunting a cause for a correlation "
+                     "that isn't stable would be chasing a ghost. Verdict: no "
+                     "solid case here yet.")
+        return "\n".join(lines)
+
+    lines.append("  the link holds out-of-sample — worth hunting the third party.")
+    lines.append("\nSUSPECTS (how much each KILLS the link when accounted for):")
+    scored = []
+    for z in suspects:
+        Z = rets[z]
+        p_all = _partial(A, B, Z)
+        p_te = _partial(A[cut:], B[cut:], Z[cut:])
+        drop = abs(base_all) - abs(p_all)                     # correlation removed
+        oos_drop = abs(base_te) - abs(p_te)
+        scored.append((drop, oos_drop, p_all, z))
+    scored.sort(reverse=True)
+    for drop, oos_drop, p_all, z in scored:
+        pct = 100 * drop / (abs(base_all) or 1)
+        tag = ""
+        if abs(p_all) < 0.12 and oos_drop > 0.05:
+            tag = "  ← THIRD PARTY: removing it collapses the link (holds out-of-sample)"
+        elif drop > 0.10 and oos_drop > 0:
+            tag = "  ← strong influence"
+        lines.append(f"  control for {z:6}: link {base_all:+.2f} → {p_all:+.2f} "
+                     f"({pct:+.0f}% of it gone){tag}")
+    top = scored[0]
+    if abs(top[2]) < 0.12 and top[1] > 0.05:
+        lines.append(f"\n→ Prime suspect: {top[3]}. Once you account for it, {a} and "
+                     f"{b} barely relate — it's plausibly driving both.")
+    else:
+        lines.append("\n→ No single suspect fully explains the link — it may be a mix, "
+                     "or a driver not in the lineup. Add suspects and re-run.")
+    lines.append("Honest limit: this finds a SUSPECT (a statistical common driver), "
+                 "not proof of cause. Not investment advice.")
+    return "\n".join(lines)
+
+
+# ---- the casebook: flag / list / annotate -------------------------------
+def _slug(s):
+    import re
+    return re.sub(r"[^a-z0-9]+", "-", s.lower()).strip("-")[:50] or "case"
+
+
+def flag_xfile(title: str, a: str, b: str, note: str = "") -> str:
+    """Open an X-File: flag an odd couple as a case to investigate."""
+    CASES.mkdir(parents=True, exist_ok=True)
+    cid = _slug(title)
+    p = CASES / f"{cid}.json"
+    case = {"id": cid, "title": title, "a": a, "b": b, "status": "open",
+            "opened": time.time(), "note": note, "findings": []}
+    if p.exists():
+        case = json.loads(p.read_text()); case["note"] = note or case.get("note", "")
+    p.write_text(json.dumps(case, indent=1))
+    return f"X-File '{title}' flagged [{a} × {b}]. Run find_third_party on it to hunt the driver."
+
+
+def list_xfiles() -> str:
+    if not CASES.is_dir():
+        return "No X-Files yet. flag_xfile to open one."
+    rows = []
+    for f in sorted(CASES.glob("*.json")):
+        try:
+            c = json.loads(f.read_text())
+            rows.append(f"  [{c.get('status','?')}] {c['title']} — {c['a']} × {c['b']}"
+                        f"  ({len(c.get('findings',[]))} findings)")
+        except Exception:
+            continue
+    return "THE X-FILES:\n" + ("\n".join(rows) if rows else "  (empty)")

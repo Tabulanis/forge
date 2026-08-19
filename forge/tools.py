@@ -29,7 +29,7 @@ from typing import Callable
 
 import httpx
 
-from . import (audio_nerve, bioacoustics, browser, business, cad, datasets, medical, frameworks, identity, law, markets,
+from . import (audio_nerve, bioacoustics, browser, business, cad, datasets, medical, xfiles, frameworks, identity, law, markets,
                market_regime, crossmap, news, paper_market, scanner, sims, walkforward)
 from .codetools import syntax_check
 from .config import load_config
@@ -1323,6 +1323,39 @@ def build_tools(ws: Workspace, fenced: bool = False) -> list[Tool]:
                             "description": "path to an audio recording of calls"}},
                         "required": ["source"]},
             run=bioacoustics.study_calls,
+        ),
+        Tool(
+            name="find_third_party",
+            description="The X-Files hunt: given an odd couple of markets that move "
+                        "together (e.g. ETH and SPX), find WHO DRIVES BOTH. Pulls "
+                        "aligned data (crypto via Kraken, stocks/macro via FRED), "
+                        "checks the correlation is real out-of-sample, then for each "
+                        "suspect driver reports how much the link collapses when you "
+                        "control for it — a suspect that kills the link (out-of-sample "
+                        "too) is the third party. Names: ETH/BTC/SOL... , SPX/VIX/DXY/"
+                        "US10Y/OIL/HYSPREAD/M2. Finds a statistical SUSPECT, never "
+                        "proof of cause; not investment advice.",
+            parameters={"type": "object",
+                        "properties": {"a": {"type": "string"}, "b": {"type": "string"},
+                            "suspects": {"type": "array", "items": {"type": "string"}}},
+                        "required": ["a", "b"]},
+            run=lambda a, b, suspects=None: xfiles.find_third_party(a, b, suspects),
+        ),
+        Tool(
+            name="flag_xfile",
+            description="Open an X-File — flag an odd-couple market anomaly as a case "
+                        "to investigate (title, the two assets, an optional note).",
+            parameters={"type": "object",
+                        "properties": {"title": {"type": "string"}, "a": {"type": "string"},
+                            "b": {"type": "string"}, "note": {"type": "string"}},
+                        "required": ["title", "a", "b"]},
+            run=lambda title, a, b, note="": xfiles.flag_xfile(title, a, b, note),
+        ),
+        Tool(
+            name="list_xfiles",
+            description="List the open X-Files (flagged market anomalies).",
+            parameters={"type": "object", "properties": {}},
+            run=xfiles.list_xfiles,
         ),
         Tool(
             name="web_search",
