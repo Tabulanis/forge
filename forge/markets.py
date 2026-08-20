@@ -95,6 +95,16 @@ def arbitrage(p: dict):
     """Two-venue arb: decimal odds_a and odds_b on the two mutually-exclusive
     outcomes. Arb exists only if 1/a + 1/b < 1. cost_pct trims the margin."""
     a, b = _need(p, "odds_a", "odds_b")
+    # Decimal odds are payout multipliers, always above 1.0. Without this,
+    # a negative value slid under the 'inv >= 1' no-arb guard (inv went
+    # NEGATIVE, so it read as a fat edge) and the function confidently
+    # reported a negative implied probability and a negative stake.
+    # Found by Merge auditing this module.
+    if not (a > 1.0 and b > 1.0):
+        raise ValueError(
+            f"both odds must be decimal odds above 1.0 (got {a} and {b}) — "
+            "they're payout multipliers on the stake, so 2.1 means 'win 1.1 "
+            "plus your stake back'.")
     inv = 1 / a + 1 / b
     costs = float(p.get("cost_pct", 0) or 0)
     if inv >= 1:
