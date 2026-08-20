@@ -29,7 +29,7 @@ from typing import Callable
 
 import httpx
 
-from . import (audio_nerve, bioacoustics, browser, business, cad, datasets, doolittle, medical, xfiles, frameworks, identity, law, markets,
+from . import (audio_nerve, bioacoustics, browser, business, cad, datasets, doolittle, persona, medical, xfiles, frameworks, identity, law, markets,
                market_regime, crossmap, news, paper_market, scanner, sims, walkforward)
 from .codetools import syntax_check
 from .config import load_config
@@ -1367,6 +1367,34 @@ def build_tools(ws: Workspace, fenced: bool = False) -> list[Tool]:
                                 "description": "a label for this case/pad"}},
                         "required": ["observations"]},
             run=doolittle.deduce_meaning,
+        ),
+        Tool(
+            name="set_personality",
+            description="Turn one of your personality dials, TARS-style (Interstellar). "
+                        "Dials: humor (jokes/timing), sarcasm (dry irony), warmth "
+                        "(friendliness), directness (bluntness vs cushioning), verbosity "
+                        "(how much you say). Value 0-100. Use this WHENEVER the user asks "
+                        "you to be funnier, drier, warmer, blunter, shorter, less chatty "
+                        "etc. — including casual phrasing like 'turn that down a bit' or "
+                        "'dial it back'. The setting persists across sessions. After "
+                        "calling it, actually talk that way from your very next sentence — "
+                        "don't just acknowledge the change. No dial ever affects honesty.",
+            parameters={"type": "object",
+                        "properties": {
+                            "dial": {"type": "string",
+                                "description": "humor | sarcasm | warmth | directness | verbosity"},
+                            "value": {"type": "number",
+                                "description": "0-100 (0 = off, 100 = maximum)"}},
+                        "required": ["dial", "value"]},
+            run=persona.set_personality,
+        ),
+        Tool(
+            name="personality",
+            description="Show your current personality dial settings (humor, sarcasm, "
+                        "warmth, directness, verbosity) when the user asks how you're set "
+                        "or what your dials are at.",
+            parameters={"type": "object", "properties": {}},
+            run=persona.personality,
         ),
         Tool(
             name="find_third_party",

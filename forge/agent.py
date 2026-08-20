@@ -453,6 +453,13 @@ class Agent:
         """System prompt plus the project notebook, re-read every turn so a
         note saved mid-session is already there for the next message."""
         text = self.system_prompt
+        # The TARS dials — read fresh every turn, so a mid-conversation
+        # "humor down to 20" is in force on the very next reply.
+        try:
+            from .persona import prompt_block
+            text += prompt_block()
+        except Exception:
+            pass          # personality is a nicety; never break a turn over it
         _mode = get_mode(self.active_mode)
         if _mode["nudge"]:
             text += f"\n\n# Style: {_mode['label']}\n{_mode['nudge']}"
