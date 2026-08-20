@@ -15,6 +15,7 @@ started from the dashboard or another terminal.
   babysit findings           the running tally on its own
   babysit watch [secs]       live: watch her work and flag trouble as it happens
   babysit replay <id>        the flight recording (Bug Hunt mode) for a session
+  babysit ask "<task>"       hand a job to Merge FIRST; flag it only if she trips
 
 Read-only against her data; the only thing it writes is the findings file.
 """
@@ -326,6 +327,66 @@ def cmd_replay(sid: str) -> None:
             print(f"{dt}   {r['kind']}: {str(r)[:120]}")
 
 
+# Things that mean the turn went wrong, and what each one is.
+_HICCUPS = [
+    ("error 400",        "model server rejected the request (usually oversized)"),
+    ("Model call failed", "the model call failed outright"),
+    ("budget spent",     "hit the per-tool ceiling — she was looping"),
+    ("repeat blocked",   "retried an identical failing call"),
+    ("Error running",    "a tool raised"),
+    ("emergency",        "emergency memory compaction"),
+    ("Superego review",  "her answer was bounced by the reviewer"),
+    ("Stopped after",    "ran out of steps without finishing"),
+]
+
+
+def cmd_ask(task: str, model: str = "merge38", workspace: str = "") -> None:
+    """Hand a job to Merge first. Print her answer, then say plainly whether
+    she got there cleanly or tripped — and log a finding when she trips, so
+    the escalation to a bigger model is evidence-driven rather than a hunch."""
+    import subprocess
+    ws = workspace or str(Path.home() / "aidojo" / "current" / "MoneyLab")
+    forge_bin = str(Path.home() / "forge" / ".venv" / "bin" / "forge")
+    print(f"→ handing to Merge ({model})…\n")
+    try:
+        r = subprocess.run([forge_bin, "-m", model, "--auto", "-w", ws, task],
+                           capture_output=True, text=True, timeout=600)
+        out = (r.stdout or "") + (r.stderr or "")
+    except subprocess.TimeoutExpired:
+        out = "[TIMED OUT after 600s]"
+    except Exception as e:
+        out = f"[could not run: {e}]"
+
+    print(out.strip()[-3000:])
+
+    # Match only on HARNESS lines, not on her prose. The first version fired
+    # because she wrote "either error out or give trivially scaled" — a
+    # detector that cries wolf on the word "error" is worse than none, since
+    # every clean run then looks like a failure.
+    harness = "\n".join(
+        ln for ln in out.splitlines()
+        if ln.lstrip().startswith(("·", "!!", "Error running", "Model call failed",
+                                   "Stopped after", "Superego review", "⚠"))
+        or "error 400" in ln.lower())
+    found = [why for pat, why in _HICCUPS if pat.lower() in harness.lower()]
+    answered = bool(out.strip()) and "[TIMED OUT" not in out
+    print("\n" + "-" * 60)
+    if not answered:
+        found.append("produced no answer at all")
+    if found:
+        print("⚠ SHE TRIPPED — worth a look:")
+        for f in sorted(set(found)):
+            print(f"    · {f}")
+        sid = "unknown"
+        s = _sessions()
+        if s:
+            sid = s[0].get("id", "unknown")
+        cmd_flag(sid, f"ask: {'; '.join(sorted(set(found)))} — task: {task[:70]}")
+        print("\n  (logged; `babysit replay last` for the full recording)")
+    else:
+        print("✓ clean run — no hiccups detected. No need to escalate.")
+
+
 if __name__ == "__main__":
     a = sys.argv[1:]
     cmd = a[0] if a else "tally"
@@ -345,5 +406,7 @@ if __name__ == "__main__":
         cmd_watch(float(a[1]) if len(a) > 1 else 5.0)
     elif cmd == "replay" and len(a) > 1:
         cmd_replay(a[1])
+    elif cmd == "ask" and len(a) > 1:
+        cmd_ask(" ".join(a[1:]))
     else:
         print(__doc__)
