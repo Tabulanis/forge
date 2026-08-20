@@ -1117,6 +1117,15 @@ class Agent:
         """Append to the judgment ledger. Best effort — bookkeeping must
         never break the work it's keeping books on."""
         try:
+            # The ledger keeps the request and the claim verbatim — so a secret
+            # someone typed into chat would be preserved here forever. Scrub
+            # before it touches disk.
+            try:
+                from .vault import scrub
+                entry = {k: (scrub(v) if isinstance(v, str) else v)
+                         for k, v in entry.items()}
+            except Exception:
+                pass
             LEDGER_PATH.parent.mkdir(parents=True, exist_ok=True)
             with LEDGER_PATH.open("a", encoding="utf-8") as f:
                 f.write(json.dumps(entry) + "\n")

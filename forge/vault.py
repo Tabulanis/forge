@@ -217,3 +217,47 @@ def clear_credentials(handle: str = "") -> str:
     """Wipe credentials from the session vault — one handle, or everything if
     no handle is given. Use it the moment the job is done, and say so."""
     return clear(handle=handle)
+
+
+# ---- catching a secret the user just typed ------------------------------
+# The vault only protects what goes through the FORM. People type passwords
+# straight into chat anyway ("my password is hunter2") — and that lands in the
+# session log and the review ledger in plaintext, forever. So anything headed
+# for disk gets scrubbed first. Deliberately narrow: it wants an explicit
+# disclosure phrase or a key-shaped token, so ordinary talk about passwords
+# ("I forgot my password") is untouched.
+_DISCLOSURE = re.compile(
+    r"\b((?:my|the|our|this)\s+"
+    # longest first so 'passphrase' isn't chopped into 'pass'
+    r"(?:passphrase|passwords?|passwd|api[ _-]?key|secret|token|pin|pass)\b"
+    # REQUIRE a real handoff — a verb or a separator. Without this, ordinary
+    # talk ("I forgot my password again") gets its next word redacted.
+    r"(?:\s+(?:is|are|was)\s*[:=]?\s*|\s*[:=]\s*))"
+    r"([^\s,.;!?\n]{3,120})", re.I)
+
+# Long, high-entropy, key-shaped things that are secrets wherever they appear.
+_KEYLIKE = re.compile(
+    r"\b("
+    r"sk-[A-Za-z0-9_-]{16,}"                 # OpenAI/Anthropic style
+    r"|gh[pousr]_[A-Za-z0-9]{16,}"           # GitHub
+    r"|xox[baprs]-[A-Za-z0-9-]{10,}"         # Slack
+    r"|AKIA[0-9A-Z]{12,}"                    # AWS key id
+    r"|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{5,}"   # JWT
+    r"|\b(?:[a-z0-9]{4}-){3}[a-z0-9]{4}\b"  # app-password style xxxx-xxxx-...
+    r")")
+
+
+def scrub(text: str) -> str:
+    """Redact secrets from text on its way to disk. Returns the text unchanged
+    when there's nothing secret-shaped in it."""
+    if not text:
+        return text
+    s = str(text)
+    s = _DISCLOSURE.sub(lambda m: m.group(1) + "[redacted]", s)
+    s = _KEYLIKE.sub("[redacted]", s)
+    return s
+
+
+def scrubbed(text: str) -> bool:
+    """Did scrubbing change anything? (For telling the user we caught one.)"""
+    return scrub(text) != (text or "")

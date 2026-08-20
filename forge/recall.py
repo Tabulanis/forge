@@ -220,6 +220,12 @@ def remember_turn(user_text: str, answer_text: str,
         return
     try:
         QUEUE_DIR.mkdir(parents=True, exist_ok=True)
+        # Never let a chat-typed secret into the permanent memory store.
+        try:
+            from .vault import scrub
+            user_text, answer_text = scrub(user_text), scrub(answer_text)
+        except Exception:
+            pass
         entry = {"t": time.time(), "workspace": workspace,
                  "session": session_id,
                  "user": user_text[:EXCHANGE_LIMIT // 2],
