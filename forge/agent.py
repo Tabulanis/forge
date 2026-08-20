@@ -1277,6 +1277,20 @@ class Agent:
         if cut is None:                   # no user turn to anchor to
             return None
 
+        # force=True means the server ALREADY refused the request as too big.
+        # When one turn is what overflowed (she read two large files in a
+        # single turn), the cut lands at that turn's own start, so summarizing
+        # the prefix shrinks nothing and the retry goes out just as oversized —
+        # which came back as a bare 400 and killed the job. Three times in one
+        # day, always the same shape. So in force mode also squeeze the bodies
+        # of older tool outputs inside what we're keeping; pairing survives,
+        # and this is the only lever that touches the turn that actually blew.
+        if force:
+            squeezed = self._trim_tool_results(keep_recent=4)
+            if squeezed:
+                self._turn_hiccups.append(
+                    f"emergency: trimmed {squeezed} tool output(s)")
+
         old, kept = self.history[:cut], self.history[cut:]
         old_chars = sum(self._entry_chars(m) for m in old)
         if not force and (cut == 0 or old_chars < COMPACT_MIN_OLD * _CHARS_PER_TOKEN):
