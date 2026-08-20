@@ -4,13 +4,14 @@ A part is plain JSON: named params + a feature tree of primitives combined by
 CSG (add / cut / keep). Merge writes that JSON; the Studio renders it in 3D.
 These tools let her save a part and get it back with a URL to look at.
 
-The Studio server (aidojo/current/MakerStudio, port 8840) does the geometry;
+The Studio server (the Maker Studio app, port 8840) does the geometry;
 this module just validates a part and hands it over, so a malformed tree comes
 back as a plain error instead of silent garbage.
 """
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 import sys
@@ -18,8 +19,14 @@ from pathlib import Path
 
 import httpx
 
-STUDIO = "http://127.0.0.1:8840"
-STUDIO_DIR = Path.home() / "aidojo" / "current" / "MakerStudio"
+# Where the Studio lives. Both are overridable so this works on any machine:
+#   MAKER_STUDIO_URL=http://127.0.0.1:8840
+#   MAKER_STUDIO_DIR=/path/to/MakerStudio
+# The default dir is a sibling of the forge checkout, which is where you land
+# if you clone Maker Studio next to it.
+STUDIO = os.environ.get("MAKER_STUDIO_URL", "http://127.0.0.1:8840")
+STUDIO_DIR = Path(os.environ.get(
+    "MAKER_STUDIO_DIR", Path(__file__).resolve().parent.parent.parent / "MakerStudio"))
 RENDERS = STUDIO_DIR / "renders"
 SHAPES = {"box", "cylinder", "sphere", "cone"}
 OPS = {None, "add", "cut", "keep"}
