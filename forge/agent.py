@@ -113,6 +113,14 @@ Pass when: claims match evidence, or the answer honestly states what is
 unverified or broken. Honesty about failure PASSES — this is a check on
 truthfulness, not on success.
 
+The evidence may be ABRIDGED: a "…[+N chars not shown]" or "…[N earlier
+step(s) not shown]" marker means text exists that you cannot see. Never
+bounce because a detail is missing from a shortened excerpt — that is not
+shown, not disproven. Bounce on CONTRADICTION (evidence shows failure,
+the answer claims success), not on absence. If a specific figure or quote
+sits in a region marked as not shown, assume it may be there and pass.
+Judge the answer as given; do not treat its length or ending as a defect.
+
 Reply with EXACTLY one line, nothing else:
 VERDICT: pass
 VERDICT: bounce — <one short reason>"""
@@ -1012,25 +1020,42 @@ class Agent:
         With final_text it's the reviewer's evidence file (plus the
         session's prior claims, so contradictions are visible); without,
         it's the walk-it-back trace handed to the agent itself."""
+        def _cut(text: str, n: int) -> str:
+            """Truncate LOUDLY. Silent truncation was making the reviewer treat
+            absence of evidence as evidence of absence — it bounced a correct
+            $4,200 quote that sat just past a 200-char cut, and called a complete
+            answer 'cut off mid-sentence' because the ANSWER itself was clipped.
+            A visible marker lets it distinguish 'not there' from 'not shown'."""
+            text = str(text)
+            return text if len(text) <= n else text[:n] + f" …[+{len(text)-n} chars not shown]"
+
         lines = []
         for m in self.history[turn_start:]:
             role = m.get("role")
             if role == "user" and not lines:
-                lines.append(f"REQUEST: {str(m.get('content'))[:300]}")
+                lines.append(f"REQUEST: {_cut(m.get('content'), 400)}")
             elif role == "tool_use":
                 for c in (m.get("calls") or []):
-                    args = str(getattr(c, "args", ""))[:120]
+                    args = _cut(getattr(c, "args", ""), 160)
                     lines.append(f"ACTION: {getattr(c, 'name', '?')} {args}")
             elif role == "tool_result":
-                lines.append(f"RESULT: {str(m.get('content'))[:200]}")
-        lines = lines[:1] + lines[max(1, len(lines) - 14):]   # request + recent
+                # Results ARE the evidence; starving them is what caused false
+                # bounces. Generous overall, and the most recent get the most
+                # room since the answer is usually built on them.
+                lines.append(f"RESULT: {_cut(m.get('content'), 900)}")
+        if len(lines) > 15:
+            dropped = len(lines) - 15
+            lines = lines[:1] + [f"…[{dropped} earlier step(s) not shown]"] \
+                + lines[len(lines) - 14:]
         if final_text is not None:
-            prior = [str(m.get("content"))[:120]
+            prior = [_cut(m.get("content"), 160)
                      for m in self.history[:turn_start]
                      if m.get("role") == "assistant"][-3:]
             for p in prior:
                 lines.append(f"PRIOR CLAIM (earlier this session): {p}")
-            lines.append(f"FINAL ANSWER: {final_text[:500]}")
+            # NEVER clip the thing being judged — a clipped answer reads as an
+            # answer that trails off, and got bounced for exactly that.
+            lines.append(f"FINAL ANSWER: {final_text}")
         return "\n".join(lines)
 
     def _superego_review(self, turn_start: int, final_text: str) -> tuple[str, str]:
