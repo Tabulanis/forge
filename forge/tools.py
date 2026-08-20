@@ -29,7 +29,7 @@ from typing import Callable
 
 import httpx
 
-from . import (audio_nerve, bioacoustics, browser, business, cad, cortex, datasets, doolittle, persona, medical, xfiles, frameworks, identity, law, markets,
+from . import (audio_nerve, bioacoustics, browser, business, cad, cortex, datasets, doolittle, persona, vault, medical, xfiles, frameworks, identity, law, markets,
                market_regime, crossmap, news, paper_market, scanner, sims, walkforward)
 from .codetools import syntax_check
 from .config import load_config
@@ -1367,6 +1367,47 @@ def build_tools(ws: Workspace, fenced: bool = False) -> list[Tool]:
                                 "description": "a label for this case/pad"}},
                         "required": ["observations"]},
             run=doolittle.deduce_meaning,
+        ),
+        Tool(
+            name="request_credentials",
+            description="Put a real FORM on the user's screen to collect credentials, "
+                        "instead of making them type secrets into the chat. Use this "
+                        "ANY time you need a password, app password, API key, or token. "
+                        "what = what it's for in plain words; fields = list of "
+                        "{name,label,kind} with kind password/text/email/token/api_key/"
+                        "secret/url. CRITICAL: what they type goes straight into a "
+                        "memory-only vault — it never enters this conversation, so you "
+                        "get handles like 'cred:app_password', never the values. Say that "
+                        "to the user plainly; it's the whole reason for the form. The "
+                        "values are wiped when the session ends or when you call "
+                        "clear_credentials, which you should do as soon as the job's done.",
+            parameters={"type": "object",
+                        "properties": {
+                            "what": {"type": "string",
+                                "description": "what the credentials are for"},
+                            "fields": {"type": "array", "items": {"type": "object"},
+                                "description": "[{name,label,kind}, ...]"},
+                            "note": {"type": "string",
+                                "description": "optional reason shown on the form"}},
+                        "required": ["what", "fields"]},
+            run=lambda what, fields, note="": vault.request_credentials(what, fields, note=note),
+        ),
+        Tool(
+            name="credentials",
+            description="Show which credentials are in the session vault right now — "
+                        "handles and masked previews only. You cannot see the values, "
+                        "by design; pass a handle to the tool that needs it.",
+            parameters={"type": "object", "properties": {}},
+            run=vault.credentials,
+        ),
+        Tool(
+            name="clear_credentials",
+            description="Wipe credentials from the session vault — one handle, or all of "
+                        "them if none is given. Call this the moment the job is done and "
+                        "tell the user you've done it.",
+            parameters={"type": "object",
+                        "properties": {"handle": {"type": "string"}}},
+            run=lambda handle="": vault.clear_credentials(handle),
         ),
         Tool(
             name="search_life",

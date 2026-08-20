@@ -1439,6 +1439,18 @@ class Agent:
 
         result = str(result)
         self._tools_ran = True
+        # A credential form was requested: hand it to the UI as a structured
+        # event. The model authors FIELDS, never markup — the dashboard renders
+        # it with trusted code, so untrusted content she has read (a Cortex
+        # email, a web page) can never inject a phishing form into her window.
+        if call.name == "request_credentials":
+            try:
+                from . import vault as _vault
+                for _form in _vault.take_pending():
+                    yield Event(kind="form", tool="request_credentials",
+                                args=_form, summary=_form.get("what", ""))
+            except Exception:
+                pass
         # "[exit N]" is run_command's prefix; anything else says "Error" when it failed.
         failed = result.startswith("Error") or (
             result.startswith("[exit ") and not result.startswith("[exit 0]"))
