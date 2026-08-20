@@ -165,7 +165,10 @@ def ingest(source: str, limit: int = 0) -> str:
     ingested). limit: stop after N records (0 = everything) — useful for a
     quick trial run before committing to a huge archive.
     """
-    p = Path(source).expanduser()
+    if not source or not str(source).strip():
+        return ("Point me at your unzipped Takeout folder or an .mbox file — "
+                "I got nothing to open.")
+    p = Path(str(source)).expanduser()
     if not p.exists():
         return f"Nothing at {p}. Point me at your Takeout folder or an .mbox file."
     boxes = sorted(p.rglob("*.mbox")) if p.is_dir() else [p]
@@ -274,6 +277,10 @@ def search_life(query: str, limit: int = 8, category: str = "") -> str:
     remember it ("the roof quote thread last spring"), not by exact keywords.
     Optionally narrow to one category: financial, travel, receipts, work,
     personal, health, legal, accounts, newsletters, unsorted."""
+    if not query or not str(query).strip():
+        return ("Tell me what to look for — a person, a company, a thing that "
+                "happened. An empty search just returns whatever's closest to "
+                "nothing, which is nothing useful.")
     recs = _load_records()
     if not recs:
         return "The archive is empty — ingest a Takeout export first."
