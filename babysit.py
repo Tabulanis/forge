@@ -13,6 +13,8 @@ started from the dashboard or another terminal.
   babysit flag <id> <text>   record a finding (the running tally)
   babysit fixed <n>          mark finding #n fixed
   babysit findings           the running tally on its own
+  babysit watch [secs]       live: watch her work and flag trouble as it happens
+  babysit replay <id>        the flight recording (Bug Hunt mode) for a session
 
 Read-only against her data; the only thing it writes is the findings file.
 """
@@ -238,6 +240,92 @@ def cmd_findings() -> None:
           f"{sum(1 for r in recs if r.get('fixed'))} fixed.")
 
 
+def cmd_watch(interval: float = 5.0) -> None:
+    """Sit over her shoulder. Polls the session logs and the ledger, and prints
+    only what's new and worth knowing — a loop forming, an error, a bounce, a
+    turn that ended without an answer. Ctrl-C to stop."""
+    print(f"watching Merge (every {interval:g}s) — Ctrl-C to stop\n")
+    seen_evt: dict[str, int] = {}
+    seen_led = len(_ledger())
+    warned: set = set()
+    try:
+        while True:
+            for s in _sessions()[:6]:
+                sid = s.get("id", "?")
+                log = s.get("log", [])
+                start = seen_evt.get(sid)
+                if start is None:                 # first sight: don't replay history
+                    seen_evt[sid] = len(log)
+                    continue
+                for e in log[start:]:
+                    k = e.get("kind")
+                    if k == "user":
+                        print(f"[{sid[:8]}] USER: {(e.get('text') or '')[:110]}")
+                    elif k == "tool":
+                        print(f"[{sid[:8]}]   → {e.get('tool')}")
+                    elif k == "error":
+                        print(f"[{sid[:8]}]   !! ERROR: {(e.get('text') or '')[:150]}")
+                    elif k == "text":
+                        print(f"[{sid[:8]}] MERGE: {(e.get('text') or '')[:150]}")
+                seen_evt[sid] = len(log)
+
+                h = _health(s)
+                for tool, n in h["loops"].items():
+                    key = f"{sid}:{tool}:{n // 5}"
+                    if key not in warned:
+                        warned.add(key)
+                        print(f"[{sid[:8]}] ⚠ LOOP forming — {tool} called {n}x")
+                if h["turns"] and h["answered"] < h["turns"]:
+                    key = f"{sid}:unanswered:{h['turns']}"
+                    if key not in warned:
+                        warned.add(key)
+                        print(f"[{sid[:8]}] ⚠ a turn ended without an answer")
+
+            led = _ledger()
+            for l in led[seen_led:]:
+                if l.get("verdict") == "bounce":
+                    print(f"           ⚠ BOUNCED: {(l.get('reason') or '?')[:110]}")
+            seen_led = len(led)
+            time.sleep(interval)
+    except KeyboardInterrupt:
+        print("\nstopped watching.")
+
+
+def cmd_replay(sid: str) -> None:
+    """The flight recording for a session — full args, full results, timings."""
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from forge import forensic
+    except Exception as e:
+        print(f"can't load the recorder: {e}")
+        return
+    if sid == "last":
+        got = forensic.sessions()
+        if not got:
+            print("No flight recordings yet. Use Bug Hunt mode to make one.")
+            return
+        sid = got[0][0]
+    recs = forensic.read(sid)
+    if not recs:
+        print(f"No recording for '{sid}'. Recordings exist for: "
+              + ", ".join(s[0] for s in forensic.sessions()[:8]))
+        return
+    print(f"FLIGHT RECORDING {sid} — {len(recs)} events")
+    t0 = recs[0]["t"]
+    for r in recs:
+        dt = f"+{r['t']-t0:6.1f}s"
+        if r["kind"] == "turn_start":
+            print(f"\n{dt} TURN [{r.get('mode')}] {str(r.get('request'))[:120]}")
+        elif r["kind"] == "tool":
+            print(f"{dt}   → {r.get('tool')}({str(r.get('args'))[:90]}) "
+                  f"[{r.get('seconds')}s, attempt {r.get('attempt')}]")
+            print(f"{'':9}     {str(r.get('result'))[:200]}")
+        elif r["kind"] == "superego_evidence":
+            print(f"{dt}   ⚖ reviewer saw {len(str(r.get('digest')))} chars of evidence")
+        else:
+            print(f"{dt}   {r['kind']}: {str(r)[:120]}")
+
+
 if __name__ == "__main__":
     a = sys.argv[1:]
     cmd = a[0] if a else "tally"
@@ -253,5 +341,9 @@ if __name__ == "__main__":
         cmd_fixed(int(a[1]))
     elif cmd == "findings":
         cmd_findings()
+    elif cmd == "watch":
+        cmd_watch(float(a[1]) if len(a) > 1 else 5.0)
+    elif cmd == "replay" and len(a) > 1:
+        cmd_replay(a[1])
     else:
         print(__doc__)

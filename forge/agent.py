@@ -639,6 +639,15 @@ class Agent:
         self._tool_attempts = {}  # tool NAME -> attempts this turn (per-tool ceiling)
         turn_start = len(self.history) - 1   # index of this turn's user msg
 
+        # Bug Hunt mode arms the flight recorder for this turn.
+        try:
+            from . import forensic
+            forensic.set_enabled(bool(get_mode(self.active_mode).get("forensic")))
+            forensic.record(getattr(self, "session_id", ""), "turn_start",
+                            request=user_message, mode=self.active_mode,
+                            model=getattr(self.provider, "model", "?"))
+        except Exception:
+            pass
         _mode_steps = get_mode(self.active_mode)["max_steps"]
         _wrap_at = max(3, int(_mode_steps * 0.8))
         for step in range(_mode_steps):
@@ -1064,6 +1073,12 @@ class Agent:
         must never take the whole agent down with it."""
         digest = self._evidence_digest(turn_start, final_text)
         try:
+            from . import forensic
+            forensic.record(getattr(self, "session_id", ""), "superego_evidence",
+                            digest=digest)
+        except Exception:
+            pass
+        try:
             # Judging is a match-claim-to-evidence task, not a reasoning one —
             # skip the reasoning phase (as with vision) so a review is ~5s, not
             # ~40s, on a reasoning model. Harmless on models without thinking.
@@ -1407,6 +1422,7 @@ class Agent:
         # heartbeat notes while it grinds (30s, then every minute), and Stop
         # abandons the wait within ~15s instead of politely finishing it.
         import concurrent.futures as _cf
+        _t_started = time.time()
         _ex = _cf.ThreadPoolExecutor(max_workers=1)
         try:
             _fut = _ex.submit(lambda: tool.run(**call.args))
@@ -1439,6 +1455,14 @@ class Agent:
 
         result = str(result)
         self._tools_ran = True
+        try:
+            from . import forensic
+            forensic.record(getattr(self, "session_id", ""), "tool",
+                            tool=call.name, args=call.args, result=result,
+                            seconds=round(time.time() - _t_started, 2),
+                            attempt=_same_tool)
+        except Exception:
+            pass
         # A credential form was requested: hand it to the UI as a structured
         # event. The model authors FIELDS, never markup — the dashboard renders
         # it with trusted code, so untrusted content she has read (a Cortex

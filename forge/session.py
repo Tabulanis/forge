@@ -171,6 +171,8 @@ class Session:
             reads=ws.reads,
             read_mtimes=ws.read_mtimes,
         )
+        # so the flight recorder files a turn under the right session
+        self.agent.session_id = self.id
 
     def reload_model(self, cfg: dict) -> None:
         """Swap the model but keep the conversation."""

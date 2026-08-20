@@ -75,11 +75,26 @@ MODES = {
                  "wrong, correct it kindly and clearly. Hand them understanding "
                  "they can reuse, not just the fish.",
     },
+    "bughunt": {
+        # Same capability as Deep, plus the flight recorder. For when something
+        # is going wrong and someone will need to reconstruct it afterwards.
+        "label": "\U0001f41e Bug Hunt", "thinking": True, "temperature": 0.3,
+        "tools": None, "superego": True, "max_steps": 60,
+        "forensic": True,
+        "nudge": "Diagnostic mode: everything you do is being recorded so a "
+                 "failure can be reconstructed later. Narrate as you go — say "
+                 "what you're about to try and why, what you expected, and what "
+                 "actually came back, especially when they differ. If a tool "
+                 "errors or returns something odd, quote the actual text rather "
+                 "than paraphrasing it, and say plainly what you can't explain. "
+                 "An unexplained oddity reported honestly is worth more here "
+                 "than a smooth answer that hides it.",
+    },
 }
 DEFAULT_MODE = "balanced"
 # "auto" isn't a preset — it's resolved per message by route_mode(). Listed
 # first so it can be the default choice in the UI.
-ORDER = ["auto", "flash", "muse", "balanced", "precise", "deep", "teach"]
+ORDER = ["auto", "flash", "muse", "balanced", "precise", "deep", "teach", "bughunt"]
 AUTO_LABEL = "\U0001f39b️ Auto"
 
 
