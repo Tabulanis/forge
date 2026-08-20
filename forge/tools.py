@@ -29,7 +29,7 @@ from typing import Callable
 
 import httpx
 
-from . import (audio_nerve, bioacoustics, browser, business, cad, datasets, doolittle, persona, medical, xfiles, frameworks, identity, law, markets,
+from . import (audio_nerve, bioacoustics, browser, business, cad, cortex, datasets, doolittle, persona, medical, xfiles, frameworks, identity, law, markets,
                market_regime, crossmap, news, paper_market, scanner, sims, walkforward)
 from .codetools import syntax_check
 from .config import load_config
@@ -1367,6 +1367,59 @@ def build_tools(ws: Workspace, fenced: bool = False) -> list[Tool]:
                                 "description": "a label for this case/pad"}},
                         "required": ["observations"]},
             run=doolittle.deduce_meaning,
+        ),
+        Tool(
+            name="search_life",
+            description="Search the user's OWN archive — their exported email, calendar, "
+                        "and contacts (Cortex) — by MEANING, the way they'd actually "
+                        "remember it ('that thread about the roof quote last spring'), "
+                        "not by exact keywords. Use this whenever they ask about their "
+                        "own past: what a company told them, when something happened, "
+                        "what an order/appointment/trip was. Optionally narrow with "
+                        "category: financial, travel, receipts, work, personal, health, "
+                        "legal, accounts, newsletters, unsorted. Everything it returns is "
+                        "a REAL record from their archive; if nothing genuinely matches "
+                        "it says so instead of inventing a memory — report that honestly "
+                        "rather than filling the gap.",
+            parameters={"type": "object",
+                        "properties": {
+                            "query": {"type": "string",
+                                "description": "what they're trying to remember"},
+                            "limit": {"type": "number", "description": "how many (default 8)"},
+                            "category": {"type": "string", "description": "optional filter"}},
+                        "required": ["query"]},
+            run=lambda query, limit=8, category="": cortex.search_life(query, int(limit), category),
+        ),
+        Tool(
+            name="archive_overview",
+            description="Summarize what's in the user's Cortex life-archive: how many "
+                        "records, which categories, and the date range covered. Use it "
+                        "when they ask what you have on them, or before a broad search.",
+            parameters={"type": "object", "properties": {}},
+            run=cortex.archive_overview,
+        ),
+        Tool(
+            name="ingest_archive",
+            description="Index a Google Takeout export (or any .mbox file) into the "
+                        "user's private Cortex archive. source = path to the unzipped "
+                        "Takeout folder or an .mbox. limit = stop after N records (0 = "
+                        "all) for a trial run on a huge archive. Runs entirely locally; "
+                        "no credentials and nothing leaves the machine. Follow it with "
+                        "build_search_index to make it searchable by meaning.",
+            parameters={"type": "object",
+                        "properties": {
+                            "source": {"type": "string"},
+                            "limit": {"type": "number"}},
+                        "required": ["source"]},
+            run=lambda source, limit=0: cortex.ingest(source, int(limit)),
+        ),
+        Tool(
+            name="build_search_index",
+            description="Embed newly ingested Cortex records so the archive is "
+                        "searchable by meaning. Safe to re-run — it only processes what's "
+                        "new, and resumes where it left off if interrupted.",
+            parameters={"type": "object", "properties": {}},
+            run=cortex.build_index,
         ),
         Tool(
             name="set_personality",
