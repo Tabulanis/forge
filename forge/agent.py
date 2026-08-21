@@ -710,7 +710,15 @@ class Agent:
             # threshold and overflow the engine mid-task (found live 2026-08-15:
             # a 26k request into the 24.5k window while _ctx_used still read
             # much less). Floor the estimate with what's actually in history.
+            # The tool SCHEMA and the system prompt ride along with every
+            # single request and were never counted — measured live on a 24,576
+            # window: 70 tool definitions are ~12,400 tokens and the system
+            # prompt ~3,500, so 15,933 tokens (64% of the window) were invisible.
+            # She believed a turn sat at 19% full while it was actually at 84%,
+            # so compaction never fired and the request came back a bare 400.
+            # It got worse every time a tool was added. Count the overhead.
             est = sum(self._entry_chars(m) for m in self.history) // _CHARS_PER_TOKEN
+            est += self._fixed_overhead_tokens()
             if est > self._ctx_used:
                 self._ctx_used = est
             # Near the cap on ONE long task, every step re-trips the threshold
@@ -1133,6 +1141,23 @@ class Agent:
             pass
 
     # -- memory compaction --------------------------------------------
+
+    def _fixed_overhead_tokens(self) -> int:
+        """Tokens spent before a word of conversation: the system prompt plus
+        every tool definition. Cached — it only moves when the toolset does."""
+        n = getattr(self, "_overhead_cache", None)
+        if n is not None:
+            return n
+        try:
+            import json as _json
+            schema = _json.dumps([
+                {"name": t.name, "description": t.description,
+                 "parameters": t.parameters} for t in self.tools.values()])
+            n = (len(schema) + len(self._system())) // _CHARS_PER_TOKEN
+        except Exception:
+            n = 0
+        self._overhead_cache = n
+        return n
 
     @staticmethod
     def _entry_chars(m: dict) -> int:
