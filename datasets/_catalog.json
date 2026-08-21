@@ -67,5 +67,26 @@
    "argon_first_ionization_eV",
    "corroboration"
   ]
+ },
+ "critical_points": {
+  "description": "Critical temperature (K) and critical pressure (MPa) for seven common fluids. Every entry corroborated by two independent sources (Engineering ToolBox + Wikipedia/peer-reviewed). Values are the standard literature critical constants; small last-digit differences between sources are expected.",
+  "sources": [
+   "https://www.engineeringtoolbox.com/gas-critical-temperature-pressure-d_161.html",
+   "https://en.wikipedia.org/wiki/Critical_point_(thermodynamics)",
+   "https://en.wikipedia.org/wiki/Critical_points_of_the_elements_(data_page)",
+   "https://en.wikipedia.org/wiki/Supercritical_fluid"
+  ],
+  "corroborated": true,
+  "saved": 1787341760.0170255,
+  "n": 7,
+  "keys": [
+   "carbon_dioxide",
+   "water",
+   "nitrogen",
+   "methane",
+   "ethane",
+   "argon",
+   "ammonia"
+  ]
  }
 }
