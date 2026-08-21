@@ -29,7 +29,7 @@ from typing import Callable
 
 import httpx
 
-from . import (audio_nerve, bioacoustics, browser, business, cad, cortex, datasets, doolittle, persona, vault, medical, xfiles, frameworks, identity, law, markets,
+from . import (audio_nerve, bioacoustics, browser, business, cad, cortex, datasets, doolittle, persona, toolindex, vault, medical, xfiles, frameworks, identity, law, markets,
                market_regime, crossmap, news, paper_market, scanner, sims, walkforward)
 from .codetools import syntax_check
 from .config import load_config
@@ -623,6 +623,9 @@ def _generate_image(ws_root: str, prompt: str, filename: str = "",
             f"Use look_at_image on that path to see what you made.")
 
 
+_INDEX_REGISTRY: dict = {}
+
+
 def build_tools(ws: Workspace, fenced: bool = False) -> list[Tool]:
     """Construct the toolset bound to one workspace.
 
@@ -909,7 +912,7 @@ def build_tools(ws: Workspace, fenced: bool = False) -> list[Tool]:
             out = out[:MAX_OUTPUT_CHARS] + f"\n... (truncated, {len(out)} chars total)"
         return f"[exit {r.returncode}]\n{out}"
 
-    return [
+    _built = [
         Tool(
             name="verify_phrase",
             description=(
@@ -1408,6 +1411,35 @@ def build_tools(ws: Workspace, fenced: bool = False) -> list[Tool]:
             parameters={"type": "object",
                         "properties": {"handle": {"type": "string"}}},
             run=lambda handle="": vault.clear_credentials(handle),
+        ),
+        Tool(
+            name="find_tools",
+            description="Find a tool you don't currently have loaded. Most of your "
+                        "toolkit is kept out of the way so your context stays free for "
+                        "thinking; describe what you're trying to DO in plain words "
+                        "('search my email', 'design a bracket', 'check a drug name', "
+                        "'hunt a market driver') and this names the tools for it. Then "
+                        "load_tools to make them usable. Reach for this whenever a job "
+                        "needs something beyond your everyday set — the capability is "
+                        "there, it just isn't in your hands yet.",
+            parameters={"type": "object",
+                        "properties": {"query": {"type": "string",
+                            "description": "what you're trying to do"}},
+                        "required": ["query"]},
+            run=lambda query: toolindex.find_tools(query, _INDEX_REGISTRY),
+        ),
+        Tool(
+            name="load_tools",
+            description="Load tools by exact name so you can use them for the rest of "
+                        "this turn. Pass them ALL AT ONCE — every separate load makes "
+                        "the model reprocess its prompt, so one call with four names is "
+                        "far cheaper than four calls with one. Use find_tools first if "
+                        "you don't know the exact name. They stay for this turn only.",
+            parameters={"type": "object",
+                        "properties": {"names": {"type": "array", "items": {"type": "string"},
+                            "description": "exact tool names, all in one call"}},
+                        "required": ["names"]},
+            run=lambda names: toolindex.load_tools(names, _INDEX_REGISTRY),
         ),
         Tool(
             name="search_life",
@@ -2171,3 +2203,16 @@ def build_tools(ws: Workspace, fenced: bool = False) -> list[Tool]:
             run=lambda query: recall_search(query, workspace=str(ws.root)),
         ),
     ]
+    # Everything outside the mode's core set stays reachable through the
+    # index rather than riding along on every request. Registered here so
+    # find_tools/load_tools can resolve a name to a real tool.
+    from .modes import _CORE
+    _INDEX_REGISTRY.clear()
+    # The index must not contain the tools that OPERATE it: find_tools' own
+    # description carries example phrases ("search my email", "design a
+    # bracket"), so it matched those queries and returned itself instead of the
+    # tool being asked for.
+    _META = {"find_tools", "load_tools"}
+    _INDEX_REGISTRY.update({t.name: t for t in _built
+                            if t.name not in _CORE and t.name not in _META})
+    return _built

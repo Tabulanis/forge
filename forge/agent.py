@@ -559,6 +559,12 @@ class Agent:
         # The mode may carry a lighter toolset (fewer tools = leaner prompt =
         # faster, and she doesn't reach for a linter while brainstorming).
         allowed = get_mode(self.active_mode)["tools"]
+        # Tools pulled from the index this turn ride alongside the mode's core
+        # set. Privacy still gets the last word — an on-demand load can never
+        # reach past what off-the-record or sandbox has taken away.
+        if allowed is not None:
+            from . import toolindex
+            allowed = set(allowed) | toolindex.loaded()
         # The privacy mode can further remove tools — off-the-record hides the
         # disk-writers, sandbox hides everything that touches the filesystem.
         deny = get_privacy(self.privacy)["deny"]
@@ -637,6 +643,12 @@ class Agent:
         self._turn_hiccups = []
         self._call_counts = {}    # successful-call fingerprints -> times this turn
         self._tool_attempts = {}  # tool NAME -> attempts this turn (per-tool ceiling)
+        try:
+            from . import toolindex
+            toolindex.reset()          # on-demand tools last one turn
+        except Exception:
+            pass
+        self._overhead_cache = None    # toolset changed -> re-measure the window
         turn_start = len(self.history) - 1   # index of this turn's user msg
 
         # Bug Hunt mode arms the flight recorder for this turn.
