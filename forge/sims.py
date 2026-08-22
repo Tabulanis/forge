@@ -41,6 +41,14 @@ def run(params):
 
 # A known case so the sim can prove itself. It's marked VALIDATED only if run()
 # reproduces `expect` within `tol`. Leave SELFTEST out and it stays EXPERIMENTAL.
+#
+# WHERE `expect` COMES FROM IS THE WHOLE POINT. It must be a number you can
+# point at somewhere else — a textbook worked example, a published figure, a
+# hand-derivation from first principles. A value read back off this sim's own
+# output makes the test circular: it will pass forever and prove only that the
+# code hasn't changed. Found live on four wing sims whose lift/drag expectation
+# was their own output, marked "Corrected" — they carried a ✓ that meant
+# nothing, and were demoted.
 # Make the ✓ mean something: `expect` should be an answer you KNOW is right from an
 # INDEPENDENT source (a textbook, a worked example) — NOT one you did in your own
 # head, or the sim just inherits your slip and the test proves nothing. Keep `tol`
