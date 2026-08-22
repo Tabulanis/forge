@@ -23,6 +23,7 @@ Read-only against her data; the only thing it writes is the findings file.
 from __future__ import annotations
 
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -357,7 +358,8 @@ def cmd_ask(task: str, model: str = "merge38", workspace: str = "",
     she got there cleanly or tripped — and log a finding when she trips, so
     the escalation to a bigger model is evidence-driven rather than a hunch."""
     import subprocess
-    ws = workspace or str(Path.home() / "aidojo" / "current" / "MoneyLab")
+    # Default to wherever you are, not a path from one machine.
+    ws = workspace or os.environ.get("BABYSIT_WORKSPACE") or os.getcwd()
     forge_bin = str(Path.home() / "forge" / ".venv" / "bin" / "forge")
     print(f"→ handing to Merge ({model})…\n")
     _t0 = time.time()
