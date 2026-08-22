@@ -219,6 +219,15 @@ def verify_shelf() -> str:
             now_valid = bool(st and st.get("pass"))
             status = ("✓ revalidated" if now_valid
                       else ("⚠ SELFTEST NOW FAILING" if st else "⚠ no selftest"))
+            # A selftest whose expectations were read off the sim's own output
+            # passes forever and proves nothing. Re-running it can't detect
+            # that — only a human reading it can — so once a sim is marked
+            # circular the immune system must not keep promoting it back.
+            # (Found live: four wing sims were demoted by hand and this loop
+            # restored their checkmarks on the very next verify.)
+            if meta.get("selftest_circular"):
+                now_valid = False
+                status = "⚠ EXPERIMENTAL — selftest is self-derived, proves nothing"
         was = bool(meta.get("validated"))
         if was != now_valid:
             meta["validated"] = now_valid

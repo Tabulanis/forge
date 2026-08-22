@@ -26,7 +26,8 @@
   "validated": false,
   "created": 1786868402.2530398,
   "updated": 1786868516.226092,
-  "experimental_reason": "SELF-DERIVED SELFTEST \u2014 the expected values were read off this sim's own output, not from an independent reference, so passing proves only that the code is unchanged, not that it is right. Treat as EXPERIMENTAL until a published figure or a hand-derivation from first principles is used."
+  "experimental_reason": "SELF-DERIVED SELFTEST \u2014 the expected values were read off this sim's own output, not from an independent reference, so passing proves only that the code is unchanged, not that it is right. Treat as EXPERIMENTAL until a published figure or a hand-derivation from first principles is used.",
+  "selftest_circular": true
  },
  "circular_wing_aerodynamics": {
   "description": "Aerodynamic analysis of circular wing configurations",
@@ -34,7 +35,8 @@
   "validated": false,
   "created": 1786868690.8985577,
   "updated": 1786868822.7622836,
-  "experimental_reason": "SELF-DERIVED SELFTEST \u2014 the expected values were read off this sim's own output, not from an independent reference, so passing proves only that the code is unchanged, not that it is right. Treat as EXPERIMENTAL until a published figure or a hand-derivation from first principles is used."
+  "experimental_reason": "SELF-DERIVED SELFTEST \u2014 the expected values were read off this sim's own output, not from an independent reference, so passing proves only that the code is unchanged, not that it is right. Treat as EXPERIMENTAL until a published figure or a hand-derivation from first principles is used.",
+  "selftest_circular": true
  },
  "circular_wing_structure": {
   "description": "Structural load analysis for circular wing designs",
@@ -42,7 +44,8 @@
   "validated": false,
   "created": 1786869032.204709,
   "updated": 1786869136.5565975,
-  "experimental_reason": "SELF-DERIVED SELFTEST \u2014 the expected values were read off this sim's own output, not from an independent reference, so passing proves only that the code is unchanged, not that it is right. Treat as EXPERIMENTAL until a published figure or a hand-derivation from first principles is used."
+  "experimental_reason": "SELF-DERIVED SELFTEST \u2014 the expected values were read off this sim's own output, not from an independent reference, so passing proves only that the code is unchanged, not that it is right. Treat as EXPERIMENTAL until a published figure or a hand-derivation from first principles is used.",
+  "selftest_circular": true
  },
  "vtol_transition_mechanics": {
   "description": "Transition mechanics analysis for VTOL aircraft",
@@ -50,7 +53,8 @@
   "validated": false,
   "created": 1786869328.9737935,
   "updated": 1786869328.973794,
-  "experimental_reason": "SELF-DERIVED SELFTEST \u2014 the expected values were read off this sim's own output, not from an independent reference, so passing proves only that the code is unchanged, not that it is right. Treat as EXPERIMENTAL until a published figure or a hand-derivation from first principles is used."
+  "experimental_reason": "SELF-DERIVED SELFTEST \u2014 the expected values were read off this sim's own output, not from an independent reference, so passing proves only that the code is unchanged, not that it is right. Treat as EXPERIMENTAL until a published figure or a hand-derivation from first principles is used.",
+  "selftest_circular": true
  },
  "plasma_parameters": {
   "description": "Plasma frequency, Debye length, and Debye-sphere particle count from n_e and T_e",
