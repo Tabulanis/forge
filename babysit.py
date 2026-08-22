@@ -16,6 +16,7 @@ started from the dashboard or another terminal.
   babysit watch [secs]       live: watch her work and flag trouble as it happens
   babysit replay <id>        the flight recording (Bug Hunt mode) for a session
   babysit ask "<task>"       hand a job to Merge FIRST; flag it only if she trips
+  babysit ask --want=tool,tool "<task>"   also assert WHICH tools she used
 
 Read-only against her data; the only thing it writes is the findings file.
 """
@@ -340,7 +341,18 @@ _HICCUPS = [
 ]
 
 
-def cmd_ask(task: str, model: str = "merge38", workspace: str = "") -> None:
+def _tools_used_since(t0: float) -> list:
+    """Which tools actually ran after t0 — the path, not just the answer."""
+    used = []
+    for s in _sessions()[:4]:
+        for e in s.get("log", []):
+            if e.get("kind") == "tool" and e.get("t", 0) >= t0:
+                used.append(e.get("tool"))
+    return used
+
+
+def cmd_ask(task: str, model: str = "merge38", workspace: str = "",
+            want: list | None = None) -> None:
     """Hand a job to Merge first. Print her answer, then say plainly whether
     she got there cleanly or tripped — and log a finding when she trips, so
     the escalation to a bigger model is evidence-driven rather than a hunch."""
@@ -348,6 +360,7 @@ def cmd_ask(task: str, model: str = "merge38", workspace: str = "") -> None:
     ws = workspace or str(Path.home() / "aidojo" / "current" / "MoneyLab")
     forge_bin = str(Path.home() / "forge" / ".venv" / "bin" / "forge")
     print(f"→ handing to Merge ({model})…\n")
+    _t0 = time.time()
     try:
         r = subprocess.run([forge_bin, "-m", model, "--auto", "-w", ws, task],
                            capture_output=True, text=True, timeout=600)
@@ -369,6 +382,20 @@ def cmd_ask(task: str, model: str = "merge38", workspace: str = "") -> None:
                                    "Stopped after", "Superego review", "⚠"))
         or "error 400" in ln.lower())
     found = [why for pat, why in _HICCUPS if pat.lower() in harness.lower()]
+
+    # Merge's own point while designing these tests: a right-shaped answer
+    # reached by the wrong path is indistinguishable from a real pass unless
+    # you record WHICH tool ran. Her example was live — asked to read a saved
+    # dataset she shelled out with `cat` instead of touching the loader, and
+    # the answer was correct, so the test "passed" while proving nothing.
+    used = _tools_used_since(_t0)
+    if used:
+        print(f"\n  path taken: {', '.join(dict.fromkeys(used))}")
+    if want:
+        missing = [w for w in want if w not in used]
+        if missing:
+            found.append(f"did NOT use the expected tool(s): {', '.join(missing)} "
+                         f"— took {', '.join(dict.fromkeys(used)) or 'no tools'} instead")
     answered = bool(out.strip()) and "[TIMED OUT" not in out
     print("\n" + "-" * 60)
     if not answered:
@@ -407,6 +434,10 @@ if __name__ == "__main__":
     elif cmd == "replay" and len(a) > 1:
         cmd_replay(a[1])
     elif cmd == "ask" and len(a) > 1:
-        cmd_ask(" ".join(a[1:]))
+        rest, want = a[1:], None
+        if rest and rest[0].startswith("--want="):
+            want = [w for w in rest[0].split("=", 1)[1].split(",") if w]
+            rest = rest[1:]
+        cmd_ask(" ".join(rest), want=want)
     else:
         print(__doc__)
