@@ -518,3 +518,51 @@ index 35042cb..1304886 100644
              ) from None
  
 ```
+
+## FLAGGED — not yet built (author request, 2026-08-23)
+
+**Self-healing routine, Merge-controlled.** Twice on 2026-08-22/23 her
+27B degraded on long heavily-loaded turns (a planning loop; then true
+output collapse — "pin files pin files", caught by the superego, retry
+was worse). Recovery was manual both times: restart the server, abandon
+the poisoned session, re-brief fresh. The flag: make that a ROUTINE —
+automatic detection (degeneration, stall, context pressure via
+agent.py's _ctx_used) and recovery (server restart, fresh-session
+re-brief carrying the plan forward), with Merge herself holding the
+controls (pause it, tune thresholds, trigger it). Possibly hosted on
+the SECOND GPU when it arrives (see her own GPU/PSU analysis in the
+ledger) so the watchdog survives the brain it watches. DON'T build yet
+— author wants it flagged only.
+
+**Fix-when-you-can (smaller, forge-side):** turn-size governor — her
+failures cluster on giant all-in-one turns; agent.py could cap
+tool-calls/output per turn and force chunking, plus auto-recovery when
+the superego's incoherent-fragment bounce fails twice (end the turn
+cleanly instead of letting garbage into history).
+
+## INCIDENT 2026-08-22 evening — "everything went haywire", user rebooted 20:18
+
+Reconstructed from journal + transcripts (no kernel crash, no OOM-kill; it
+was a clean user reboot). Three things stacked:
+1. **Merge's 27B collapsed a third time** (~19:51): garbage fragments, kept
+   working after two "stop"s, final reply was literally
+   `.pyforge-protect:pyforge-protect`. Same failure the self-healing flag
+   above describes. The dash looked hung because the turn never ended well.
+2. **Network blackout from 19:20 to reboot**: PIA's tun0 dropped; PIA's
+   kill-switch (set to "auto") then blocked ALL traffic. Claude's API calls
+   died (`ENOTIMP` = DNS), Tailscale logged ~7k "connection refused", the
+   user lost the app remotely. Not Forge's fault, but Forge is what he
+   noticed first.
+3. **No memory guard**: no earlyoom/systemd-oomd, swappiness 180, and five
+   llama-servers each defaulting to an 8 GB prompt cache in host RAM. The
+   user slice hit 57 GB RAM + 19.6 GB swap (= everything) at some point
+   this boot. start-model.sh now caps caches (--cache-ram).
+
+**Rule (all agents):** `forge-model-merge.service` had been dead since
+00:41 and the 27B ran hand-launched all day; a Claude session then
+`kill`ed it and relaunched with `nohup` inside its own terminal. Never do
+that. Restart her with `systemctl --user restart forge-model-merge` so
+systemd owns the process, it survives the terminal, and respawns on
+failure. A monitor now writes one line/minute to
+`~/aidojo/shared/sysmon/<date>.log` (RAM, swap, pressure, GPU, net) —
+read it FIRST next time something "goes down".

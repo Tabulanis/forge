@@ -26,7 +26,7 @@ case "${1:-big}" in
     # working memory on the card) is stored at 8-bit instead of 16-bit.
     # Needs flash attention on. Measured 2026-08-11 before keeping.
     PORT=8084; CTX=32768; NGL=99  # moved off 8080: Mote's harness server owns 8080 now (2026-08-22)
-    EXTRA="-fa on -ctk q8_0 -ctv q8_0" ;;
+    EXTRA="-fa on -ctk q8_0 -ctv q8_0"; CACHE=4096 ;;
   tiny)
     # -ngl 0 keeps this one entirely in system RAM on the CPU, leaving the
     # whole GPU for the big model. That's the point of a small router model:
@@ -73,7 +73,7 @@ case "${1:-big}" in
     # guillotined mid-thought (which was producing empty answers). Per-mode
     # budgets aren't possible — llama takes this globally at startup. Lower it
     # if Precise/Deep feel too slow; -1 = unlimited, 0 = no thinking.
-    EXTRA="-fa on -ctk q8_0 -ctv q8_0 --reasoning-budget 1024" ;;
+    EXTRA="-fa on -ctk q8_0 -ctv q8_0 --reasoning-budget 1024"; CACHE=4096 ;;
   merge38)
     # CANDIDATE brain: Qwen3.8 27B abliterated (Blackfrost) WITH native vision
     # (mmproj ships in the same repo — the hard rule held). Same port as merge:
@@ -83,7 +83,7 @@ case "${1:-big}" in
     MODEL=~/forge/models/Qwen3.8-27B-ABLITERATED-Q4_K_M.gguf
     MMPROJ=~/forge/models/mmproj-Qwen3.8-27B-ABLITERATED-F16.gguf
     PORT=8085; CTX=32768; NGL=99
-    EXTRA="-fa on -ctk q8_0 -ctv q8_0 --reasoning-budget 1024" ;;
+    EXTRA="-fa on -ctk q8_0 -ctv q8_0 --reasoning-budget 1024"; CACHE=4096 ;;
   embed)
     # Her associative sense-organ: nomic-embed-text on CPU, embedding-only.
     # Turns memory into vectors so recall finds things by MEANING, not just
@@ -93,6 +93,13 @@ case "${1:-big}" in
     PORT=8086; CTX=2048; NGL=0; EMBED=1 ;;
   *) echo "unknown model: $1  (try: big, tiny, little, coder14, vision, merge, merge38, embed, imagegen)"; exit 1 ;;
 esac
+
+# Prompt cache lives in HOST RAM and llama-server defaults it to 8 GB PER
+# SERVER. With five servers up that is up to 40 GB of RAM nobody asked for
+# (2026-08-22: the 3B helper alone was sitting on 4.6 GB of cached prompts).
+# Big GPU brains keep 4 GB (real reuse); CPU helpers get 1 GB.
+CACHE=${CACHE:-1024}
+EXTRA="${EXTRA:-} --cache-ram $CACHE"
 
 if [ -n "${EMBED:-}" ]; then
   # Embedding-only server: --pooling mean is what nomic-embed expects, and no
@@ -112,7 +119,7 @@ if [ -n "${MMPROJ:-}" ]; then
     # already owns the card. Hiding the GPU at the driver level is decisive.
     echo "  (CPU only — the GPU is spoken for; expect ~2 min per image)"
     exec env CUDA_VISIBLE_DEVICES="" "$LLAMA" -m "$MODEL" --mmproj "$MMPROJ" \
-      --host 127.0.0.1 --port "$PORT" -c "$CTX" --jinja
+      --host 127.0.0.1 --port "$PORT" -c "$CTX" --jinja ${EXTRA:-}
   fi
   exec "$LLAMA" -m "$MODEL" --mmproj "$MMPROJ" --host 127.0.0.1 --port "$PORT" \
     -ngl "$NGL" -c "$CTX" --jinja ${EXTRA:-}
@@ -126,7 +133,7 @@ if [ "$NGL" = "0" ]; then
   # build touch the card. Hiding the GPU entirely is what actually keeps
   # a CPU model off it — vital when the big model owns nearly all VRAM.
   exec env CUDA_VISIBLE_DEVICES="" "$LLAMA" -m "$MODEL" --host 127.0.0.1 \
-    --port "$PORT" -c "$CTX" --jinja
+    --port "$PORT" -c "$CTX" --jinja ${EXTRA:-}
 fi
 exec "$LLAMA" -m "$MODEL" --host 127.0.0.1 --port "$PORT" \
   -ngl "$NGL" -c "$CTX" --jinja ${EXTRA:-}
