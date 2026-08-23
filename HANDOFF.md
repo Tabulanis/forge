@@ -566,3 +566,23 @@ systemd owns the process, it survives the terminal, and respawns on
 failure. A monitor now writes one line/minute to
 `~/aidojo/shared/sysmon/<date>.log` (RAM, swap, pressure, GPU, net) —
 read it FIRST next time something "goes down".
+
+## What actually works for big Merge jobs (proven 2026-08-22, 7 chunks, 0 failures after the fix)
+
+Three sessions died on the social-media job by reading forever. Seven
+chunked sessions then finished it in 2–13 minutes each. The difference
+was entirely in the brief:
+1. **Every fact inline.** The brief carries the slot list, event facts,
+   voice notes, canon guards. She reads 2–3 named files, nothing else.
+2. **Hard tool cap, named tools.** "Exactly two read_file, one edit_file,
+   one run_command. No search/grep/list_dir/sed/re-reading. Six max."
+3. **No unresolvable references.** Her one loop after the fix was a real
+   bug: the brief cited place ids that don't exist in the board. She did
+   what the schema said and hunted for them ~100 times. Check every id
+   you hand her exists, or tell her to omit the field.
+4. **Fresh session per chunk**, one-line report, explicit STOP. Next
+   chunk goes out on a new session with the facts it needs.
+5. Her stage-direction leak: brief phrases can land verbatim in bodies
+   ("Warm, safe, shareable"). Say so once and she stops.
+The engine (Storyweave/board/engine.py) deciding WHAT should exist and
+her filling words only is the shape that made this chunkable at all.
