@@ -45,6 +45,7 @@ FINDINGS_DIR = Path.home() / ".forge" / "findings"  # per-task working-facts scr
 # --- scouts: throwaway read-only sub-agents (fan-out) ---
 SCOUT_TOOLS = {"read_file", "search", "list_dir", "fetch_url"}   # read-only only
 SCOUT_STEPS = 14
+AUTO_SCOUT_ENABLED = False   # shelved: too slow on the 27B, hallucinates on the 3B — flip on with a fast brain
 SCOUT_PROMPT = (
     "You are a SCOUT — a throwaway research worker with your own scratch memory. "
     "You are handed ONE narrow question and nothing else matters. Investigate with "
@@ -646,6 +647,27 @@ def _generate_image(ws_root: str, prompt: str, filename: str = "",
 _INDEX_REGISTRY: dict = {}
 
 
+def _file_outline(lines: list[str]) -> str:
+    """A structural map of a file — its defs/classes/headers with line numbers —
+    so a big file can be navigated without dumping it. Falls back to a short
+    peek when there's no obvious structure (data files)."""
+    import re
+    struct = re.compile(
+        r"^\s*(def |class |async def |function\b|func |export |public |private |"
+        r"#{1,6}\s|[A-Za-z0-9_-]+:\s*$)")
+    out = []
+    for i, l in enumerate(lines, 1):
+        if struct.match(l):
+            out.append(f"  {i:5d}: {l.strip()[:90]}")
+            if len(out) >= 70:
+                out.append("  … (map truncated — use contains= to find the rest)")
+                break
+    if not out:                                  # no structure: a short peek
+        out = [f"  {i:5d}: {l.strip()[:90]}" for i, l in enumerate(lines[:30], 1)]
+        out.append("  … (no headings found — use contains= to grep this file)")
+    return "\n".join(out)
+
+
 def _looks_like_finding(note: str) -> bool:
     """A note that reads like a task FACT (about the subject being investigated)
     rather than a how-we-work lesson. Conservative: needs a digit AND a
@@ -686,6 +708,9 @@ def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provi
                 return f"Error: {e}"
         return inner
 
+    _bigfile_reads = {}    # path -> times read whole/paged this session
+    _bigfile_digest = {}   # path -> cached scout digest (auto-scout)
+
     def read_file(path: str, offset: int = 0, limit: int = 2000, contains: str = "") -> str:
         f = ws.resolve(path)
         if not f.exists():
@@ -700,6 +725,36 @@ def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provi
         except Exception as e:
             return f"Error reading {ws.rel(f)}: {e}"
         ws.mark_read(f)
+        # Harness-carries-the-model: reading a big file whole is the drowning pattern.
+        # 1st whole read -> a MAP (functions/headers) + the three ways in.
+        # Keep paging the SAME big file -> the harness auto-scouts it and hands back a
+        # digest, so even a model that never elects a scout stops drowning.
+        # contains= / small files bypass entirely (a deliberate read is never limited).
+        _big = len(lines) > 600 or f.stat().st_size > 50_000
+        if _big and not contains:
+            _k = str(f)
+            _bigfile_reads[_k] = _bigfile_reads.get(_k, 0) + 1
+            if offset == 0:
+                return (f"{ws.rel(f)} is large ({len(lines)} lines) — not dumped whole, to "
+                        f"protect your working memory. Jump in with ONE of:\n"
+                        f"  • read_file(\"{ws.rel(f)}\", contains=\"WORD\") — only the lines you need\n"
+                        f"  • scout(\"<your question about {ws.rel(f)}>\") — a sub-agent reads it, you get just the answer\n"
+                        f"  • read_file(\"{ws.rel(f)}\", offset=N) — page from a line\n\n"
+                        f"MAP of {ws.rel(f)}:\n" + _file_outline(lines))
+            if AUTO_SCOUT_ENABLED and _bigfile_reads[_k] >= 3 and provider is not None:
+                if _k not in _bigfile_digest:
+                    # fast digest: the LITTLE model, low step budget — trading a
+                    # perfect summary for speed, since a slow scout would drag the turn.
+                    _bigfile_digest[_k] = _run_scout(
+                        f"Summarize {ws.rel(f)} tightly for someone who must understand it "
+                        f"WITHOUT reading it whole: what it does, its key functions/classes/"
+                        f"sections with one-line notes and line numbers, and anything notable. "
+                        f"A few short paragraphs at most.",
+                        summarizer or provider, 6)
+                return (f"You've paged {ws.rel(f)} several times — to spare your working "
+                        f"memory a scout read the whole file and summarized it. Use "
+                        f"read_file(\"{ws.rel(f)}\", contains=\"...\") for exact lines you "
+                        f"still need.\n\nSCOUT DIGEST of {ws.rel(f)}:\n" + _bigfile_digest[_k])
         if contains:
             body, n = grep_text("\n".join(lines), contains)
             if not n:
@@ -875,12 +930,28 @@ def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provi
         needles = [_canon(p) for p in pattern.split("|") if _canon(p.strip())]
         if not needles:
             return "(empty pattern)"
-        hits, total = [], 0
+        import time as _time
+        _t0 = _time.time()
+        _SKIP_DIRS = {"node_modules", "__pycache__", ".git", ".venv",
+                      ".forge_backups", "site-packages", "dist", "build"}
+        _SKIP_EXT = {".pyc", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg",
+                     ".pdf", ".zip", ".gz", ".tar", ".npz", ".npy", ".f32",
+                     ".bin", ".gguf", ".so", ".o", ".woff", ".woff2", ".ttf",
+                     ".ico", ".mp3", ".mp4", ".wav", ".sqlite", ".db"}
+        _MAX_FILE = 1_500_000        # bytes: bigger than this isn't source
+        _BUDGET = 8.0                # seconds: never let a search hang
+        hits, total, _timed_out = [], 0, False
         for root, dirs, files in os.walk(d):
-            dirs[:] = [x for x in dirs if not x.startswith(".") and x != "node_modules"]
+            dirs[:] = [x for x in dirs if not x.startswith(".") and x not in _SKIP_DIRS]
+            if _time.time() - _t0 > _BUDGET:
+                _timed_out = True; break
             for fn in files:
                 fp = Path(root) / fn
+                if fp.suffix.lower() in _SKIP_EXT:
+                    continue
                 try:
+                    if fp.stat().st_size > _MAX_FILE:      # skip data blobs
+                        continue
                     for i, line in enumerate(fp.read_text(encoding="utf-8",
                                                           errors="ignore").splitlines(), 1):
                         if any(n in _canon(line) for n in needles):
@@ -889,6 +960,12 @@ def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provi
                                 hits.append(f"{ws.rel(fp)}:{i}:{line.strip()[:200]}")
                 except Exception:
                     continue
+            if _time.time() - _t0 > _BUDGET:
+                _timed_out = True; break
+        if _timed_out:
+            hits.append(f"... (search stopped after {int(_BUDGET)}s to avoid hanging; "
+                        f"results may be partial — narrow the path= to a subfolder, "
+                        f"or use read_file with contains= on a specific file)")
         # Silent truncation is how "the name is never revealed" happens: 60
         # early-book hits with no hint that the reveal sits at hit 80. Keep
         # counting past the cap and SAY what was left unshown.
@@ -965,18 +1042,15 @@ def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provi
             fh.write("- " + fact[:400] + "\n")
         return "Saved to your working findings (stays in context, survives compaction)."
 
-    def scout(mission: str) -> str:
-        """Dispatch a throwaway read-only sub-agent to answer one narrow question,
-        returning only its short conclusion so the raw material never enters the
-        caller's context."""
-        mission = (mission or "").strip()
-        if not mission:
-            return "Give the scout a specific question to investigate."
-        if provider is None:
+    def _run_scout(mission: str, prov, steps: int) -> str:
+        """Run a throwaway read-only sub-agent on the given provider/step-budget
+        and return only its short conclusion. Used both by the scout tool (full
+        27B) and the auto-scout digest (fast little model)."""
+        if prov is None:
             return "Scout unavailable (no model wired in)."
         from .agent import Agent   # lazy import: avoid a tools<->agent cycle
         sub_tools = [x for x in build_tools(ws, session_id="") if x.name in SCOUT_TOOLS]
-        sub = Agent(provider, sub_tools, max_steps=SCOUT_STEPS,
+        sub = Agent(prov, sub_tools, max_steps=steps,
                     permission_mode="auto", system_prompt=SCOUT_PROMPT,
                     notes_path=None, summarizer=summarizer, superego=None,
                     reads=ws.reads, read_mtimes=ws.read_mtimes)
@@ -994,6 +1068,15 @@ def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provi
             return f"Scout hit an error: {type(e).__name__}: {e}"
         final = (final or "").strip()
         return final[:2000] if final else "(scout came back empty — narrow the question or resend)"
+
+    def scout(mission: str) -> str:
+        """Dispatch a throwaway read-only sub-agent to answer one narrow question,
+        returning only its short conclusion so the raw material never enters the
+        caller's context."""
+        mission = (mission or "").strip()
+        if not mission:
+            return "Give the scout a specific question to investigate."
+        return _run_scout(mission, provider, SCOUT_STEPS)
 
     def run_command(command: str, timeout: int = DEFAULT_TIMEOUT) -> str:
         blocked = _machine_killer(command)
