@@ -7,6 +7,42 @@ MAX_RESULTS = 8
 MAX_PAGE_CHARS = 6000
 
 
+def grep_text(text: str, pattern: str, ctx: int = 2, cap: int = 18000):
+    """Return only the lines of `text` that match `pattern` (regex, case-
+    insensitive; falls back to plain substring), each with a couple of lines
+    of surrounding context and 1-based line numbers. This is the grep-not-dump
+    core: it lets a big file or page be searched without pouring the whole
+    thing into the model's context. Returns (rendered_text, match_count)."""
+    import re
+    lines = text.splitlines()
+    try:
+        rx = re.compile(pattern, re.I); test = rx.search
+    except re.error:
+        pat = (pattern or "").lower(); test = lambda s: pat in s.lower()
+    hits = [i for i, l in enumerate(lines) if test(l)]
+    if not hits:
+        return "", 0
+    ranges = []
+    for i in hits:
+        lo, hi = max(0, i - ctx), min(len(lines), i + ctx + 1)
+        if ranges and lo <= ranges[-1][1]:
+            ranges[-1][1] = max(ranges[-1][1], hi)
+        else:
+            ranges.append([lo, hi])
+    out, used = [], 0
+    for lo, hi in ranges:
+        if out:
+            out.append("        ⋯"); used += 10
+        for i in range(lo, hi):
+            entry = f"{i + 1:6d}\t{lines[i]}"
+            if used + len(entry) > cap:
+                out.append(f"... (more matches — capped at {cap // 1000}KB; "
+                           f"narrow the pattern)")
+                return "\n".join(out), len(hits)
+            out.append(entry); used += len(entry) + 1
+    return "\n".join(out), len(hits)
+
+
 def web_search(query: str, max_results: int = 6) -> str:
     """Search the web and return titles, links, and snippets."""
     query = (query or "").strip()
@@ -34,8 +70,10 @@ def web_search(query: str, max_results: int = 6) -> str:
     return "\n".join(lines)
 
 
-def fetch_url(url: str) -> str:
-    """Fetch a web page and return its readable text (scripts/nav stripped)."""
+def fetch_url(url: str, contains: str = "") -> str:
+    """Fetch a web page and return its readable text (scripts/nav stripped).
+    Pass `contains` to get back ONLY the lines matching that pattern (with a
+    little context) instead of the whole page — grep-not-dump for the web."""
     url = (url or "").strip()
     if not url.startswith(("http://", "https://")):
         return "Error: give a full http(s):// URL (search first with web_search)."
@@ -57,6 +95,11 @@ def fetch_url(url: str) -> str:
     title = ""
     if soup.title and soup.title.string:
         title = soup.title.string.strip()
+    if contains:
+        body, n = grep_text(soup.get_text("\n"), contains)
+        if not n:
+            return f"{title}\n{url}\n\nFetched, but no lines match {contains!r}."
+        return f"{title}\n{url}\n\n{n} match(es) for {contains!r}:\n{body}"
     text = " ".join(soup.get_text(" ").split())
     if not text:
         return f"Fetched {url} but found no readable text on it."

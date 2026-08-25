@@ -161,7 +161,8 @@ class Session:
                 superego = None
         self.agent = Agent(
             provider=provider,
-            tools=build_tools(ws, fenced=bool(cfg.get("kid_mode")))
+            tools=build_tools(ws, fenced=bool(cfg.get("kid_mode")), session_id=self.id,
+                            provider=provider, summarizer=summarizer)
                   + build_media_tools(ws, mc),
             max_steps=int(cfg["agent"].get("max_steps", 40)),
             permission_mode=cfg["agent"].get("permission_mode", "ask"),

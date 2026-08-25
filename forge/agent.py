@@ -348,6 +348,12 @@ Your notebook:
   the end of these instructions. Trust it — it's lessons from past sessions.
 - When you learn something durable (a gotcha, a correction from the user, a
   command that must be run a certain way), record it with save_note.
+- Findings vs notes: for THIS TASK's hard facts — a date, a number, a
+  file:line, a "worked here / broke there" state — use save_finding the moment
+  you establish them. It's a per-task scratchpad that stays in your context and
+  survives memory compaction, so a fact found an hour ago isn't lost when memory
+  condenses. Keep save_note for permanent how-we-work lessons only; never put
+  task content or a guess in save_note.
 - Notes record HOW WE WORK — never content. No world facts, no story
   ideas, no "discoveries" about the fiction, no interpretations of what
   something in a creative project "really means." Content lives in
@@ -537,6 +543,20 @@ class Agent:
                        "normal here). Don't trust what you remember about "
                        "them — read_file again before using or restating "
                        "anything from them.")
+        # Working findings — the per-task scratchpad (survives compaction).
+        try:
+            from .tools import FINDINGS_DIR
+            _sid = getattr(self, "session_id", "")
+            _ff = (FINDINGS_DIR / f"{_sid}.md") if _sid else None
+            if _ff and _ff.exists():
+                _fnd = _ff.read_text(encoding="utf-8", errors="replace").strip()
+                if _fnd:
+                    if len(_fnd) > 4000:
+                        _fnd = "(older findings trimmed)\n" + _fnd[-4000:]
+                    text += ("\n\n# Working findings (this task — your scratchpad, "
+                             "survives memory compaction)\n" + _fnd)
+        except Exception:
+            pass
         if not self.notes_path:
             return text
         try:
@@ -636,6 +656,8 @@ class Agent:
         format_nudged = False      # tool call emitted as plain text
         repeat_nudged = False      # same passage generated repeatedly
         _empty_retried = False
+        _incoherent_retried = False
+        _findings_nudged = False
         _tidy_noted = False       # near-cap notes: once per turn, not per step
         _trim_noted = False
         # Hiccup ledger: everything that degraded THIS turn (failed tools,
@@ -664,6 +686,11 @@ class Agent:
             pass
         _mode_steps = get_mode(self.active_mode)["max_steps"]
         _wrap_at = max(3, int(_mode_steps * 0.8))
+        try:
+            from . import persona
+            _chatty = persona.settings().get("chatty", 70)
+        except Exception:
+            _chatty = 70
         for step in range(_mode_steps):
             # Final-approach warning: burning the WHOLE step budget kills the
             # turn with nothing delivered ("stopped after 80 steps") — found
@@ -743,7 +770,20 @@ class Agent:
                 _tidy_noted = True
                 yield Event(kind="note",
                             text="Tidying up my memory to make room — one moment…")
-            note = self._maybe_compact()
+            if self._will_compact() and not _findings_nudged:
+                _findings_nudged = True
+                self.history.append({
+                    "role": "user", "synthetic": True,
+                    "content": "Automatic memory check: your working memory is nearly "
+                               "full and older details are about to be condensed. If "
+                               "this task has produced hard facts you'll need later — a "
+                               "date, a number, a file:line, a worked/broke state — save "
+                               "each one NOW with save_finding before it's summarized "
+                               "away. Then carry on." + BOUNCE_TAIL,
+                })
+                note = None            # give her this step to save; compact next step
+            else:
+                note = self._maybe_compact()
             if note:   # compaction shrank history — re-anchor turn_start to the
                 # current turn's user message so the superego/grounding digest
                 # still sees THIS turn's request and evidence (found live: a
@@ -840,6 +880,36 @@ class Agent:
                                 text="The model returned an empty reply twice — "
                                      "ending this turn cleanly. Rephrasing usually "
                                      "fixes it; a fresh chat definitely does.")
+                    return
+                # Coherence guard: a long, tool-heavy turn can collapse the
+                # model into garbled fragments ("pin files pin files",
+                # ".pyforge-protect:pyforge-protect" — seen live 2026-08-22/23,
+                # three times). Appending that is POISON exactly like an empty
+                # reply: the model then pattern-matches its own noise and every
+                # retry gets worse. One clean retry; a second collapse ends the
+                # turn WITHOUT saving the garbage, so the session stays usable.
+                if self._looks_incoherent(reply.text):
+                    self._turn_hiccups.append("model output degraded into fragments")
+                    if not _incoherent_retried:
+                        _incoherent_retried = True
+                        yield Event(kind="note",
+                                    text="That reply came out garbled — giving one clean retry.")
+                        self.history.append({
+                            "role": "user", "synthetic": True,
+                            "content": "Automatic harness check: your last reply came "
+                                       "out garbled — repeated fragments, no coherent "
+                                       "sentence. That is the sign of a turn that has "
+                                       "run too long. Take a breath and answer the "
+                                       "ORIGINAL request plainly, in one or two clear "
+                                       "sentences. If you cannot do it cleanly, say so "
+                                       "in one sentence and stop." + BOUNCE_TAIL,
+                        })
+                        continue
+                    yield Event(kind="error",
+                                text="Output degraded into fragments twice — ending this "
+                                     "turn cleanly so it can't poison the session. This is "
+                                     "the long-turn collapse; a fresh message (or restarting "
+                                     "the brain) clears it. Nothing garbled was saved.")
                     return
                 self.history.append({"role": "assistant", "content": reply.text or ""})
                 # The lie the system prompt forbids hardest: claiming work
@@ -1072,6 +1142,8 @@ class Agent:
                     yield Event(kind="note", text="Stopped — ready for your next message.")
                     yield Event(kind="done")
                     return
+                if _chatty >= 40:
+                    yield Event(kind="note", text=self._call_blurb(call, _chatty))
                 yield from self._run_one(call, ask)
 
         yield Event(
@@ -1079,6 +1151,51 @@ class Agent:
             text=f"Stopped after {self.max_steps} steps without finishing. "
                  f"The task may be too big for one message, or the model may be stuck.",
         )
+
+    # -- coherence guard ----------------------------------------------
+    @staticmethod
+    def _looks_incoherent(text: str) -> bool:
+        """True when a reply has collapsed into repeated fragments / noise.
+        Deliberately conservative: short valid answers must never trip it, and
+        it only ends a turn after a SECOND occurrence, so a rare false positive
+        costs one gentle retry, never a lost turn."""
+        t = (text or "").strip()
+        if len(t) < 25:
+            return False
+        words = t.split()
+        # a) the same token repeated 6+ times in a row
+        run = 1
+        for i in range(1, len(words)):
+            if words[i] == words[i - 1]:
+                run += 1
+                if run >= 6:
+                    return True
+            else:
+                run = 1
+        # b) a short phrase repeated 4+ times ("pin files pin files ...")
+        norm = re.sub(r"[^a-z0-9 ]+", " ", t.lower())
+        nwords = norm.split()
+        for n in (2, 3):
+            if len(nwords) >= n * 4:
+                phrase = " ".join(nwords[:n])
+                if phrase and norm.count(phrase) >= 4:
+                    return True
+        # c) near-zero vocabulary on a longish reply
+        if len(words) >= 12:
+            uniq = len(set(w.lower() for w in words))
+            if uniq / len(words) < 0.30:
+                return True
+        # d) a no-space self-echo fragment (".pyforge-protect:pyforge-protect")
+        if " " not in t and len(t) > 14:
+            h = len(t) // 2
+            if t[:h] and t[:h] in t[h:]:
+                return True
+            if ":" in t:
+                a, _, b = t.partition(":")
+                a = a.strip(".")
+                if a and a in b:
+                    return True
+        return False
 
     # -- the superego gate --------------------------------------------
 
@@ -1440,6 +1557,36 @@ class Agent:
             // _CHARS_PER_TOKEN
         return (f"Memory was {int(100 * COMPACT_AT)}% full — condensed the "
                 f"earlier conversation into a briefing so nothing degrades.")
+
+    def _call_blurb(self, call, level: int) -> str:
+        """A short plain-English 'here is what I'm doing' line for the boss,
+        built from the tool call. More detail at higher chatty levels."""
+        n = call.name
+        a = call.args if isinstance(call.args, dict) else {}
+        def short(v, m=52):
+            s = str(v).replace("\n", " ").strip()
+            return s if len(s) <= m else s[:m - 1] + "…"
+        icons = {
+            "read_file": "📖 reading", "edit_file": "✍️ editing",
+            "write_file": "✍️ writing", "undo_file": "↩ reverting",
+            "list_dir": "📂 listing", "search": "🔎 searching",
+            "run_command": "▶ running", "design_part": "🧩 designing", "scout": "🔭 scouting",
+            "find_third_party": "🧭 hunting the common driver",
+            "run_sim": "🧪 simulating", "web_search": "🌐 searching the web",
+        }
+        label = icons.get(n, "· " + n.replace("_", " "))
+        path = a.get("path") or a.get("file") or a.get("filename") or a.get("target")
+        detail = ""
+        if n == "run_command":
+            detail = short(a.get("command") or a.get("cmd") or "")
+        elif n in ("search", "web_search"):
+            detail = short(a.get("query") or a.get("q") or a.get("pattern") or "")
+        elif path:
+            from pathlib import Path as _P
+            detail = short(str(path) if level >= 70 else _P(str(path)).name)
+        elif a:
+            detail = short(next(iter(a.values()), ""))
+        return f"{label}: {detail}" if detail else f"{label}…"
 
     def _run_one(self, call: ToolCall, ask: Any) -> Iterator[Event]:
         tool = self.tools.get(call.name)

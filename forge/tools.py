@@ -37,10 +37,24 @@ from .dataops import data_ops, date_calc
 from .mathtools import COMPUTE_DESCRIPTION, run_compute
 from .physics import quantum_sim, relativity_sim
 from .recall import search as recall_search
-from .web import fetch_url, web_search
+from .web import fetch_url, grep_text, web_search
 from .writing import ai_tells, name_check, text_stats
 
 MAX_READ_BYTES = 400_000     # a huge file would blow the context window
+FINDINGS_DIR = Path.home() / ".forge" / "findings"  # per-task working-facts scratchpads
+# --- scouts: throwaway read-only sub-agents (fan-out) ---
+SCOUT_TOOLS = {"read_file", "search", "list_dir", "fetch_url"}   # read-only only
+SCOUT_STEPS = 14
+SCOUT_PROMPT = (
+    "You are a SCOUT — a throwaway research worker with your own scratch memory. "
+    "You are handed ONE narrow question and nothing else matters. Investigate with "
+    "read_file (use its 'contains' option to grep — never dump a whole big file), "
+    "search, list_dir, and fetch_url. Read only what you need to answer. "
+    "Return a SHORT, self-contained answer — a few sentences at most — that directly "
+    "answers the question, with file:line or a source where it matters. Do NOT narrate "
+    "your process, do NOT paste file contents, do NOT ask questions back. If you truly "
+    "cannot determine it, say so in one line. Your answer is the ONLY thing that returns "
+    "to whoever sent you — make it tight and trustworthy.")
 MAX_OUTPUT_CHARS = 30_000    # same, for command output
 DEFAULT_TIMEOUT = 120
 
@@ -632,7 +646,22 @@ def _generate_image(ws_root: str, prompt: str, filename: str = "",
 _INDEX_REGISTRY: dict = {}
 
 
-def build_tools(ws: Workspace, fenced: bool = False) -> list[Tool]:
+def _looks_like_finding(note: str) -> bool:
+    """A note that reads like a task FACT (about the subject being investigated)
+    rather than a how-we-work lesson. Conservative: needs a digit AND a
+    measurement/state cue, so procedural lessons ('run tests with -j4') pass
+    through while investigation facts ('the parser allows 4') get redirected."""
+    if not any(c.isdigit() for c in note):
+        return False
+    low = note.lower()
+    cues = ("allow", "writes", " write", "reads", "returns", "passed", "failed",
+            "worked", "works", "broke", "broken", "digit", "version", "on day",
+            "day ", " aug", " jan", " feb", " mar", " apr", " jun", " jul",
+            " sep", " oct", " nov", " dec", "line ", "bytes", "equals", "==")
+    return any(c in low for c in cues)
+
+
+def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provider=None, summarizer=None) -> list[Tool]:
     """Construct the toolset bound to one workspace.
 
     fenced=True (kid mode) additionally confines run_command to the
@@ -657,7 +686,7 @@ def build_tools(ws: Workspace, fenced: bool = False) -> list[Tool]:
                 return f"Error: {e}"
         return inner
 
-    def read_file(path: str, offset: int = 0, limit: int = 2000) -> str:
+    def read_file(path: str, offset: int = 0, limit: int = 2000, contains: str = "") -> str:
         f = ws.resolve(path)
         if not f.exists():
             return f"Error: no such file: {ws.rel(f)}"
@@ -671,6 +700,13 @@ def build_tools(ws: Workspace, fenced: bool = False) -> list[Tool]:
         except Exception as e:
             return f"Error reading {ws.rel(f)}: {e}"
         ws.mark_read(f)
+        if contains:
+            body, n = grep_text("\n".join(lines), contains)
+            if not n:
+                return (f"No lines match {contains!r} in {ws.rel(f)} "
+                        f"(file has {len(lines)} lines).")
+            return (f"{n} match(es) for {contains!r} in {ws.rel(f)} "
+                    f"(matching lines + context):\n{body}")
         window = lines[offset:offset + limit]
         if not window:
             return f"(no lines in range; file has {len(lines)} lines)"
@@ -876,6 +912,19 @@ def build_tools(ws: Workspace, fenced: bool = False) -> list[Tool]:
         note = " ".join(note.split())
         if not note:
             return "Error: empty note."
+        if _looks_like_finding(note):
+            if session_id:
+                FINDINGS_DIR.mkdir(parents=True, exist_ok=True)
+                with open(FINDINGS_DIR / f"{session_id}.md", "a", encoding="utf-8") as fh:
+                    fh.write("- " + note[:400] + "\n")
+                return ("That's a task FINDING (a fact about what you're "
+                        "investigating), so I filed it in your WORKING FINDINGS "
+                        "instead of the permanent notebook — it stays in your "
+                        "context and survives memory compaction. (If it was truly "
+                        "a permanent how-we-work rule, rephrase it as a rule "
+                        "without the one-off numbers and call save_note again.)")
+            return ("That reads like a task finding, not a how-we-work lesson — "
+                    "use save_finding for facts about what you're investigating.")
         nb = ws.root / "FORGE-NOTES.md"
         notes = _parse_notes(nb.read_text(encoding="utf-8")) if nb.exists() else []
         if note in notes:
@@ -890,6 +939,61 @@ def build_tools(ws: Workspace, fenced: bool = False) -> list[Tool]:
             return (f"Noted: {note[:80]} — notebook's at its {NOTE_CAP}-lesson cap, "
                     f"so I'm folding it back down in the background.")
         return f"Noted: {note[:80]}"
+
+    def save_finding(fact: str) -> str:
+        """Jot one established fact to this task's working-findings scratchpad.
+
+        Separate from the notebook: findings are throwaway per-task facts (a
+        date, a number, a file:line, a worked/broke state) that must survive
+        memory compaction; the notebook is permanent how-we-work lessons only.
+        """
+        fact = " ".join((fact or "").split())
+        if not fact:
+            return "Error: nothing to save."
+        if not session_id:
+            return "No task to attach findings to (this session has no id)."
+        FINDINGS_DIR.mkdir(parents=True, exist_ok=True)
+        import time as _t
+        for old in FINDINGS_DIR.glob("*.md"):        # light retention: 7 days
+            try:
+                if _t.time() - old.stat().st_mtime > 7 * 86400:
+                    old.unlink()
+            except Exception:
+                pass
+        f = FINDINGS_DIR / f"{session_id}.md"
+        with open(f, "a", encoding="utf-8") as fh:
+            fh.write("- " + fact[:400] + "\n")
+        return "Saved to your working findings (stays in context, survives compaction)."
+
+    def scout(mission: str) -> str:
+        """Dispatch a throwaway read-only sub-agent to answer one narrow question,
+        returning only its short conclusion so the raw material never enters the
+        caller's context."""
+        mission = (mission or "").strip()
+        if not mission:
+            return "Give the scout a specific question to investigate."
+        if provider is None:
+            return "Scout unavailable (no model wired in)."
+        from .agent import Agent   # lazy import: avoid a tools<->agent cycle
+        sub_tools = [x for x in build_tools(ws, session_id="") if x.name in SCOUT_TOOLS]
+        sub = Agent(provider, sub_tools, max_steps=SCOUT_STEPS,
+                    permission_mode="auto", system_prompt=SCOUT_PROMPT,
+                    notes_path=None, summarizer=summarizer, superego=None,
+                    reads=ws.reads, read_mtimes=ws.read_mtimes)
+        final = ""
+        try:
+            for ev in sub.run(mission, ask=lambda *a, **k: False):
+                k = getattr(ev, "kind", "")
+                if k == "text" and getattr(ev, "text", ""):
+                    final = ev.text
+                elif k == "error" and not final:
+                    final = getattr(ev, "text", "")
+                elif k == "done":
+                    break
+        except Exception as e:
+            return f"Scout hit an error: {type(e).__name__}: {e}"
+        final = (final or "").strip()
+        return final[:2000] if final else "(scout came back empty — narrow the question or resend)"
 
     def run_command(command: str, timeout: int = DEFAULT_TIMEOUT) -> str:
         blocked = _machine_killer(command)
@@ -941,13 +1045,16 @@ def build_tools(ws: Workspace, fenced: bool = False) -> list[Tool]:
         Tool(
             name="read_file",
             description="Read a text file from the workspace. Returns numbered lines. "
-                        "Use offset/limit to page through long files.",
+                        "Use offset/limit to page through long files. Pass 'contains' "
+                        "to get ONLY the lines matching that pattern (with context) "
+                        "instead of the whole file — grep before you dump.",
             parameters={
                 "type": "object",
                 "properties": {
                     "path": {"type": "string", "description": "Path relative to the workspace root"},
                     "offset": {"type": "integer", "description": "First line to show (0-based)"},
                     "limit": {"type": "integer", "description": "How many lines to show"},
+                    "contains": {"type": "string", "description": "If set, return only lines matching this pattern (regex, case-insensitive) with surrounding context — instead of paging the whole file"},
                 },
                 "required": ["path"],
             },
@@ -1034,12 +1141,16 @@ def build_tools(ws: Workspace, fenced: bool = False) -> list[Tool]:
         ),
         Tool(
             name="save_note",
-            description="Write one lesson to the project notebook (FORGE-NOTES.md), "
-                        "which every future session reads at startup. Use it when you "
-                        "learn something durable the hard way: a command that must be "
+            description="Write one HOW-WE-WORK lesson to the project notebook "
+                        "(FORGE-NOTES.md), which every future session reads at startup. "
+                        "Use it ONLY for durable working lessons: a command that must be "
                         "run a particular way, a gotcha in this codebase, a correction "
-                        "from the user. One short sentence per note. Don't record "
-                        "things the code itself already says.",
+                        "from the user. One short sentence per note. "
+                        "NOT for task facts — a date, a number, a file:line, a "
+                        "'passed/failed/worked/broke' state, or anything you discovered "
+                        "about the subject you're investigating. Those are FINDINGS: "
+                        "use save_finding, never save_note. Don't record things the code "
+                        "itself already says.",
             parameters={
                 "type": "object",
                 "properties": {"note": {"type": "string",
@@ -1047,6 +1158,41 @@ def build_tools(ws: Workspace, fenced: bool = False) -> list[Tool]:
                 "required": ["note"],
             },
             run=guard(save_note),
+        ),
+        Tool(
+            name="save_finding",
+            description="Jot ONE hard fact you've established this task to your "
+                        "working findings — a scratchpad that stays in your context "
+                        "and survives memory compaction. Use it during investigations "
+                        "for dates, numbers, file:line references, and 'worked here / "
+                        "broke there' states, the moment you find them. Different from "
+                        "save_note: findings are throwaway task facts (content is fine "
+                        "here); save_note is permanent how-we-work lessons, never content.",
+            parameters={
+                "type": "object",
+                "properties": {"fact": {"type": "string",
+                                        "description": "one concrete fact to keep for this task"}},
+                "required": ["fact"],
+            },
+            run=guard(save_finding),
+        ),
+        Tool(
+            name="scout",
+            description="Send a THROWAWAY research worker to investigate ONE narrow "
+                        "question and report back a short answer — the raw files or "
+                        "pages never enter YOUR memory. Use it when the material is big: "
+                        "reading a large file, checking a reference, or resolving a "
+                        "sub-question ('In driver X, does the timestamp field allow 4 or "
+                        "6 digits?'). The scout reads in its own scratch context and "
+                        "returns only its conclusion, so your context stays clean. It is "
+                        "read-only — it cannot change anything.",
+            parameters={
+                "type": "object",
+                "properties": {"mission": {"type": "string",
+                                           "description": "one specific question for the scout, naming any file or URL to look at"}},
+                "required": ["mission"],
+            },
+            run=scout,
         ),
         Tool(
             name="run_command",
@@ -1582,10 +1728,15 @@ def build_tools(ws: Workspace, fenced: bool = False) -> list[Tool]:
             name="fetch_url",
             description="Fetch a web page and read its text (scripts/menus stripped). "
                         "Use after web_search to read a result in full, or on a URL the "
-                        "user gives you. Returns the page's readable text.",
+                        "user gives you. Returns the page's readable text. Pass 'contains' "
+                        "to get ONLY the matching lines (with context) — grep-not-dump for "
+                        "big pages.",
             parameters={
                 "type": "object",
-                "properties": {"url": {"type": "string"}},
+                "properties": {
+                    "url": {"type": "string"},
+                    "contains": {"type": "string", "description": "If set, return only lines of the page matching this pattern (regex, case-insensitive) with context, instead of the whole page"},
+                },
                 "required": ["url"],
             },
             run=fetch_url,

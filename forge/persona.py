@@ -73,7 +73,54 @@ DIALS = {
         80: "Expansive. Background, alternatives, and reasoning laid out.",
         100: "Thorough to a fault. Everything relevant, fully explained.",
     }),
+    # Chatty is about keeping the boss in the loop WHILE you work — a live
+    # play-by-play — NOT the length of the final answer (that's verbosity).
+    "chatty": (70, "how much you narrate while working (keep the boss posted)", {
+        0:  "Work silently. No progress notes — just deliver the result at the end.",
+        20: "Only the big beats: starting, and done. Otherwise quiet.",
+        40: "Call out the main moves as you make them (which file, which step).",
+        60: "Steady play-by-play: say what you're about to do before each step, "
+            "in a short plain line.",
+        80: "Talk the boss through it — narrate each action and why, so they can "
+            "watch and stop you if needed.",
+        100: "Full running commentary. Every step, every file, every check, out "
+             "loud as it happens. Nothing off-screen.",
+    }),
 }
+
+# Loose words the user might say -> the dial they mean. She uses this to map a
+# casual "keep me posted" or "be funnier" to the right knob, then CONFIRMS the
+# specific change before turning it (see prompt_block).
+ALIASES = {
+    "funny": "humor", "funnier": "humor", "jokes": "humor", "joke": "humor",
+    "comedy": "humor", "lighten up": "humor", "humour": "humor",
+    "dry": "sarcasm", "deadpan": "sarcasm", "snark": "sarcasm",
+    "snarky": "sarcasm", "sassy": "sarcasm", "sarcastic": "sarcasm",
+    "warm": "warmth", "warmer": "warmth", "nice": "warmth", "nicer": "warmth",
+    "friendly": "warmth", "caring": "warmth", "sweet": "warmth", "cold": "warmth",
+    "colder": "warmth", "kind": "warmth",
+    "blunt": "directness", "blunter": "directness", "direct": "directness",
+    "straight": "directness", "real with me": "directness",
+    "no sugarcoating": "directness", "cushion": "directness",
+    "cushion it": "directness", "gentler": "directness",
+    "wordy": "verbosity", "brief": "verbosity", "shorter": "verbosity",
+    "keep it short": "verbosity", "detail": "verbosity", "detailed": "verbosity",
+    "tldr": "verbosity", "long": "verbosity", "longer": "verbosity",
+    "chatty": "chatty", "chattier": "chatty", "keep me posted": "chatty",
+    "keep me in the loop": "chatty", "talk me through it": "chatty",
+    "play by play": "chatty", "play-by-play": "chatty", "narrate": "chatty",
+    "let me know what's up": "chatty", "what's up": "chatty", "loud": "chatty",
+    "quiet": "chatty", "quieter": "chatty", "keep the boss posted": "chatty",
+    "in the loop": "chatty", "keep me updated": "chatty", "updates": "chatty",
+}
+
+
+def resolve_dial(word: str) -> str | None:
+    """Map a canonical name OR a loose word/phrase to a dial name, or None."""
+    k = str(word or "").strip().lower().rstrip("%")
+    if k in DIALS:
+        return k
+    return ALIASES.get(k)
 
 
 def _load() -> dict:
@@ -122,17 +169,28 @@ def prompt_block() -> str:
         "you overstate what you know, soften a real problem into a compliment, "
         "or dress a guess as a fact. At high humor you're a funny assistant who "
         "is still right; you never trade accuracy for a laugh.")
+    lines.append(
+        "'chatty' is how much you narrate WHILE working (the live play-by-play), "
+        "separate from 'verbosity' (how long your final answer is).")
+    lines.append(
+        "The boss often names a dial LOOSELY — 'be funnier', 'blunter', 'keep me "
+        "posted', 'quieter', 'talk me through it'. When he does, DON'T change it "
+        "silently: say which dial you think he means and the exact new value, and "
+        "ASK him to confirm — e.g. 'Sounds like Chatty up — set it 70→85?' Only "
+        "call set_personality after he says yes. If he gives an exact value "
+        "outright ('humor to 20'), just do it and say so.")
     return "\n".join(lines)
 
 
 def set_personality(dial: str, value) -> str:
     """Turn one of Merge's personality dials, TARS-style. dial: humor, sarcasm,
-    warmth, directness, or verbosity. value: 0-100 (0 = off, 100 = maximum).
+    warmth, directness, verbosity, or chatty (loose words like 'keep me posted'
+    or 'funnier' also resolve). value: 0-100 (0 = off, 100 = maximum).
     The change persists across sessions. Use this whenever the user asks you to
     be funnier, drier, warmer, blunter, shorter, etc. — then actually talk that
     way from the next sentence on."""
-    key = str(dial or "").strip().lower()
-    if key not in DIALS:
+    key = resolve_dial(dial)
+    if key is None:
         return (f"No dial called '{dial}'. The dials are: "
                 + ", ".join(f"{n} ({d[1]})" for n, d in DIALS.items()))
     try:

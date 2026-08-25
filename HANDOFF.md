@@ -586,3 +586,31 @@ was entirely in the brief:
    ("Warm, safe, shareable"). Say so once and she stops.
 The engine (Storyweave/board/engine.py) deciding WHAT should exist and
 her filling words only is the shape that made this chunkable at all.
+
+## BUILT 2026-08-25: harness capability pass (grep-not-dump, findings, scouts)
+
+Three structural upgrades so the local model drowns less on big/open-ended
+work (brain-agnostic — they help any model, and a 70B in this harness inherits
+all of it). Verified against the live 27B.
+
+1. **Grep-not-dump.** read_file and fetch_url take an optional `contains` —
+   returns only matching lines + context, never the whole file/page.
+2. **Findings file.** New save_finding tool writes task facts to a per-session
+   scratchpad (~/.forge/findings/<id>.md), re-injected every turn so it survives
+   compaction; a "save your findings" beat fires right before compaction. The
+   notebook (FORGE-NOTES.md) still bans content. KEY: the 27B kept reaching for
+   save_note instead of save_finding (and gamed a redirect by rewording), so
+   save_note now AUTO-FILES a content-shaped note into findings itself — the
+   fact lands in the right place regardless of which tool she picks.
+3. **Scouts (fan-out).** New scout tool spins up a throwaway READ-ONLY sub-agent
+   (read_file/search/list_dir/fetch_url only — no shell, can't mutate) that
+   answers one narrow question in its own scratch context and returns a short
+   paragraph. Proven: a 98KB/1787-line file → a 453-char cited summary, main
+   context never saw the dump. Git-history scouting deferred (needs shell).
+
+Also today: coherence guard (ends a garbled-fragment turn cleanly, doesn't save
+the garbage) and a 'chatty' TARS dial (live play-by-play, ask-first on loose
+words). OPEN: scout ADOPTION is untested live — will she reach for it on a hard
+job, or read everything herself like she defaulted to save_note? That's the
+"test like crazy" phase. And she was flaky today (misread instructions,
+degraded twice) — a sanity watch item.
