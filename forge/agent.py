@@ -668,6 +668,7 @@ class Agent:
         # a wobbly turn gets flagged at the moment of saving, because a wrong
         # sim/dataset/note in a forever-store poisons every future turn.
         self._turn_hiccups = []
+        self._consec_fail = 0   # consecutive tool failures -> degradation-spiral bail
         self._call_counts = {}    # successful-call fingerprints -> times this turn
         self._tool_attempts = {}  # tool NAME -> attempts this turn (per-tool ceiling)
         try:
@@ -1176,6 +1177,23 @@ class Agent:
                 if _chatty >= 40:
                     yield Event(kind="note", text=self._call_blurb(call, _chatty))
                 yield from self._run_one(call, ask)
+                # Degradation-spiral guard: a run of tool calls that all FAIL
+                # (e.g. malformed commands the model can't recover from — the
+                # garbled-git spiral, 2026-08-25) means it's stuck. End cleanly
+                # instead of letting it thrash. Resets on any success, so normal
+                # fail-then-fix work never trips it.
+                if getattr(self, "_consec_fail", 0) >= 5:
+                    for rest in reply.tool_calls[i + 1:]:
+                        self.history.append({
+                            "role": "tool_result", "id": rest.id,
+                            "content": "Cancelled — too many tool failures in a row; "
+                                       "ending the turn.", "is_error": True})
+                    self._turn_hiccups.append("degradation: 5 tool failures in a row")
+                    yield Event(kind="error",
+                                text="Five tool calls in a row failed — ending this turn "
+                                     "cleanly; the model looks stuck. A fresh message "
+                                     "usually clears it.")
+                    return
 
         yield Event(
             kind="error",
@@ -1755,6 +1773,7 @@ class Agent:
         failed = result.startswith("Error") or (
             result.startswith("[exit ") and not result.startswith("[exit 0]"))
         self._last_failed_call = fingerprint if failed else None
+        self._consec_fail = (getattr(self, "_consec_fail", 0) + 1) if failed else 0
         if failed:
             self._turn_hiccups.append(f"{call.name} failed")
         elif result.startswith("[stopped by user"):
