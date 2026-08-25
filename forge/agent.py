@@ -64,6 +64,7 @@ NOTES_LIMIT_CHARS = 8000
 MAX_RED_BOUNCES = 3        # times we refuse "done" while the last run failed
 TRACE_EVERY = 20           # steps of one task between "walk it back" taps
 MAX_SAME_TOOL = 10         # per-tool call ceiling in one turn (non-iterative tools)
+TURN_WALL_SECONDS = 600    # hard wall-clock ceiling per turn: a run-on turn ends cleanly here
 # Tools that legitimately loop many times (exploring/editing files, shell build-
 # test cycles, cheap listings/lookups) are exempt from the HARD ceiling — they
 # still get the soft wrap-up nudges. Everything else (analysis/generation:
@@ -658,6 +659,8 @@ class Agent:
         _empty_retried = False
         _incoherent_retried = False
         _findings_nudged = False
+        _wall_warned = False
+        _turn_t0 = time.time()
         _tidy_noted = False       # near-cap notes: once per turn, not per step
         _trim_noted = False
         # Hiccup ledger: everything that degraded THIS turn (failed tools,
@@ -692,6 +695,34 @@ class Agent:
         except Exception:
             _chatty = 70
         for step in range(_mode_steps):
+            # Wall-clock ceiling: a turn can run away on TIME (many slow steps on
+            # a local model) without ever tripping the step budget or the coherence
+            # guard — seen live 2026-08-25, several 7-10 min turns that never ended.
+            # Warn her to land at 70%; hard-stop cleanly at the cap so she can never
+            # lock up the session.
+            _elapsed = time.time() - _turn_t0
+            if _elapsed > TURN_WALL_SECONDS:
+                self._turn_hiccups.append("turn hit the wall-clock ceiling")
+                yield Event(kind="note",
+                            text=f"⏱ This turn has run {int(_elapsed)}s — ending it "
+                                 "cleanly at the time limit so the session stays "
+                                 "responsive. Ask again, or in smaller pieces, to continue.")
+                yield Event(kind="done")
+                return
+            if not _wall_warned and _elapsed > TURN_WALL_SECONDS * 0.7:
+                _wall_warned = True
+                yield Event(kind="note",
+                            text=f"⏳ Running long ({int(_elapsed)}s) — asked her to land it.")
+                self.history.append({
+                    "role": "user", "synthetic": True,
+                    "content": f"Automatic time check: this turn has been running "
+                               f"{int(_elapsed)} seconds and will be CUT OFF at "
+                               f"{TURN_WALL_SECONDS}s. Stop exploring NOW — consolidate "
+                               "what you already have into your answer, note anything "
+                               "unverified as unverified, and finish. If real work "
+                               "remains, say exactly what's left so it can be a fresh "
+                               "message." + BOUNCE_TAIL,
+                })
             # Final-approach warning: burning the WHOLE step budget kills the
             # turn with nothing delivered ("stopped after 80 steps") — found
             # live 2026-08-17 when an open-ended "test everything" request ran
