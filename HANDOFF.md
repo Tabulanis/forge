@@ -614,3 +614,49 @@ words). OPEN: scout ADOPTION is untested live — will she reach for it on a har
 job, or read everything herself like she defaulted to save_note? That's the
 "test like crazy" phase. And she was flaky today (misread instructions,
 degraded twice) — a sanity watch item.
+
+## 2026-08-27 — the bug-hunt playbook, and what measuring it showed
+
+Merge was given a real bug on a frozen copy of a real repo (`~/merge-tests`,
+see its HANDOFF.md) and graded against a key she cannot reach. Four runs.
+
+**Before any change.** Cold (just the symptom and the code): ten minutes, hit
+the wall-clock ceiling, wrote nothing at all — no findings file, no answer, not
+one shell command, never opened the git history. Her first saved note adopted
+the project README's (wrong) explanation as the frame.
+
+**Scaffolded** — identical job, plus "work in rounds, one question at a time,
+write findings down before moving on": a full findings file and a complete
+answer, 31 shell calls, three alternatives ruled out with reasons, explicit
+falsification tests, honest about her own gaps. The answer was still wrong (the
+README's theory), but the delta in *behaviour* was the whole distance between
+nothing and real work.
+
+**The change (722a0f4).** The ordered moves now sit in `SYSTEM_PROMPT` — she
+demonstrably will not reach for process help she has not been handed — with the
+long form on the shelf as `frameworks.get("debug")`. Cost: 302 tokens, 0.9% of
+her 32k window. For scale, all 74 tool schemas are 12,642 tokens (38.6%), which
+is why the core-11 default exists and why there was room to spend here at all.
+
+**After.** Cold runs now open with `git log` unprompted, both of them; one wrote
+a findings file. Neither reached an answer. Real movement in process, no
+movement in outcome.
+
+**Two things left, and the order matters:**
+
+1. She searches history by which commit *message* sounds relevant rather than by
+   when the thing broke, so she never establishes a last-known-good date and
+   never diffs the boundary. The single winning command in that repo is
+   `git show a1fe588`; she has not run it in four attempts.
+2. `TURN_WALL_SECONDS = 600` ended **every run, all four** (608/639/610/635s).
+   She has never finished under her own steam. But note the scaffolded run hit
+   the same wall and still produced an answer — because it was writing as it
+   went. That says disposal of the time, not the amount of it.
+
+So: strengthen the write-down instruction first (free, and the evidence points
+at it), re-measure, and only then consider the ceiling — as a per-mode setting
+for Deep, never a global bump. That guard exists because of the 22 Aug
+meltdowns; a longer leash is what allowed them.
+
+And run each condition 2–3 times before believing any of it. One run of a local
+model at temperature is a data point, not a result.
