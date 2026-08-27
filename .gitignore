@@ -14,3 +14,11 @@ node_modules/
 # the raw belief-probe answers are kept out of the repo by choice. The test
 # itself (subtlety_battery.py) is tracked; its results are not.
 model-tests/results/
+
+# editor backups — machine noise
+*.bak
+*.bak-*
+
+# regenerable visual outputs + runtime logs (spectrograms, collector logs)
+datasets/bioacoustics/
+datasets/**/*.log
