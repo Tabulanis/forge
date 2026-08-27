@@ -1968,9 +1968,13 @@ def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provi
         Tool(
             name="business_framework",
             description=(
-                "Structured thinking scaffolds — the JUDGMENT half of business/opportunity "
-                "analysis (not math). Returns a template you fill in and reason through out "
-                "loud. name is one of: opportunity (the opportunity canvas — structure any "
+                "Structured thinking scaffolds — the JUDGMENT half of hard problems "
+                "(not math). Returns a template you fill in and reason through out "
+                "loud. name is one of: debug (BUG HUNT — the ordered checklist for finding "
+                "a cause: when did it last work and what changed at that boundary, treat the "
+                "project's own explanation as a claim, list candidates and disprove the "
+                "cheapest first, check rules at their primary source; reach for this on any "
+                "\"it doesn't work and nobody knows why\") · opportunity (the opportunity canvas — structure any "
                 "money idea: edge, why-not-arbitraged, EV, risk of ruin, what kills it) · "
                 "skeptic (red-team a 'pattern' to KILL it before trusting it — sample size, "
                 "overfitting, costs, already-priced-in) · business_model_canvas · swot · "
@@ -1982,8 +1986,9 @@ def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provi
                 "type": "object",
                 "properties": {
                     "name": {"type": "string",
-                             "enum": ["opportunity", "skeptic", "business_model_canvas",
-                                      "swot", "positioning", "lean_validation"]},
+                             "enum": ["debug", "opportunity", "skeptic",
+                                      "business_model_canvas", "swot",
+                                      "positioning", "lean_validation"]},
                 },
                 "required": ["name"],
             },

@@ -70,6 +70,37 @@ Default stance: this pattern is noise until proven otherwise.
   TEST: is the benefit specific and true? Could a competitor say the exact same
   sentence? If yes, you haven't positioned — you've described.""",
 
+    "debug": """BUG HUNT — find the cause, not a cause. Work the list in order;
+skipping to step 4 is how two-week hunts happen.
+Default stance: the obvious suspect is where everyone already looked and failed.
+
+  1. THE SYMPTOM, EXACTLY — what happens, what should happen, and how you'd
+     tell them apart from the outside. Quote the real error text. Vague
+     symptom, vague hunt.
+  2. WHEN DID IT LAST WORK? — the highest-value question there is, and the one
+     people skip. Find the last known-good state (history, logs, a comment
+     saying "worked on the 12th"), then DIFF THE BOUNDARY between working and
+     broken. If the list of changes is small, the cause is almost certainly
+     in it. Do this before reading the code you suspect.
+  3. WHAT DOES THE PROJECT CLAIM? — read its docs, then set them aside as a
+     CLAIM. Documentation records what someone believed when they wrote it;
+     if they'd been right, the bug would be fixed. A confident explanation
+     that has not fixed the problem is evidence about its author, not the bug.
+     Commit messages are stories too — the diff is the record.
+  4. LIST THE CANDIDATES — three or more, including the boring ones
+     (configuration, versions, packaging, a value in a file, something
+     generated at build time). Then for each: what would prove it WRONG?
+  5. GO LOOK — cheapest disproof first. An empty or missing result is a lead:
+     if a file is generated, run the generator and read what comes out.
+  6. CHECK THE RULE AT ITS SOURCE — for a limit, format, or spec, read the
+     primary source (the vendor's own code or docs). Don't reason about what
+     it probably says; the whole bug may live in the gap between the two.
+  7. THE VERDICT — cause, file, line. The evidence. And the one observation
+     that would still overturn it.
+  Rule: "I don't know, and here's what I ruled out" is a real answer and a
+  respectable one. A confident wrong cause costs more than an honest blank —
+  it sends the next person down the same hole.""",
+
     "lean_validation": """LEAN VALIDATION — cheapest test that could prove you WRONG, fast.
   1. Riskiest assumption — the belief that, if false, sinks the whole thing.
   2. Falsifiable hypothesis — 'if X, then [specific measurable Y] within [time].'
