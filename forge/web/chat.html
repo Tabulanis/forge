@@ -250,6 +250,7 @@
   <div class="brand">MER<span>GE</span></div>
   <button id="chatsBtn" title="Your conversations">☰</button>
   <button id="newBtn">New</button>
+  <button id="wakeBtn" title="Wake Merge — start her brain (27B) and a fresh chat">☀️ Wake</button>
   <button id="cogBtn" title="Options and admin">⚙</button>
   <select id="mode" title="Style: speed ⇄ creativity ⇄ accuracy">
     <option value="auto">🎛️ Auto</option>
@@ -1525,6 +1526,25 @@ function newChat(confirmFirst) {
   showWelcome();          // folder stays as-is; tap the folder name up top to change it
 }
 $('newBtn').onclick = () => newChat(true);
+// Wake: bring her brain online (starts forge-model-merge via /api/power, which
+// also frees VRAM from any rival model) and drop into a fresh chat. The status
+// dot goes green when the weights finish loading.
+$('wakeBtn').onclick = async () => {
+  const b = $('wakeBtn'), orig = b.textContent;
+  b.disabled = true; b.textContent = '☀️ Waking…';
+  try {
+    const r = await fetch(q('/api/power'), {method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({action:'on', model:'merge'})});
+    if (!r.ok) throw new Error('HTTP ' + r.status + ' ' + (await r.text().catch(()=>'')));
+    newChat(false);
+    el('note', '☀️ Waking Merge — her brain is loading (~30–60s). Fresh chat ready; the status dot turns green when she can answer.');
+  } catch (e) {
+    el('err', 'Wake failed: ' + e.message);
+  } finally {
+    b.disabled = false; b.textContent = orig;
+  }
+};
 
 // A real, browsable folder picker (replaces the old prompt()). Tap the folder
 // name in the header, or New, to open it. Uses /api/browse to walk directories.
