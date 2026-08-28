@@ -720,8 +720,10 @@ $('box').addEventListener('input', function () {
   this.style.height = Math.min(this.scrollHeight, window.innerHeight * 0.34) + 'px';
 });
 $('box').addEventListener('keydown', e => {
-  // Enter sends on a real keyboard; on a phone the return key inserts a newline
-  if (e.key === 'Enter' && !e.shiftKey && !matchMedia('(pointer: coarse)').matches) {
+  // Enter sends; Shift+Enter makes a newline. (Applies on touch too — the tablet
+  // was treated like a phone by the old pointer:coarse check, which killed
+  // Enter-to-send there; owner wants Enter=send everywhere unless Shift.)
+  if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault(); send();
   }
 });
