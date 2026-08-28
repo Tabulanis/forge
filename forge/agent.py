@@ -64,7 +64,8 @@ NOTES_LIMIT_CHARS = 8000
 MAX_RED_BOUNCES = 3        # times we refuse "done" while the last run failed
 TRACE_EVERY = 20           # steps of one task between "walk it back" taps
 MAX_SAME_TOOL = 10         # per-tool call ceiling in one turn (non-iterative tools)
-TURN_WALL_SECONDS = 600    # hard wall-clock ceiling per turn: a run-on turn ends cleanly here
+TURN_WALL_SECONDS = 600    # default absolute ceiling; per-mode override in modes.py (Deep=1800)
+STALL_SECONDS = 240        # no NEW progress (new distinct tool call) for this long -> stalled, stop
 # Tools that legitimately loop many times (exploring/editing files, shell build-
 # test cycles, cheap listings/lookups) are exempt from the HARD ceiling — they
 # still get the soft wrap-up nudges. Everything else (analysis/generation:
@@ -685,6 +686,7 @@ class Agent:
         _findings_nudged = False
         _wall_warned = False
         _turn_t0 = time.time()
+        self._progress_t0 = time.time()   # resets on genuine new progress (see tool exec)
         _tidy_noted = False       # near-cap notes: once per turn, not per step
         _trim_noted = False
         # Hiccup ledger: everything that degraded THIS turn (failed tools,
@@ -713,6 +715,7 @@ class Agent:
         except Exception:
             pass
         _mode_steps = get_mode(self.active_mode)["max_steps"]
+        _mode_wall = get_mode(self.active_mode).get("wall_seconds", TURN_WALL_SECONDS)
         _wrap_at = max(3, int(_mode_steps * 0.8))
         try:
             from . import persona
@@ -726,15 +729,22 @@ class Agent:
             # Warn her to land at 70%; hard-stop cleanly at the cap so she can never
             # lock up the session.
             _elapsed = time.time() - _turn_t0
-            if _elapsed > TURN_WALL_SECONDS:
-                self._turn_hiccups.append("turn hit the wall-clock ceiling")
+            _stall = time.time() - getattr(self, "_progress_t0", _turn_t0)
+            # Progress-aware: a turn that keeps making NEW tool calls keeps resetting
+            # its stall timer and runs until the (per-mode) absolute cap. A turn that
+            # STOPS making new progress -- the read-forever/spin pattern -- trips the
+            # stall ceiling early. Good work is never cut for time alone.
+            _stalled = _stall > STALL_SECONDS and bool(getattr(self, '_call_counts', None))
+            if _elapsed > _mode_wall or _stalled:
+                _why = "stalled — no new progress" if _stalled and _elapsed <= _mode_wall else "the time limit"
+                self._turn_hiccups.append(f"turn ended: {_why}")
                 yield Event(kind="note",
-                            text=f"⏱ This turn has run {int(_elapsed)}s — ending it "
-                                 "cleanly at the time limit so the session stays "
-                                 "responsive. Ask again, or in smaller pieces, to continue.")
+                            text=f"⏱ Ending this turn cleanly — {_why} "
+                                 f"({int(_elapsed)}s elapsed). Whatever she assembled is here; "
+                                 "ask again or in smaller pieces to continue.")
                 yield Event(kind="done")
                 return
-            if not _wall_warned and _elapsed > TURN_WALL_SECONDS * 0.7:
+            if not _wall_warned and _elapsed > _mode_wall * 0.7:
                 _wall_warned = True
                 yield Event(kind="note",
                             text=f"⏳ Running long ({int(_elapsed)}s) — asked her to land it.")
@@ -742,7 +752,7 @@ class Agent:
                     "role": "user", "synthetic": True,
                     "content": f"Automatic time check: this turn has been running "
                                f"{int(_elapsed)} seconds and will be CUT OFF at "
-                               f"{TURN_WALL_SECONDS}s. Stop exploring NOW — consolidate "
+                               f"{int(_mode_wall)}s. Stop exploring NOW — consolidate "
                                "what you already have into your answer, note anything "
                                "unverified as unverified, and finish. If real work "
                                "remains, say exactly what's left so it can be a fresh "
@@ -1811,6 +1821,8 @@ class Agent:
             if not hasattr(self, "_call_counts"):
                 self._call_counts = {}
             n = self._call_counts[fingerprint] = self._call_counts.get(fingerprint, 0) + 1
+            if n == 1:
+                self._progress_t0 = time.time()   # a new distinct call = real progress; extend the leash
             if n >= 3:
                 result += (f"\n\n[LOOP WARNING: this is the {n}th time this turn "
                            "you've made this exact call — memory trimming keeps "

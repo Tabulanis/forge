@@ -43,14 +43,14 @@ _CORE = {
 MODES = {
     "flash": {
         "label": "⚡ Flash", "thinking": False, "temperature": 0.7,
-        "tools": _LIGHT, "superego": False, "max_steps": 14,
+        "tools": _LIGHT, "superego": False, "max_steps": 14, "wall_seconds": 300,
         "nudge": "Move fast and keep it conversational. Don't reach for heavy "
                  "tooling unless it's genuinely needed — this is for quick chat "
                  "and planning.",
     },
     "muse": {
         "label": "\U0001f3a8 Muse", "thinking": False, "temperature": 1.05,
-        "tools": _WRITING, "superego": False, "max_steps": 14,
+        "tools": _WRITING, "superego": False, "max_steps": 14, "wall_seconds": 300,
         "nudge": "Be imaginative and generative — riff, explore, follow wild "
                  "ideas, don't hedge or self-censor. This is for fiction and "
                  "brainstorming, not fact-checking; surprise beats caution here.",
@@ -60,25 +60,25 @@ MODES = {
         # quick), full tools + honesty check. Reach for Precise/Deep when a
         # problem actually needs her to sit and think.
         "label": "⚖️ Balanced", "thinking": False, "temperature": 0.7,
-        "tools": _CORE, "superego": True, "max_steps": 40,
+        "tools": _CORE, "superego": True, "max_steps": 40, "wall_seconds": 600,
         "nudge": "",
     },
     "precise": {
         "label": "\U0001f3af Precise", "thinking": True, "temperature": 0.2,
-        "tools": _CORE, "superego": True, "max_steps": 40,
+        "tools": _CORE, "superego": True, "max_steps": 40, "wall_seconds": 1200,
         "nudge": "Accuracy above all. Verify with tools — compute for any number, "
                  "web_search for any fact — cite what you find, and say plainly "
                  "when you're unsure instead of guessing.",
     },
     "deep": {
         "label": "\U0001f9e0 Deep", "thinking": True, "temperature": 0.45,
-        "tools": _CORE, "superego": True, "max_steps": 80,
+        "tools": _CORE, "superego": True, "max_steps": 80, "wall_seconds": 1800,
         "nudge": "Take your time and be thorough. Work through edge cases, check "
                  "your own work, and don't stop until it's genuinely solid.",
     },
     "teach": {
         "label": "\U0001f393 Teach", "thinking": True, "temperature": 0.6,
-        "tools": _CORE, "superego": True, "max_steps": 40,
+        "tools": _CORE, "superego": True, "max_steps": 40, "wall_seconds": 1200,
         "nudge": "Teach — don't just answer. The goal is that they UNDERSTAND, "
                  "not that they walk away with a result. Start from first "
                  "principles at their level, and build on what they already know: "

@@ -863,6 +863,7 @@ if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
   $('mic').onclick = async () => {
     if (rec && rec.state === 'recording') { rec.stop(); return; }
     try {
+      hushOtherAudio();   // don't layer voice-in over a playing song
       const stream = await navigator.mediaDevices.getUserMedia({audio: true});
       chunks = [];
       rec = new MediaRecorder(stream, MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
@@ -1007,6 +1008,7 @@ $('voiceBtn').onclick = () => {
     el('note', 'Voice chat off.');
     return;
   }
+  hushOtherAudio();   // hands-free voice takes over the audio channel
   voiceMode = true; setVoiceUI(true);
   voicePrevMode = $('mode').value;
   $('mode').value = 'flash';                        // snappy replies for talking
@@ -1136,6 +1138,21 @@ function serverVoicePref() {
 // Every stopSpeaking() bumps this; an in-flight say() checks it to know it's
 // been superseded (a new reply, or the user tapped stop) and bails cleanly.
 let speakSeq = 0;
+// Voice takes over the audio channel. Before recording or speaking, hush anything
+// already making sound: cancel her own TTS, and pause any playing <audio>/<video>
+// on the page (a song, a sound clip, a lingering reply) so they don't layer into
+// chaos through the speakers. (Audio in ANOTHER browser tab we can't pause — the
+// page has no handle on it — so if the mic keeps hearing sound, that's the case.)
+function hushOtherAudio() {
+  try { stopSpeaking(); } catch (_) {}
+  let hushed = 0;
+  document.querySelectorAll('audio, video').forEach(el => {
+    try { if (!el.paused && !el.ended) { el.pause(); hushed++; } } catch (_) {}
+  });
+  if (hushed) el('err', '🔇 Paused a playing sound so voice can take over.');
+  return hushed;
+}
+
 function stopSpeaking() {
   speakSeq++;
   try { if (curAudio) { curAudio.pause(); curAudio = null; } } catch (_) {}
