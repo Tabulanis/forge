@@ -251,6 +251,7 @@
   <button id="chatsBtn" title="Your conversations">☰</button>
   <button id="newBtn">New</button>
   <button id="wakeBtn" title="Wake Merge — start her brain (27B) and a fresh chat">☀️ Wake</button>
+  <button id="sleepBtn" title="Sleep Merge — stop her brain (27B) and free the video card">🌙 Sleep</button>
   <button id="cogBtn" title="Options and admin">⚙</button>
   <select id="mode" title="Style: speed ⇄ creativity ⇄ accuracy">
     <option value="auto">🎛️ Auto</option>
@@ -1541,6 +1542,24 @@ $('wakeBtn').onclick = async () => {
     el('note', '☀️ Waking Merge — her brain is loading (~30–60s). Fresh chat ready; the status dot turns green when she can answer.');
   } catch (e) {
     el('err', 'Wake failed: ' + e.message);
+  } finally {
+    b.disabled = false; b.textContent = orig;
+  }
+};
+// Sleep: stop her brain and hand the video card back (POST /api/power off).
+// Confirms first — this kills any in-flight turn.
+$('sleepBtn').onclick = async () => {
+  if (!confirm('Put Merge to sleep? Stops her brain (27B) and frees the video card.')) return;
+  const b = $('sleepBtn'), orig = b.textContent;
+  b.disabled = true; b.textContent = '🌙 …';
+  try {
+    const r = await fetch(q('/api/power'), {method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({action:'off'})});
+    if (!r.ok) throw new Error('HTTP ' + r.status + ' ' + (await r.text().catch(()=>'')));
+    el('note', '🌙 Merge is asleep — brain off, video card free. Tap ☀️ Wake to bring her back.');
+  } catch (e) {
+    el('err', 'Sleep failed: ' + e.message);
   } finally {
     b.disabled = false; b.textContent = orig;
   }
