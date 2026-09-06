@@ -76,6 +76,9 @@
          max-height:8em; overflow:hidden; }
   .err { color:var(--bad); font-size:13.5px; }
   .note { color:var(--gold); font-size:13px; font-style:italic; }
+  .prog { color:var(--dim); font-size:12.5px; padding:4px 0 4px 12px; border-left:2px solid var(--line); margin:5px 0; }
+  .prog .pbar { display:block; height:6px; background:var(--line); border-radius:3px; margin-top:4px; overflow:hidden; max-width:420px; }
+  .prog .pbar i { display:block; height:100%; background:var(--accent); width:0; transition:width .4s; }
   .recbtn { background:#c0392b !important; color:#fff !important; }
   /* AR-lite: rear camera as a live backdrop, chat floating translucent on top.
      No WebXR/ARCore needed — works on any phone that grants the camera. */
@@ -366,6 +369,7 @@ function atBottom() {
   return log.scrollHeight - log.scrollTop - log.clientHeight < 120;
 }
 function scrollDown() { log.scrollTop = log.scrollHeight; }
+let progEl = null;   // the one live render-progress bar, updated in place
 function el(cls, html) {
   const follow = atBottom();
   const d = document.createElement('div');
@@ -490,14 +494,21 @@ function render(e) {
   }
   else if (e.kind === 'tool')   { endStream(); el('step', '<b>' + esc(e.tool) + '</b> ' + esc(e.summary || '')); }
   else if (e.kind === 'result') {
+    if (progEl) { progEl.remove(); progEl = null; }
     if ((e.text || '').trim()) el('out', esc(e.text.split('\n').slice(0, 6).join('\n')));
     imagePaths(e.text).forEach(showImage);
   }
   else if (e.kind === 'error')  { endStream(); el('err', esc(e.text)); }
   else if (e.kind === 'note')   el('note', esc(e.text));
+  else if (e.kind === 'progress') {
+    const pct = Math.max(0, Math.min(100, parseInt(e.summary || '0', 10) || 0));
+    const txt = String(e.text || '').replace(/[▓░]+\s*/g, '');   // the page draws the bar; strip the text one
+    if (!progEl || !progEl.isConnected) progEl = el('prog', '');
+    progEl.innerHTML = esc(txt) + '<span class="pbar"><i style="width:' + pct + '%"></i></span>';
+  }
   else if (e.kind === 'permission') permission(e);
   else if (e.kind === 'form') credentialForm(e);
-  else if (e.kind === 'done')   { endStream(); setWorking(false); flushQueue();
+  else if (e.kind === 'done')   { if (progEl) { progEl.remove(); progEl = null; } endStream(); setWorking(false); flushQueue();
                                   if (voiceMode) speakAndContinue();
                                   else if (speakAll) { const t = voiceReply.trim(); voiceReply = ''; if (t) say(t); } }
 }

@@ -96,7 +96,11 @@ def render(prompt: str, out_path: str, image: str | None = None, seconds: float 
     frames = (frames // 4) * 4 + 1                       # WAN wants 4k+1
     seed = random.randrange(2 ** 31) if seed is None else int(seed)
     start = _upload(base, Path(image).expanduser()) if image else None
-    pid = _post(base, "/prompt", {"prompt": _workflow(prompt, seed, width, height, frames, start, preset, steps)}, 30)["prompt_id"]
+    wf = _workflow(prompt, seed, width, height, frames, start, preset, steps)
+    from . import renderbox
+    cid = renderbox.new_client_id()
+    pid = _post(base, "/prompt", {"prompt": wf, "client_id": cid}, 30)["prompt_id"]
+    renderbox.start_watch(base, cid, pid, wf, f"video {seconds:.0f}s ({preset})")
     t0 = time.time()
     try:
         while True:
@@ -124,6 +128,7 @@ def render(prompt: str, out_path: str, image: str | None = None, seconds: float 
         out.write_bytes(_get(base, f"/view?{q}", 300))
         return str(out)
     finally:
+        renderbox.finish(pid)
         if unload:
             for _ in range(2):
                 try:

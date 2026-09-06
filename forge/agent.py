@@ -413,7 +413,7 @@ How to talk:
 @dataclass
 class Event:
     """Something the loop wants the interface to know about."""
-    kind: str          # "text" | "tool_request" | "tool_result" | "done" | "error"
+    kind: str          # "text" | "tool_request" | "tool_result" | "done" | "error" | "progress"
     text: str = ""
     tool: str = ""
     args: dict | None = None
@@ -1777,7 +1777,18 @@ class Agent:
                                     text=f"🛑 Stopped — cut {call.name} loose "
                                          f"after {_waited}s.")
                         break
-                    if _waited == 30 or (_waited >= 60 and _waited % 60 == 0):
+                    # Live progress when the render box is the thing we're waiting on:
+                    # a bar every 15 s instead of a vague "still working".
+                    _prog = ""
+                    try:
+                        from . import renderbox
+                        _prog = renderbox.progress_line()
+                    except Exception:
+                        _prog = ""
+                    if _prog:
+                        yield Event(kind="progress", tool=call.name, text=f"⏳ {_prog}",
+                                    summary=str(renderbox.current()["pct"]))
+                    elif _waited == 30 or (_waited >= 60 and _waited % 60 == 0):
                         yield Event(kind="note",
                                     text=f"⏳ Still working — {call.name} has "
                                          f"been running {_waited}s. (Stop cuts "

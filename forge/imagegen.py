@@ -148,7 +148,11 @@ def render(prompt: str, out_path: str, preset: str = "sketch", references: list[
     if p.get("size") and width == 1024 and height == 1024:
         width = height = p["size"]           # the preset's native square
     names = [_upload(base, r) for r in refs]
-    pid = _post(base, "/prompt", {"prompt": _workflow(p, prompt, seed, width, height, steps, names)}, 30)["prompt_id"]
+    wf = _workflow(p, prompt, seed, width, height, steps, names)
+    from . import renderbox
+    cid = renderbox.new_client_id()
+    pid = _post(base, "/prompt", {"prompt": wf, "client_id": cid}, 30)["prompt_id"]
+    renderbox.start_watch(base, cid, pid, wf, f"image ({preset})")
     t0 = time.time()
     try:
         while True:
@@ -168,6 +172,7 @@ def render(prompt: str, out_path: str, preset: str = "sketch", references: list[
         out.write_bytes(_get(base, f"/view?{q}", 120))
         return str(out)
     finally:
+        renderbox.finish(pid)
         if unload:
             # Twice, a beat apart: measured 2026-09-05, one /free right after a
             # reference render left 28 GB borrowed; the second took it to 13.

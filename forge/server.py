@@ -504,9 +504,16 @@ def power_status():
     running = [power.short(u) for u in power.running()]
     # "running" means systemd started it; "ready" means the weights are
     # loaded and she can answer. The gap between the two is the loading bar.
+    try:
+        from . import renderbox
+        rb = renderbox.stats()
+        rb_line = renderbox.stats_line(rb)
+    except Exception:
+        rb, rb_line = {"up": False}, "render box: not answering"
     return {"running": running,
             "ready": [m for m in running if power.is_ready(m)],
-            "vram": power.vram()}
+            "vram": power.vram(),
+            "render_box": rb, "render_box_line": rb_line}
 
 
 @app.post("/api/power", dependencies=[Depends(require_token), Depends(require_not_kid)])

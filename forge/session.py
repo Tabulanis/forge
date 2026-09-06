@@ -379,6 +379,8 @@ class Session:
                                          "text": (ev.text or "")[:2000]})
                 elif ev.kind == "note":
                     self.emit("note", {"text": ev.text})
+                elif ev.kind == "progress":
+                    self.emit("progress", {"text": ev.text, "summary": ev.summary, "tool": ev.tool})
                 elif ev.kind == "error":
                     self.emit("error", {"text": ev.text})
                 elif ev.kind == "done":

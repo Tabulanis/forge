@@ -108,6 +108,7 @@
       <button id="btn-on">Wake her up</button>
       <span class="hint" style="margin-top:0" id="power-status">checking…</span>
     </div>
+    <div class="hint" id="renderbox-status" style="margin-top:4px">render box: checking…</div>
     <div class="hint">Off stops the local models and hands the graphics card
       back. This page stays up, so you can wake her from here (loading takes
       about a minute). Same thing from a terminal: <code>forge off</code> /
@@ -300,7 +301,8 @@ async function checkPower() {
       (p.ready || []).includes(m) ? m : m + ' (loading…)');
     $('power-status').textContent = (names.length
       ? 'running: ' + names.join(', ')
-      : 'all local models are off') + (p.vram ? ' · ' + p.vram : '');
+      : 'all local models are off') + (p.vram ? ' · Void VRAM ' + p.vram : '');
+    if ($('renderbox-status')) $('renderbox-status').textContent = p.render_box_line || '';
   } catch (e) { $('power-status').textContent = ''; }
 }
 
