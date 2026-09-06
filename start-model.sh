@@ -7,6 +7,7 @@
 #   ./start-model.sh vision   -> shared 7B vision/mmproj on CPU (port 8090)
 #   ./start-model.sh merge    -> Merge's sighted 27B (port 8085)
 #   ./start-model.sh embed    -> nomic embedding organ, CPU (port 8086)
+#   ./start-model.sh big122   -> Qwen3.5-122B-A10B abliterated + eyes (port 8087, Void only)
 #   ./start-model.sh imagegen -> SD-Turbo image server, CPU (port 8771)
 set -e
 LLAMA=~/llama.cpp/build/bin/llama-server
@@ -88,6 +89,23 @@ case "${1:-big}" in
     MMPROJ=~/forge/models/mmproj-Qwen3.8-27B-ABLITERATED-F16.gguf
     PORT=8085; CTX=32768; NGL=99
     EXTRA="-fa on -ctk q8_0 -ctv q8_0 --reasoning-budget 1024"; CACHE=4096 ;;
+  big122)
+    # 2026-09-05 (Void only): Qwen3.5-122B-A10B abliterated (huihui — same
+    # lineage as her 27B), WITH its own eyes (mmproj). Mixture-of-experts:
+    # 122B of knowledge, ~10B fires per token, so it should write faster than
+    # the dense 27B while knowing far more. 69GB in 8 shards — llama.cpp
+    # takes the first shard and finds the rest. Only fits because this box
+    # can address 188GB. Candidate for the deep/precise brain; unproven.
+    MODEL=~/forge/models/qwen3.5-122b-a10b-abliterated/Q4_K-GGUF/Q4_K-GGUF-00001-of-00008.gguf
+    MMPROJ=~/forge/models/qwen3.5-122b-a10b-abliterated/mmproj-model-f16.gguf
+    PORT=8087; CTX=32768; NGL=99
+    # --reasoning-budget 4096, not 1024: at ~29 tok/s the 122B can afford
+    # ~2 min of thought, and the 1024 cap (tuned for the 12 tok/s 27B) was
+    # guillotining it mid-thought on hard problems — the server force-closes
+    # the think block and the model carries on reasoning OUT LOUD in its
+    # reply (137 leaked lines in the 2026-09-05 bug-hunt run). Bounded by
+    # the per-mode wall and the silence timeout either way.
+    EXTRA="-fa on -ctk q8_0 -ctv q8_0 --reasoning-budget 4096"; CACHE=4096 ;;
   embed)
     # Her associative sense-organ: nomic-embed-text on CPU, embedding-only.
     # Turns memory into vectors so recall finds things by MEANING, not just
