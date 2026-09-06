@@ -103,7 +103,7 @@ def _workflow(p: dict, prompt: str, seed: int, width: int, height: int,
         w["1l"] = {"class_type": "LoraLoaderModelOnly", "inputs": {"model": ["1", 0], "lora_name": p["lora"], "strength_model": 1.0}}
         model = ["1l", 0]
     if "shift" in p:
-        w["4"] = {"class_type": "ModelSamplingAuraFlow", "inputs": {"model": ["1", 0], "shift": p["shift"]}}
+        w["4"] = {"class_type": "ModelSamplingAuraFlow", "inputs": {"model": model, "shift": p["shift"]}}
         model = ["4", 0]
     positive = ["5", 0]
     # References: each image is encoded by the VAE and chained onto the
