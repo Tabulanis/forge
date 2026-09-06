@@ -322,7 +322,7 @@ $('btn-on').onclick = async () => {
   try {
     await api('/api/power', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({action: 'on', model: 'big'})
+      body: JSON.stringify({action: 'on', model: 'big122'})
     });
     toast('Waking her up — about a minute to load');
     setTimeout(checkPower, 3000);

@@ -1527,7 +1527,7 @@ function newChat(confirmFirst) {
   showWelcome();          // folder stays as-is; tap the folder name up top to change it
 }
 $('newBtn').onclick = () => newChat(true);
-// Wake: bring her brain online (starts forge-model-merge via /api/power, which
+// Wake: bring her brain online (starts forge-model-big122 via /api/power, which
 // also frees VRAM from any rival model) and drop into a fresh chat. The status
 // dot goes green when the weights finish loading.
 $('wakeBtn').onclick = async () => {
@@ -1536,7 +1536,7 @@ $('wakeBtn').onclick = async () => {
   try {
     const r = await fetch(q('/api/power'), {method:'POST',
       headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({action:'on', model:'merge'})});
+      body: JSON.stringify({action:'on', model:'big122'})});
     if (!r.ok) throw new Error('HTTP ' + r.status + ' ' + (await r.text().catch(()=>'')));
     newChat(false);
     el('note', '☀️ Waking Merge — her brain is loading (~30–60s). Fresh chat ready; the status dot turns green when she can answer.');
