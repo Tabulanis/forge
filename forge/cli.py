@@ -460,6 +460,10 @@ def main() -> None:
     ap.add_argument("-w", "--workspace", default=".", help="Project directory")
     ap.add_argument("-m", "--model", help="Model config to use for this run")
     ap.add_argument("--auto", action="store_true", help="Skip permission prompts")
+    ap.add_argument("--mode", default=None,
+                    help="Operating style for this run: flash / muse / balanced / "
+                         "precise / deep / teach / bughunt / auto (default: balanced). "
+                         "Only the last four turn her reasoning phase on.")
     ap.add_argument("-c", "--continue", dest="cont", action="store_true",
                     help="Pick up your last chat in this folder")
     args = ap.parse_args()
@@ -520,6 +524,15 @@ def main() -> None:
 
     try:
         sess = open_session(cfg, workspace, args.cont)
+        if args.mode:
+            # Same knob the dashboard sets per turn. Without it every scripted
+            # run — the whole bug-hunt series included — silently ran in
+            # balanced: thinking off, 600s wall (noticed 2026-09-05).
+            from .modes import ORDER
+            if args.mode.lower() not in ORDER:
+                console.print(f"[red]No mode named {args.mode!r} (try: {', '.join(ORDER)})[/red]")
+                sys.exit(1)
+            sess.agent.mode = args.mode.lower()
     except Exception as e:
         console.print(f"[red]Couldn't start: {e}[/red]")
         sys.exit(1)
