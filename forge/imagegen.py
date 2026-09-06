@@ -237,7 +237,8 @@ def render(prompt: str, out_path: str, preset: str = "sketch", references: list[
             if time.time() - t0 > 1800:
                 raise TimeoutError("render took over 30 minutes")
             time.sleep(1.0)
-        img = next(o for o in h["outputs"].values() if "images" in o)["images"][0]
+        outs = h["outputs"]
+        img = (outs.get("10", {}).get("images") or next(o for o in outs.values() if "images" in o)["images"])[0]
         q = urllib.parse.urlencode({"filename": img["filename"], "subfolder": img.get("subfolder", ""), "type": img.get("type", "output")})
         out = Path(out_path).expanduser(); out.parent.mkdir(parents=True, exist_ok=True)
         out.write_bytes(_get(base, f"/view?{q}", 120))
