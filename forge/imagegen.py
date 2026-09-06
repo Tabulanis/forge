@@ -3,9 +3,8 @@
 Presets are the house's picture-making tiers (2026-09-05):
   sketch      Z-Image-Turbo — ~20 s, text only. The everyday one.
   reference   FLUX.2-klein 9B — takes reference images: "make it look like this".
-  masterpiece FLUX.2-dev — the flagship. ~50 GB, so it can't sit beside her
-              brain; the caller is expected to put the brain to sleep first
-              (forge.power.off) and wake it after.
+  (Licensing rule, 2026-09-05: only permissively licensed models — Apache/MIT.
+   FLUX.2-dev and klein-9B are non-commercial-licensed and were removed.)
 
 ComfyUI keeps nothing resident between jobs: every render ends with /free so
 the brain keeps the memory. Cold render costs ~20 s more than warm. Measured:
@@ -32,30 +31,13 @@ PRESETS = {
         "steps": 8, "cfg": 1.0, "sampler": "res_multistep", "scheduler": "simple",
         "shift": 3.0, "latent": "EmptySD3LatentImage", "references": False,
     },
-    # FLUX.2-klein 4B: ungated, so it's what runs tonight. The 9B's weights sit
-    # behind Black Forest Labs' license gate (needs an HF token) — same recipe,
-    # swap the two filenames when it lands.
+    # FLUX.2-klein 4B — Apache 2.0, takes reference images.
     "reference": {
         "unet": "flux-2-klein-4b.safetensors", "clip": "qwen_3_4b.safetensors",   # same file Z-Image uses (hash-identical)
         "clip_type": "flux2", "vae": "flux2-vae.safetensors",
         "steps": 4, "cfg": 1.0, "sampler": "euler", "scheduler": "flux2",
         "latent": "EmptyFlux2LatentImage", "references": True,
     },
-    "reference9b": {
-        "unet": "flux-2-klein-9b-fp8.safetensors", "clip": "qwen_3_8b_fp8mixed.safetensors",
-        "clip_type": "flux2", "vae": "flux2-vae.safetensors",
-        "steps": 4, "cfg": 1.0, "sampler": "euler", "scheduler": "flux2",
-        "latent": "EmptyFlux2LatentImage", "references": True,
-    },
-    # Comfy's own FLUX.2-dev template: fp8 model + the Turbo LoRA at 1.0,
-    # 20 steps, euler, BasicGuider (no CFG), Mistral-Small fp8 as the encoder.
-    "masterpiece": {
-        "unet": "flux2_dev_fp8mixed.safetensors", "clip": "mistral_3_small_flux2_fp8.safetensors",
-        "clip_type": "flux2", "vae": "flux2-vae.safetensors", "lora": "Flux2TurboComfyv2.safetensors",
-        "steps": 20, "cfg": 1.0, "sampler": "euler", "scheduler": "flux2",
-        "latent": "EmptyFlux2LatentImage", "references": True,
-    },
-}
 
 
 def _post(base: str, path: str, body: dict, timeout: float = 60) -> dict:
