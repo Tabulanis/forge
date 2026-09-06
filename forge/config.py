@@ -108,6 +108,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
         # "masterpiece" = FLUX.2-dev (needs the brain asleep — see imagegen.py)
         "imagegen_url": "http://127.0.0.1:8188",
         "imagegen_preset": "sketch",
+        # video engine: ComfyUI + WAN 2.2 on the render box (the TITAN), over the wire
+        "videogen_url": "http://10.42.0.1:8189",
         "whisper_bin": "~/whisper.cpp/build/bin/whisper-cli",
         "whisper_model": "~/whisper.cpp/models/ggml-small.en.bin",
         "tts_command": "spd-say",

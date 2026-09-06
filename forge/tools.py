@@ -645,6 +645,47 @@ def _generate_image(ws_root: str, prompt: str, filename: str = "",
             f"Use look_at_image on that path to see what you made.")
 
 
+def _generate_video(ws_root: str, prompt: str, image: str = "", seconds=5,
+                    filename: str = "", seed=None) -> str:
+    """A clip via the render box's ComfyUI (forge.videogen). Same workspace
+    rules as images: everything in, everything out, stays inside the workspace."""
+    from . import videogen
+    root = Path(ws_root)
+    if filename:
+        name = filename if filename.lower().endswith(".mp4") else filename + ".mp4"
+    else:
+        slug = re.sub(r"[^a-z0-9]+", "-", prompt.lower()).strip("-")[:40] or "clip"
+        name = f"generated/{slug}.mp4"
+    out = (root / name).resolve()
+    if root != out and root not in out.parents:
+        return f"Error: video path is outside the workspace: {out}"
+    img = None
+    if image:
+        ip = (root / image).resolve() if not str(image).startswith("/") else Path(image)
+        if root != ip and root not in ip.parents:
+            return f"Error: start image is outside the workspace: {ip}"
+        if not ip.is_file():
+            return f"Error: start image not found: {ip}"
+        img = str(ip)
+    try:
+        from .config import load_config
+        from .media import load_media_config
+        base = getattr(load_media_config(load_config()), "videogen_url", "") or videogen.DEFAULT_URL
+    except Exception:
+        base = videogen.DEFAULT_URL
+    ok, why = videogen.available(base)
+    if not ok:
+        return f"Error: {why}"
+    secs = max(2.0, min(float(seconds or 5), 8.0))
+    try:
+        t0 = time.time()
+        path = videogen.render(prompt, str(out), image=img, seconds=secs, seed=seed, base=base)
+    except Exception as e:
+        return f"Error generating video: {str(e)[:500]}"
+    return (f"Video saved to {path} ({secs:.0f}s clip, took {time.time() - t0:.0f}s). "
+            f"You can't watch it yourself yet — tell the user where it is.")
+
+
 _INDEX_REGISTRY: dict = {}
 
 
@@ -2437,6 +2478,30 @@ def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provi
                                       seed, steps)),
             needs_permission=True,
             summarize=lambda a: f"generate image: {a.get('prompt', '')[:60]}",
+        ),
+        Tool(
+            name="generate_video",
+            description="Make a short video clip (default 5 s, 1280x704, 24 fps) from a "
+                        "text prompt — or animate a still: give `image` (a workspace "
+                        "path) and it becomes the first frame. Runs on the render box "
+                        "over the wire, so it takes a few minutes; saves an MP4 into the "
+                        "workspace and returns the path. Describe motion and camera, "
+                        "not just a scene.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "prompt": {"type": "string", "description": "What happens in the clip — subject, motion, camera"},
+                    "image": {"type": "string", "description": "Optional workspace path of a still to animate (first frame)"},
+                    "seconds": {"type": "number", "description": "Clip length in seconds, 2-8 (default 5)"},
+                    "filename": {"type": "string", "description": "Optional output name; defaults to a slug"},
+                    "seed": {"type": "integer", "description": "Optional seed for a repeatable clip"},
+                },
+                "required": ["prompt"],
+            },
+            run=guard(lambda prompt, image="", seconds=5, filename="", seed=None:
+                      _generate_video(str(ws.root), prompt, image, seconds, filename, seed)),
+            needs_permission=True,
+            summarize=lambda a: f"generate video: {a.get('prompt', '')[:60]}",
         ),
         Tool(
             name="recall",

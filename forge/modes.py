@@ -42,6 +42,7 @@ _CORE = {
     # images, ~20 s). Without this on the belt she went looking for the tool on
     # the web and started writing her own with PIL — watched live. One schema.
     "generate_image",                                               # her hands
+    "generate_video",                                               # her hands, moving
 }
 
 MODES = {
@@ -131,7 +132,7 @@ def get_mode(name: str) -> dict:
 # chat can leave no trace. `deny` names tools removed on top of the style's
 # own toolset; `ephemeral` means nothing about the chat is written to disk.
 _WRITES_DISK = {"write_file", "edit_file", "undo_file", "save_note",
-                "run_command", "format_code", "generate_image", "take_screenshot",
+                "run_command", "format_code", "generate_image", "generate_video", "take_screenshot",
                 "build_sim", "run_sim", "build_dataset"}
 _TOUCHES_FILES = _WRITES_DISK | {"read_file", "list_dir", "search"}
 
