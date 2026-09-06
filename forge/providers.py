@@ -234,10 +234,18 @@ class OpenAICompatProvider(Provider):
         self.base_url = base_url.rstrip("/")
         self._context = int(context)   # explicit config beats probing
         self._probed: int | None = None
+        # `timeout` is how long the server may go SILENT, not how long a call
+        # may take. Every call streams (see complete), so the read timeout
+        # resets on each chunk: a model still producing tokens is never cut
+        # off; one that has gone quiet for this long is. A whole-call cap was
+        # what killed her best bug-hunt run on 2026-09-05 — the server finished
+        # a 2,900-token answer at 12 tok/s after the client had hung up at 300s.
+        self.silence = float(timeout)
         self.client = httpx.Client(
             base_url=self.base_url,
             headers={"Authorization": f"Bearer {api_key}"},
-            timeout=timeout,
+            timeout=httpx.Timeout(connect=15.0, read=self.silence,
+                                  write=60.0, pool=15.0),
         )
 
     def context_limit(self) -> int:
@@ -319,70 +327,14 @@ class OpenAICompatProvider(Provider):
             # caller skip the reasoning phase for pure-judgment/describe tasks.
             body.update(extra_body)
 
-        # When a caller wants to watch the reply as it's written (the chat UI),
-        # stream token-by-token via on_delta and assemble the same Reply at the
-        # end. No callback → the ordinary one-shot path below, unchanged.
-        if on_delta is not None:
-            body["stream"] = True
-            body["stream_options"] = {"include_usage": True}
-            return self._stream(body, on_delta)
-
-        import httpx
-
-        try:
-            r = self.client.post("/chat/completions", json=body)
-            r.raise_for_status()
-        except httpx.ConnectError:
-            raise RuntimeError(
-                "The model isn't running right now. It normally starts "
-                "itself when the computer boots — wait a minute and send "
-                "your message again. If it keeps happening, someone at the "
-                "computer can run: forge doctor"
-            ) from None
-        except httpx.TimeoutException:
-            raise RuntimeError(
-                "The model is taking too long to answer. Big models need a "
-                "minute or two to wake up after a restart — wait a bit and "
-                "send your message again."
-            ) from None
-        except httpx.HTTPStatusError as e:
-            code = e.response.status_code
-            if code == 503:
-                raise RuntimeError(
-                    "The model is still waking up (big ones take a minute "
-                    "or two). Wait a little and send your message again."
-                ) from None
-            raise RuntimeError(
-                f"The model server hit a problem (error {code}). Try again "
-                f"in a moment; if it keeps happening, someone at the "
-                f"computer can run: forge doctor"
-            ) from None
-        data = r.json()
-        choice = data["choices"][0]["message"]
-
-        calls = []
-        for tc in (choice.get("tool_calls") or []):
-            fn = tc.get("function", {})
-            raw_args = fn.get("arguments", "{}")
-            if isinstance(raw_args, str):
-                try:
-                    args = json.loads(raw_args or "{}")
-                except json.JSONDecodeError:
-                    # A local model produced unparseable arguments. Pass it
-                    # through as a string so the tool layer can return a
-                    # useful error instead of the whole run dying here.
-                    args = {"_raw": raw_args}
-            else:
-                args = raw_args or {}
-            calls.append(ToolCall(id=tc.get("id") or f"call_{len(calls)}",
-                                  name=fn.get("name", ""), args=args))
-
-        return Reply(
-            text=choice.get("content") or "",
-            tool_calls=calls,
-            raw=data,
-            usage=data.get("usage", {}),
-        )
+        # Always stream — whether or not anyone is watching. Streaming is what
+        # makes the timeout a silence timeout instead of a whole-call cap (see
+        # __init__). No callback → a no-op one; the Reply comes out the same.
+        if on_delta is None:
+            on_delta = lambda _text: None
+        body["stream"] = True
+        body["stream_options"] = {"include_usage": True}
+        return self._stream(body, on_delta)
 
     def _stream(self, body: dict, on_delta) -> Reply:
         """Stream the reply: fire on_delta(text) as each content chunk arrives,
@@ -442,6 +394,10 @@ class OpenAICompatProvider(Provider):
             # context size", so hiding it turns a RECOVERABLE overflow into a
             # dead run (root-caused live 2026-08-15).
             detail = type(e).__name__
+            if isinstance(e, httpx.ReadTimeout):
+                detail = (f"no tokens for {int(self.silence)}s — the model went "
+                          f"quiet (raise `timeout:` for this model in config.yaml "
+                          f"if it is just slow)")
             if isinstance(e, httpx.HTTPStatusError):
                 detail = f"HTTP {e.response.status_code}"
                 try:
@@ -483,5 +439,9 @@ def build_provider(cfg: dict) -> Provider:
             api_key=cfg.get("api_key") or "not-needed",
             max_tokens=int(cfg.get("max_tokens", 4096)),
             context=int(cfg.get("context", 0)),
+            # seconds of silence allowed before a call is declared dead; per
+            # model, because the same weights run at very different speeds on
+            # different hardware (2026-09-05: 28 tok/s on the TITAN, 12.8 here)
+            timeout=float(cfg.get("timeout", 300)),
         )
     raise ValueError(f"Unknown provider: {kind!r}")

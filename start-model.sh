@@ -38,7 +38,9 @@ case "${1:-big}" in
     # the big model. Fast enough for short prompts (titles, routing,
     # summaries); not meant for real coding.
     MODEL=~/forge/models/qwen2.5-3b-instruct-q4.gguf
-    PORT=8083; CTX=8192; NGL=0 ;;
+    # 2026-09-05 (Void, Vulkan): on the GPU. The CPU pin was a 24GB-card
+    # workaround; this box has room, and 3B on the card is instant.
+    PORT=8083; CTX=8192; NGL=99 ;;
   coder14)
     MODEL=~/llmmodels/Qwen2.5-Coder-14B-Instruct-abliterated-Q8_0.gguf
     PORT=8082; CTX=8192; NGL=99 ;;
@@ -53,7 +55,9 @@ case "${1:-big}" in
     # is the right call. Raise NGL if you run vision without the big model.
     MODEL=~/forge/models/qwen2.5-vl-7b-q4.gguf
     MMPROJ=~/forge/models/qwen2.5-vl-7b-mmproj.gguf
-    PORT=8090; CTX=4096; NGL=0 ;;
+    # 2026-09-05 (Void, Vulkan): fully on the GPU — the ~2 min/image CPU
+    # path only ever existed because the TITAN had 1.7GB spare.
+    PORT=8090; CTX=4096; NGL=99 ;;
   merge)
     # Merge's sighted brain: Qwen3.6 27B dense, abliterated (Heretic), with
     # native vision — the mmproj here is her own eyes, not the shared 7B on
@@ -107,7 +111,7 @@ if [ -n "${EMBED:-}" ]; then
   # never touch the card even if a GPU build tries a cudaMalloc.
   echo "starting $(basename "$MODEL") as an embedding organ on port $PORT (CPU) ..."
   exec env CUDA_VISIBLE_DEVICES="" "$LLAMA" -m "$MODEL" --host 127.0.0.1 \
-    --port "$PORT" -c "$CTX" --embedding --pooling mean
+    --port "$PORT" -c "$CTX" -ngl 0 --embedding --pooling mean
 fi
 
 if [ -n "${MMPROJ:-}" ]; then
