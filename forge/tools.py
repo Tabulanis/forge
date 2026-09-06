@@ -656,6 +656,49 @@ def _generate_image(ws_root: str, prompt: str, filename: str = "",
             f"Use look_at_image on that path to see what you made.")
 
 
+def _restyle_video(ws_root: str, video: str, prompt: str, reference_image: str = "", control: str = "depth",
+                   strength: float = 1.0, start: float = 0.0, seconds=None, filename: str = "", seed=None) -> str:
+    """Repaint a workspace video to a prompt while keeping its motion and structure (forge.videogen.restyle)."""
+    from . import videogen
+    root = Path(ws_root).resolve()
+    def inside(pth: str) -> Path | None:
+        q = (root / pth).resolve() if not str(pth).startswith("/") else Path(pth).resolve()
+        return q if (q == root or root in q.parents) else None
+    src = inside(video)
+    if not src or not src.is_file():
+        return f"Error: video not found in the workspace: {video}"
+    ref = None
+    if reference_image:
+        ref = inside(reference_image)
+        if not ref or not ref.is_file():
+            return f"Error: reference image not found in the workspace: {reference_image}"
+    if filename:
+        name = filename if filename.lower().endswith(".mp4") else filename + ".mp4"
+    else:
+        slug = re.sub(r"[^a-z0-9]+", "-", prompt.lower()).strip("-")[:40] or "restyled"
+        name = f"generated/{src.stem}-{slug}.mp4"
+    out = (root / name).resolve()
+    if root != out and root not in out.parents:
+        return f"Error: output path is outside the workspace: {out}"
+    try:
+        from .config import load_config
+        from .media import load_media_config
+        base = getattr(load_media_config(load_config()), "videogen_url", "") or videogen.DEFAULT_URL
+    except Exception:
+        base = videogen.DEFAULT_URL
+    ok, why = videogen.available(base)
+    if not ok:
+        return f"Error: {why}"
+    try:
+        t0 = time.time()
+        path = videogen.restyle(str(src), prompt, str(out), reference_image=(str(ref) if ref else None), control=control or "depth",
+                                strength=float(strength or 1.0), start=float(start or 0), seconds=(float(seconds) if seconds else None), seed=seed, base=base)
+    except Exception as e:
+        return f"Error restyling video: {str(e)[:500]}"
+    return (f"Restyled video saved to {path} (took {time.time() - t0:.0f}s). "
+            f"You can't watch it yourself yet — tell the user where it is.")
+
+
 def _generate_video(ws_root: str, prompt: str, image: str = "", seconds=5,
                     filename: str = "", seed=None, quality: str = "fast") -> str:
     """A clip via the render box's ComfyUI (forge.videogen). Same workspace
@@ -2466,7 +2509,8 @@ def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provi
                         "'schnell' (FLUX.1 schnell — photographic, good with text in the "
                         "picture, ~1.5 min), 'reference' (FLUX klein, takes reference "
                         "images, ~1 min), 'masterpiece' (Qwen-Image — best text and "
-                        "composition, ~4 min), 'edit' (Qwen-Image-Edit — give 1-3 `references` "
+                        "composition, ~4 min), 'real' (Qwen-Image-2512 + realism LoRA — for "
+                        "photographic, un-plastic people and places, ~5 min), 'edit' (Qwen-Image-Edit — give 1-3 `references` "
                         "and say what to change; keeps the same face/character/object across "
                         "new poses and scenes, ~5 min). Any Qwen preset can also follow a "
                         "`control_image`: its pose (default), depth or edges steer the result. "
@@ -2479,7 +2523,7 @@ def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provi
                     "filename": {"type": "string",
                                  "description": "Optional output name; defaults to a slug"},
                     "preset": {"type": "string",
-                               "description": "sketch | schnell | reference | masterpiece | edit (default sketch)"},
+                               "description": "sketch | schnell | reference | masterpiece | real | edit (default sketch)"},
                     "control_image": {"type": "string",
                                       "description": "Optional workspace path of a picture whose pose/depth/edges the result must follow (Qwen presets: masterpiece, edit)"},
                     "control_type": {"type": "string", "enum": ["pose", "depth", "edges"],
@@ -2529,6 +2573,34 @@ def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provi
                       _generate_video(str(ws.root), prompt, image, seconds, filename, seed, quality)),
             needs_permission=True,
             summarize=lambda a: f"generate video: {a.get('prompt', '')[:60]}",
+        ),
+        Tool(
+            name="restyle_video",
+            description="Re-paint an existing video (a workspace path) to a new look while keeping "
+                        "its motion and framing: 'the same shot at night', '1975 handheld 16mm film, "
+                        "faded Kodachrome, grain', 'as a charcoal animation'. Optionally give a "
+                        "`reference_image` for the exact look. Structure is read from the source as "
+                        "depth (default), edges, or the people's poses. Runs on the render box, about "
+                        "2-3 min per 5 s of video at ~480p, 16 fps. Saves an MP4 into the workspace.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "video": {"type": "string", "description": "Workspace path of the source video"},
+                    "prompt": {"type": "string", "description": "The new look — time of day, era, film stock, medium, weather"},
+                    "reference_image": {"type": "string", "description": "Optional workspace path of a still that shows the look"},
+                    "control": {"type": "string", "enum": ["depth", "edges", "pose"], "description": "What to keep from the source (default depth)"},
+                    "strength": {"type": "number", "description": "0-1, how strictly to follow the source structure (default 1.0)"},
+                    "start": {"type": "number", "description": "Seconds into the source to begin (default 0)"},
+                    "seconds": {"type": "number", "description": "How many seconds to restyle (default: all, in 5 s passes)"},
+                    "filename": {"type": "string", "description": "Optional output name"},
+                    "seed": {"type": "integer", "description": "Optional seed"},
+                },
+                "required": ["video", "prompt"],
+            },
+            run=guard(lambda video, prompt, reference_image="", control="depth", strength=1.0, start=0.0, seconds=None, filename="", seed=None:
+                      _restyle_video(str(ws.root), video, prompt, reference_image, control, strength, start, seconds, filename, seed)),
+            needs_permission=True,
+            summarize=lambda a: f"restyle video: {a.get('prompt', '')[:60]}",
         ),
         Tool(
             name="recall",

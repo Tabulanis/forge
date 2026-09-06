@@ -51,6 +51,33 @@ PRESETS = {
         "steps": 4, "cfg": 1.0, "sampler": "euler", "scheduler": "simple",
         "latent": "EmptySD3LatentImage", "references": False,
     },
+    # Stable Diffusion 3.5 Large (Stability Community License — owner-approved 2026-09-06 for the
+    # bake-off; not Apache). Q8 GGUF; three text encoders (clip_l + clip_g + T5-XXL GGUF); the VAE
+    # lifted out of Comfy's fp8 checkpoint. Stock recipe: 28 steps, cfg 4.5, dpmpp_2m/sgm_uniform, shift 3.
+    "sd35": {
+        "unet": "sd3.5_large-Q8_0.gguf", "unet_loader": "UnetLoaderGGUF",
+        "clip": "clip_l.safetensors", "clip2": "clip_g.safetensors", "clip3": "t5-v1_1-xxl-encoder-Q8_0.gguf",
+        "clip_loader": "TripleCLIPLoaderGGUF", "clip_type": "sd3", "vae": "sd3.5_vae.safetensors",
+        "steps": 28, "cfg": 4.5, "sampler": "dpmpp_2m", "scheduler": "sgm_uniform", "shift": 3.0,
+        "latent": "EmptySD3LatentImage", "references": False,
+    },
+    # Its Turbo distillation: 4 steps, no guidance.
+    "sd35turbo": {
+        "unet": "sd3.5_large_turbo-Q8_0.gguf", "unet_loader": "UnetLoaderGGUF",
+        "clip": "clip_l.safetensors", "clip2": "clip_g.safetensors", "clip3": "t5-v1_1-xxl-encoder-Q8_0.gguf",
+        "clip_loader": "TripleCLIPLoaderGGUF", "clip_type": "sd3", "vae": "sd3.5_vae.safetensors",
+        "steps": 4, "cfg": 1.0, "sampler": "euler", "scheduler": "simple", "shift": 3.0,
+        "latent": "EmptySD3LatentImage", "references": False,
+    },
+    # Qwen-Image-2512 (Apache 2.0) — the flagship retrained against the plastic look, GGUF Q6, its own
+    # 8-step Lightning, plus a realism LoRA (Samsung_Qwen2512, Apache: "raw, unedited photo" texture).
+    "real": {
+        "unet": "qwen-image-2512-Q6_K.gguf", "unet_loader": "UnetLoaderGGUF",
+        "clip": "qwen_2.5_vl_7b_fp8_scaled.safetensors", "clip_type": "qwen_image", "vae": "qwen_image_vae.safetensors",
+        "loras": [("Qwen-Image-2512-Lightning-8steps-V1.0-bf16.safetensors", 1.0), ("samsung_qwen2512.safetensors", 0.8)],
+        "steps": 8, "cfg": 1.0, "sampler": "euler", "scheduler": "simple", "shift": 3.1,
+        "latent": "EmptySD3LatentImage", "references": False, "size": 1328,
+    },
     # Qwen-Image-Edit-2511 (Apache 2.0) — reference-driven editing: give it 1-3 pictures and say
     # what to change/keep; it holds faces, characters and objects across poses and scenes. GGUF Q6
     # build + its own 8-step Lightning LoRA. Same text encoder + VAE as masterpiece.
@@ -114,7 +141,7 @@ def _upload(base: str, path: Path) -> str:
 # conditioning is steered by it. Only the Qwen-Image presets (masterpiece, edit) carry it.
 CONTROL = {
     "pose":  {"pre": "DWPreprocessor", "pre_inputs": {"detect_hand": "enable", "detect_body": "enable", "detect_face": "enable", "resolution": 1024}, "union": "openpose"},
-    "depth": {"pre": "DepthAnythingV2Preprocessor", "pre_inputs": {"ckpt_name": "depth_anything_v2_vitl.pth", "resolution": 1024}, "union": "depth"},
+    "depth": {"pre": "DepthAnythingV2Preprocessor", "pre_inputs": {"ckpt_name": "depth_anything_v2_vitb.pth", "resolution": 1024}, "union": "depth"},
     "edges": {"pre": "CannyEdgePreprocessor", "pre_inputs": {"low_threshold": 100, "high_threshold": 200, "resolution": 1024}, "union": "canny/lineart/anime_lineart/mlsd"},
 }
 CONTROLNET_FILE = "Qwen-Image-ControlNet-Union.safetensors"
@@ -127,7 +154,9 @@ def _workflow(p: dict, prompt: str, seed: int, width: int, height: int,
         "1": ({"class_type": "UnetLoaderGGUF", "inputs": {"unet_name": p["unet"]}}
               if p.get("unet_loader") == "UnetLoaderGGUF" else
               {"class_type": "UNETLoader", "inputs": {"unet_name": p["unet"], "weight_dtype": "default"}}),
-        "2": ({"class_type": p["clip_loader"], "inputs": {"clip_name1": p["clip"], "clip_name2": p["clip2"], "type": p["clip_type"]}}
+        "2": ({"class_type": p["clip_loader"], "inputs": {"clip_name1": p["clip"], "clip_name2": p["clip2"], "clip_name3": p["clip3"]}}
+              if p.get("clip3") else
+              {"class_type": p["clip_loader"], "inputs": {"clip_name1": p["clip"], "clip_name2": p["clip2"], "type": p["clip_type"]}}
               if p.get("clip2") else
               {"class_type": "CLIPLoaderGGUF", "inputs": {"clip_name": p["clip"], "type": p["clip_type"]}}
               if p.get("clip_loader") == "CLIPLoaderGGUF" else
@@ -140,11 +169,14 @@ def _workflow(p: dict, prompt: str, seed: int, width: int, height: int,
         "10": {"class_type": "SaveImage", "inputs": {"images": ["9", 0], "filename_prefix": "merge/img"}},
     }
     model = ["1", 0]
-    if p.get("lora"):
-        w["1l"] = {"class_type": "LoraLoaderModelOnly", "inputs": {"model": ["1", 0], "lora_name": p["lora"], "strength_model": 1.0}}
-        model = ["1l", 0]
+    loras = list(p.get("loras") or ([(p["lora"], 1.0)] if p.get("lora") else []))
+    for i, (lname, lstr) in enumerate(loras):
+        nid = "1l" if i == 0 else f"1l{i}"
+        w[nid] = {"class_type": "LoraLoaderModelOnly", "inputs": {"model": model, "lora_name": lname, "strength_model": float(lstr)}}
+        model = [nid, 0]
     if "shift" in p:
-        w["4"] = {"class_type": "ModelSamplingAuraFlow", "inputs": {"model": model, "shift": p["shift"]}}
+        _shift_node = "ModelSamplingSD3" if p.get("clip_type") == "sd3" else "ModelSamplingAuraFlow"
+        w["4"] = {"class_type": _shift_node, "inputs": {"model": model, "shift": p["shift"]}}
         model = ["4", 0]
     positive = ["5", 0]
     negative = ["6", 0]
