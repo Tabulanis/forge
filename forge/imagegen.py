@@ -3,6 +3,8 @@
 Presets are the house's picture-making tiers (2026-09-05):
   sketch      Z-Image-Turbo — ~20 s, text only. The everyday one.
   reference   FLUX.2-klein 9B — takes reference images: "make it look like this".
+  masterpiece Qwen-Image — the flagship (Apache 2.0). ~28 GB, so it can't sit
+              beside her brain: the caller sleeps the brain, renders, wakes it.
   (Licensing rule, 2026-09-05: only permissively licensed models — Apache/MIT.
    FLUX.2-dev and klein-9B are non-commercial-licensed and were removed.)
 
@@ -37,6 +39,18 @@ PRESETS = {
         "clip_type": "flux2", "vae": "flux2-vae.safetensors",
         "steps": 4, "cfg": 1.0, "sampler": "euler", "scheduler": "flux2",
         "latent": "EmptyFlux2LatentImage", "references": True,
+    },
+    # Qwen-Image (Apache 2.0) — the flagship. Comfy's recipe: fp8 model +
+    # Lightning 8-step LoRA, shift 3.1, euler/simple, cfg 1, 1328². ~28 GB, so
+    # it does NOT fit beside her 122B brain: the tool puts the brain to sleep,
+    # renders, and wakes it (see tools._generate_image). Minutes, not seconds.
+    "masterpiece": {
+        "unet": "qwen_image_fp8_e4m3fn.safetensors", "clip": "qwen_2.5_vl_7b_fp8_scaled.safetensors",
+        "clip_type": "qwen_image", "vae": "qwen_image_vae.safetensors",
+        "lora": "Qwen-Image-Lightning-8steps-V1.0.safetensors",
+        "steps": 8, "cfg": 1.0, "sampler": "euler", "scheduler": "simple",
+        "shift": 3.1, "latent": "EmptySD3LatentImage", "references": False,
+        "size": 1328, "needs_brain_asleep": True,
     },
 }
 
@@ -135,6 +149,8 @@ def render(prompt: str, out_path: str, preset: str = "sketch", references: list[
         if not r.is_file():
             raise FileNotFoundError(f"reference image not found: {r}")
     seed = random.randrange(2 ** 31) if seed is None else int(seed)
+    if p.get("size") and width == 1024 and height == 1024:
+        width = height = p["size"]           # the preset's native square
     names = [_upload(base, r) for r in refs]
     pid = _post(base, "/prompt", {"prompt": _workflow(p, prompt, seed, width, height, steps, names)}, 30)["prompt_id"]
     t0 = time.time()

@@ -635,13 +635,41 @@ def _generate_image(ws_root: str, prompt: str, filename: str = "",
     ok, why = imagegen.available(base)
     if not ok:
         return f"Error: {why}"
+    napped = False
+    if imagegen.PRESETS[preset].get("needs_brain_asleep"):
+        # Sleep → render → wake. The flagship won't fit beside the 122B
+        # (measured: swap filled). Her turn survives because the tool only
+        # returns once the brain answers again; the dashboard shows the nap.
+        try:
+            from . import power
+            if "big122" in {power.short(u) for u in power.running()}:
+                power._run("systemctl", "--user", "stop", "forge-model-big122.service")
+                time.sleep(3)
+                napped = True
+        except Exception as e:
+            return f"Error: couldn't put the brain to sleep for the flagship render ({e})"
     try:
         t0 = time.time()
         path = imagegen.render(prompt, str(out), preset=preset, references=refs,
                                seed=seed, steps=steps, base=base)
+        err = ""
     except Exception as e:
-        return f"Error generating image ({preset}): {str(e)[:500]}"
-    return (f"Image saved to {path} ({preset}, {time.time() - t0:.0f}s). "
+        path, err = "", f"Error generating image ({preset}): {str(e)[:500]}"
+    finally:
+        if napped:
+            try:
+                from . import power
+                power._run("systemctl", "--user", "start", "forge-model-big122.service")
+                for _ in range(90):                 # up to ~6 min for 69 GB to reload
+                    if power.is_ready("big122"):
+                        break
+                    time.sleep(4)
+            except Exception:
+                pass
+    if err:
+        return err
+    return (f"Image saved to {path} ({preset}, {time.time() - t0:.0f}s"
+            f"{', brain napped and is back' if napped else ''}). "
             f"Use look_at_image on that path to see what you made.")
 
 
@@ -2462,7 +2490,7 @@ def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provi
                     "filename": {"type": "string",
                                  "description": "Optional output name; defaults to a slug"},
                     "preset": {"type": "string",
-                               "description": "sketch | reference (default sketch)"},
+                               "description": "sketch | reference | masterpiece (default sketch)"},
                     "references": {"type": "array", "items": {"type": "string"},
                                    "description": "Workspace paths of images to work FROM — "
                                                   "the result will resemble them"},
