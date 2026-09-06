@@ -44,8 +44,10 @@ class MediaConfig:
     # endpoint is optional and only used if the first doesn't answer.
     vision_url: str = "http://127.0.0.1:8087/v1"
     vision_model: str = "qwen3.5-122b"
-    vision_fallback_url: str = "http://127.0.0.1:8090/v1"
-    vision_fallback_model: str = "qwen2.5-vl"
+    vision_fallback_url: str = ""          # optional second endpoint; none by default
+    vision_fallback_model: str = ""
+    imagegen_url: str = "http://127.0.0.1:8188"   # ComfyUI (forge.imagegen)
+    imagegen_preset: str = "sketch"
     whisper_bin: str = str(Path.home() / "whisper.cpp/build/bin/whisper-cli")
     whisper_model: str = str(Path.home() / "whisper.cpp/models/ggml-small.en.bin")
     tts_command: str = "spd-say"          # speech-dispatcher; ships with most desktops

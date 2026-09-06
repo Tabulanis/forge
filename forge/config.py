@@ -103,8 +103,11 @@ DEFAULT_CONFIG: dict[str, Any] = {
         # step with the MediaConfig defaults in media.py.
         "vision_url": "http://127.0.0.1:8087/v1",   # her brain's own eyes (big122)
         "vision_model": "qwen3.6-27b",
-        "vision_fallback_url": "http://127.0.0.1:8090/v1",
-        "vision_fallback_model": "qwen2.5-vl",
+        # image engine: ComfyUI on this box; "sketch" = Z-Image-Turbo (~20 s),
+        # "reference" = FLUX.2-klein 9B (takes reference images),
+        # "masterpiece" = FLUX.2-dev (needs the brain asleep — see imagegen.py)
+        "imagegen_url": "http://127.0.0.1:8188",
+        "imagegen_preset": "sketch",
         "whisper_bin": "~/whisper.cpp/build/bin/whisper-cli",
         "whisper_model": "~/whisper.cpp/models/ggml-small.en.bin",
         "tts_command": "spd-say",

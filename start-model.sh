@@ -8,17 +8,8 @@
 #   ./start-model.sh merge    -> Merge's sighted 27B (port 8085)
 #   ./start-model.sh embed    -> nomic embedding organ, CPU (port 8086)
 #   ./start-model.sh big122   -> Qwen3.5-122B-A10B abliterated + eyes (port 8087, Void only)
-#   ./start-model.sh imagegen -> SD-Turbo image server, CPU (port 8771)
 set -e
 LLAMA=~/llama.cpp/build/bin/llama-server
-
-# The image generator is a python server, not a llama model — handle it
-# before the llama case. CPU only (GPU stays Merge's); holds SD-Turbo warm
-# on :8771 so each image skips the model reload.
-if [ "${1:-big}" = "imagegen" ]; then
-  echo "starting image-gen warm server on :8771 (CPU, SD-Turbo) ..."
-  exec env CUDA_VISIBLE_DEVICES="" PYTHONPATH="$HOME/forge" python3 -m forge.imagegen_server
-fi
 
 case "${1:-big}" in
   big)
@@ -113,7 +104,7 @@ case "${1:-big}" in
     # separately (llama-server can't both generate and embed on one port).
     MODEL=~/forge/models/nomic-embed-text-v1.5.f16.gguf
     PORT=8086; CTX=2048; NGL=0; EMBED=1 ;;
-  *) echo "unknown model: $1  (try: big, tiny, little, coder14, vision, merge, merge38, embed, imagegen)"; exit 1 ;;
+  *) echo "unknown model: $1  (try: big, tiny, little, coder14, vision, merge, merge38, embed)"; exit 1 ;;
 esac
 
 # Prompt cache lives in HOST RAM and llama-server defaults it to 8 GB PER

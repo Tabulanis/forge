@@ -18,6 +18,7 @@ went wrong and correct itself instead of the run dying.
 from __future__ import annotations
 
 import json
+import time
 import os
 import re
 import subprocess
@@ -598,9 +599,12 @@ def _physics_sim(scenario: str, params: dict | None = None) -> str:
 
 
 def _generate_image(ws_root: str, prompt: str, filename: str = "",
-                    steps: int = 3, seed=None) -> str:
-    """Run the CPU image generator as a subprocess (keeps the 2.5GB SD model
-    out of the agent's own memory, and hides the GPU so Merge keeps it)."""
+                    preset: str = "", references: list | None = None,
+                    seed=None, steps=None, media=None) -> str:
+    """Make an image on the GPU through ComfyUI (forge.imagegen). The picture
+    lands in the workspace; references (paths in the workspace) are what
+    "make it look like this" means."""
+    from . import imagegen
     root = Path(ws_root)
     if filename:
         name = filename if filename.lower().endswith((".png", ".jpg", ".jpeg")) \
@@ -611,36 +615,33 @@ def _generate_image(ws_root: str, prompt: str, filename: str = "",
     out = (root / name).resolve()
     if root != out and root not in out.parents:
         return f"Error: image path is outside the workspace: {out}"
-    # Fast path: the keep-warm server (start-model.sh imagegen) holds the model
-    # in RAM, so this skips the ~30s reload — only the draw remains. Falls
-    # through to a one-off subprocess if that server isn't running.
+    refs = []
+    for r in (references or []):
+        rp = (root / str(r)).resolve() if not str(r).startswith("/") else Path(r)
+        if root != rp and root not in rp.parents:
+            return f"Error: reference image is outside the workspace: {rp}"
+        refs.append(str(rp))
+    if media is None:
+        try:
+            from .config import load_config
+            from .media import load_media_config
+            media = load_media_config(load_config())
+        except Exception:
+            media = None
+    base = getattr(media, "imagegen_url", "") or imagegen.DEFAULT_URL
+    preset = (preset or getattr(media, "imagegen_preset", "") or "sketch").lower()
+    if refs and preset == "sketch":
+        preset = "reference"          # sketch can't take references; upgrade quietly
+    ok, why = imagegen.available(base)
+    if not ok:
+        return f"Error: {why}"
     try:
-        import urllib.request
-        payload = {"prompt": prompt, "out_path": str(out), "steps": int(steps)}
-        if seed is not None:
-            payload["seed"] = int(seed)
-        req = urllib.request.Request(
-            "http://127.0.0.1:8771/generate", json.dumps(payload).encode(),
-            {"Content-Type": "application/json"})
-        with urllib.request.urlopen(req, timeout=180) as r:
-            res = json.load(r)
-        if res.get("path"):
-            return (f"Image saved to {res['path']} (warm server). "
-                    f"Use look_at_image on that path to see what you made.")
-    except Exception:
-        pass   # warm server down or errored -> subprocess fallback below
-    forge_root = str(Path(__file__).resolve().parent.parent)
-    env = {**os.environ, "PYTHONPATH": forge_root, "CUDA_VISIBLE_DEVICES": ""}
-    cmd = [sys.executable, "-m", "forge.imagegen", prompt, str(out), str(int(steps))]
-    if seed is not None:
-        cmd.append(str(int(seed)))
-    try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=300, env=env)
-    except subprocess.TimeoutExpired:
-        return "Error: image generation timed out (over 5 minutes)."
-    if r.returncode != 0:
-        return f"Error generating image: {((r.stderr or r.stdout) or '')[-600:]}"
-    return (f"Image saved to {out}. It's a concept/mood sketch (fast CPU model). "
+        t0 = time.time()
+        path = imagegen.render(prompt, str(out), preset=preset, references=refs,
+                               seed=seed, steps=steps, base=base)
+    except Exception as e:
+        return f"Error generating image ({preset}): {str(e)[:500]}"
+    return (f"Image saved to {path} ({preset}, {time.time() - t0:.0f}s). "
             f"Use look_at_image on that path to see what you made.")
 
 
@@ -2404,12 +2405,14 @@ def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provi
         ),
         Tool(
             name="generate_image",
-            description="Generate an image from a text prompt with a fast local model "
-                        "(runs on CPU, so it never touches the GPU). Saves a PNG into the "
-                        "workspace and returns the path — you can then look_at_image it to "
-                        "see what you made. Quality is concept/mood/sketch tier and takes "
-                        "~30s; good for visualizing an idea or a scene, not for final art. "
-                        "Give a vivid, detailed prompt.",
+            description="Make an image on the GPU from a text prompt, and optionally "
+                        "from reference images (\"make it look like this\"). Saves a "
+                        "PNG into the workspace and returns the path — then "
+                        "look_at_image it to check your work. Presets: 'sketch' "
+                        "(default, ~20s, text only), 'reference' (takes reference "
+                        "images, ~30s), 'masterpiece' (the flagship — slow, and it "
+                        "needs your brain asleep first, so only when asked for it). "
+                        "Give a vivid, specific prompt.",
             parameters={
                 "type": "object",
                 "properties": {
@@ -2417,15 +2420,21 @@ def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provi
                                "description": "Vivid description of the image to make"},
                     "filename": {"type": "string",
                                  "description": "Optional output name; defaults to a slug"},
-                    "steps": {"type": "integer",
-                              "description": "Denoising steps, 1-4 (default 3); more = slower"},
+                    "preset": {"type": "string",
+                               "description": "sketch | reference | masterpiece (default sketch)"},
+                    "references": {"type": "array", "items": {"type": "string"},
+                                   "description": "Workspace paths of images to work FROM — "
+                                                  "the result will resemble them"},
                     "seed": {"type": "integer",
                              "description": "Optional seed for a repeatable image"},
+                    "steps": {"type": "integer",
+                              "description": "Optional override of the preset's step count"},
                 },
                 "required": ["prompt"],
             },
-            run=guard(lambda prompt, filename="", steps=3, seed=None:
-                      _generate_image(str(ws.root), prompt, filename, steps, seed)),
+            run=guard(lambda prompt, filename="", preset="", references=None, seed=None, steps=None:
+                      _generate_image(str(ws.root), prompt, filename, preset, references,
+                                      seed, steps)),
             needs_permission=True,
             summarize=lambda a: f"generate image: {a.get('prompt', '')[:60]}",
         ),
