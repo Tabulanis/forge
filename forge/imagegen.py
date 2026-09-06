@@ -174,10 +174,14 @@ def render(prompt: str, out_path: str, preset: str = "sketch", references: list[
         return str(out)
     finally:
         if unload:
-            try:
-                _post(base, "/free", {"unload_models": True, "free_memory": True}, 20)
-            except Exception:
-                pass
+            # Twice, a beat apart: measured 2026-09-05, one /free right after a
+            # reference render left 28 GB borrowed; the second took it to 13.
+            for _ in range(2):
+                try:
+                    _post(base, "/free", {"unload_models": True, "free_memory": True}, 20)
+                except Exception:
+                    pass
+                time.sleep(2.0)
 
 
 if __name__ == "__main__":
