@@ -47,9 +47,11 @@ PRESETS = {
         "steps": 4, "cfg": 1.0, "sampler": "euler", "scheduler": "flux2",
         "latent": "EmptyFlux2LatentImage", "references": True,
     },
+    # Comfy's own FLUX.2-dev template: fp8 model + the Turbo LoRA at 1.0,
+    # 20 steps, euler, BasicGuider (no CFG), Mistral-Small fp8 as the encoder.
     "masterpiece": {
         "unet": "flux2_dev_fp8mixed.safetensors", "clip": "mistral_3_small_flux2_fp8.safetensors",
-        "clip_type": "flux2", "vae": "flux2-vae.safetensors",
+        "clip_type": "flux2", "vae": "flux2-vae.safetensors", "lora": "Flux2TurboComfyv2.safetensors",
         "steps": 20, "cfg": 1.0, "sampler": "euler", "scheduler": "flux2",
         "latent": "EmptyFlux2LatentImage", "references": True,
     },
@@ -104,6 +106,9 @@ def _workflow(p: dict, prompt: str, seed: int, width: int, height: int,
         "10": {"class_type": "SaveImage", "inputs": {"images": ["9", 0], "filename_prefix": "merge/img"}},
     }
     model = ["1", 0]
+    if p.get("lora"):
+        w["1l"] = {"class_type": "LoraLoaderModelOnly", "inputs": {"model": ["1", 0], "lora_name": p["lora"], "strength_model": 1.0}}
+        model = ["1l", 0]
     if "shift" in p:
         w["4"] = {"class_type": "ModelSamplingAuraFlow", "inputs": {"model": ["1", 0], "shift": p["shift"]}}
         model = ["4", 0]
@@ -120,7 +125,9 @@ def _workflow(p: dict, prompt: str, seed: int, width: int, height: int,
         # FLUX.2's own scheduler + guider + advanced sampler, per Comfy's template
         w["s1"] = {"class_type": "KSamplerSelect", "inputs": {"sampler_name": p["sampler"]}}
         w["s2"] = {"class_type": "Flux2Scheduler", "inputs": {"steps": steps or p["steps"], "width": width, "height": height}}
-        w["s3"] = {"class_type": "CFGGuider", "inputs": {"model": model, "positive": positive, "negative": ["6", 0], "cfg": p["cfg"]}}
+        # BasicGuider = no classifier-free guidance, which is what the FLUX.2
+        # templates use (cfg 1); the empty negative is simply unused here.
+        w["s3"] = {"class_type": "BasicGuider", "inputs": {"model": model, "conditioning": positive}}
         w["s4"] = {"class_type": "RandomNoise", "inputs": {"noise_seed": seed}}
         w["8"] = {"class_type": "SamplerCustomAdvanced", "inputs": {"noise": ["s4", 0], "guider": ["s3", 0], "sampler": ["s1", 0], "sigmas": ["s2", 0], "latent_image": ["7", 0]}}
     else:
