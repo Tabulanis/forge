@@ -95,7 +95,7 @@
 
   /* her window: images she draws or looks at, shown inline */
   .imgcard { margin:8px 0; max-width:min(420px, 92%); }
-  .imgcard img {
+  .imgcard img, .imgcard video {
     width:100%; border-radius:12px; border:1px solid var(--line);
     display:block; cursor:zoom-in; background:#0d0f16;
   }
@@ -416,6 +416,28 @@ function imagePaths(text) {
   while ((m = re.exec(text || ''))) out.push(m[1]);
   return [...new Set(out)];
 }
+function videoPaths(text) {
+  const re = /(\/[^\s"'()]+\.(?:mp4|webm|mov|m4v))/gi;
+  const out = []; let m;
+  while ((m = re.exec(text || ''))) out.push(m[1]);
+  return [...new Set(out)];
+}
+function showVideo(path) {
+  if (shownImages.has(path)) return;
+  shownImages.add(path);
+  const card = el('imgcard');
+  const v = document.createElement('video');
+  v.src = q('/api/file?path=' + encodeURIComponent(path));
+  v.controls = true; v.playsInline = true; v.setAttribute('playsinline', ''); v.preload = 'metadata';
+  v.muted = false; v.loop = true;
+  v.onerror = () => card.remove();     // not servable / not really a video
+  card.appendChild(v);
+  const cap = document.createElement('div');
+  cap.className = 'cap';
+  cap.textContent = path.split('/').pop();
+  card.appendChild(cap);
+  log.scrollTop = log.scrollHeight;
+}
 function showImage(path) {
   if (shownImages.has(path)) return;
   shownImages.add(path);
@@ -475,7 +497,7 @@ function render(e) {
     cursor = e.seq + 1;
   }
 
-  if (e.kind === 'user')        { clearWelcome(); endStream(); el('msg me', esc(e.text)); imagePaths(e.text).forEach(showImage); }
+  if (e.kind === 'user')        { clearWelcome(); endStream(); el('msg me', esc(e.text)); imagePaths(e.text).forEach(showImage); videoPaths(e.text).forEach(showVideo); }
   else if (e.kind === 'text_delta') {
     clearWelcome();
     const follow = atBottom();
@@ -489,14 +511,14 @@ function render(e) {
     if (streamBubble) { streamBubble.innerHTML = md(e.text); bubble = streamBubble; endStream(); }
     else bubble = el('msg bot', md(e.text));
     addCopyButtons(bubble);                                  // copy on any code she wrote
-    imagePaths(e.text).forEach(showImage);
+    imagePaths(e.text).forEach(showImage); videoPaths(e.text).forEach(showVideo);
     if (voiceMode || speakAll) voiceReply += ' ' + e.text;   // collect to speak on done
   }
   else if (e.kind === 'tool')   { endStream(); el('step', '<b>' + esc(e.tool) + '</b> ' + esc(e.summary || '')); }
   else if (e.kind === 'result') {
     if (progEl) { progEl.remove(); progEl = null; }
     if ((e.text || '').trim()) el('out', esc(e.text.split('\n').slice(0, 6).join('\n')));
-    imagePaths(e.text).forEach(showImage);
+    imagePaths(e.text).forEach(showImage); videoPaths(e.text).forEach(showVideo);
   }
   else if (e.kind === 'error')  { endStream(); el('err', esc(e.text)); }
   else if (e.kind === 'note')   el('note', esc(e.text));

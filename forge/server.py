@@ -435,6 +435,8 @@ def speak_text(spec: SpeakSpec):
 # is a personal LAN tool; everything under home is already the user's), and
 # images only — never an arbitrary file read.
 _IMG_EXT = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
+_VID_EXT = {".mp4", ".webm", ".mov", ".m4v"}
+_VID_MIME = {".mp4": "video/mp4", ".m4v": "video/mp4", ".webm": "video/webm", ".mov": "video/quicktime"}
 
 
 @app.get("/api/file", dependencies=[Depends(require_token)])
@@ -445,8 +447,15 @@ def serve_file(path: str):
         raise HTTPException(403, "Outside the home directory")
     if not p.is_file():
         raise HTTPException(404, "No such file")
-    if p.suffix.lower() not in _IMG_EXT:
-        raise HTTPException(415, "Not an image")
+    ext = p.suffix.lower()
+    if ext in _VID_EXT:
+        # Phones and tablets only play video they can seek: the browser asks for byte
+        # ranges and expects 206 answers. Starlette's FileResponse handles Range itself;
+        # the explicit media type keeps iOS from refusing the stream.
+        return FileResponse(p, media_type=_VID_MIME[ext],
+                            headers={"Cache-Control": "no-cache", "Accept-Ranges": "bytes"})
+    if ext not in _IMG_EXT:
+        raise HTTPException(415, "Not an image or video")
     return FileResponse(p, headers={"Cache-Control": "no-cache"})
 
 
