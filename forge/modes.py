@@ -96,6 +96,10 @@ MODES = {
         # is going wrong and someone will need to reconstruct it afterwards.
         "label": "\U0001f41e Bug Hunt", "thinking": True, "temperature": 0.3,
         "tools": _CORE, "superego": True, "max_steps": 60,
+        # Same leash as Deep. Without this it inherited the 600s default and
+        # the first thinking-on bug-hunt run (2026-09-05) died at 637s with
+        # findings written and no answer — the ceiling, not the reasoning.
+        "wall_seconds": 1800,
         "forensic": True,
         "nudge": "Diagnostic mode: everything you do is being recorded so a "
                  "failure can be reconstructed later. Narrate as you go — say "
