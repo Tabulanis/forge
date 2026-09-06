@@ -498,8 +498,15 @@ class Agent:
         return stale
 
     def _system(self) -> str:
-        """System prompt plus the project notebook, re-read every turn so a
-        note saved mid-session is already there for the next message."""
+        """The prompt HEAD — identical for every session and every mode: the
+        system prompt, personality dials, her shelf, the project notebook.
+        Nothing per-session or per-turn lives here. Reason (measured
+        2026-09-06): the brain is a hybrid-attention model and can only resume
+        cached reading from a checkpoint; a change ANYWHERE above the tail
+        means re-reading the whole prompt (~8k tokens, 27 s). So the head never
+        changes, and everything that varies is APPENDED into the user messages
+        (see _session_context / _turn_context) and stored there for good —
+        append-only history is what keeps the cache valid."""
         text = self.system_prompt
         # The TARS dials — read fresh every turn, so a mid-conversation
         # "humor down to 20" is in force on the very next reply.
@@ -508,9 +515,81 @@ class Agent:
             text += prompt_block()
         except Exception:
             pass          # personality is a nicety; never break a turn over it
-        _mode = get_mode(self.active_mode)
-        if _mode["nudge"]:
-            text += f"\n\n# Style: {_mode['label']}\n{_mode['nudge']}"
+        shelf_sims = sims.shelf_line()
+        shelf_ds = datasets.shelf_line()
+        if shelf_sims or shelf_ds:
+            text += ("\n\n# Your shelf — instruments you've already built (USE THEM)\n"
+                     f"Sims: {shelf_sims or '(none yet)'}\n"
+                     f"Datasets: {shelf_ds or '(none yet)'}\n"
+                     "These are yours, on disk from past work (✓ = validated/corroborated, "
+                     "⚠ = not confirmed). If a question matches what one of these does, RUN it "
+                     "(run_sim / query_dataset) — do NOT re-derive the formula with compute or "
+                     "in your head. You WILL make an arithmetic slip (a dropped factor, a wrong "
+                     "sign) that a validated sim already got right and won't. The whole point of "
+                     "building it was so you never hand-compute this again. Reach for the shelf "
+                     "first; build a new one only if nothing here fits.\n"
+                     "Beyond reusing — PATTERN-MATCH across your own shelf and memory. A problem "
+                     "in one domain often has the exact shape of something you already built in "
+                     "another: a rocket's mass ratio, compound interest, and radioactive decay "
+                     "are one equation in three costumes. When something new lands, ask 'what "
+                     "that I already have is this secretly the same as?' And think ODD — reach "
+                     "for the unconventional cross-domain analogy, the weird connection the "
+                     "obvious answer skips. Your edge isn't being conventional; it's seeing the "
+                     "structure other people miss. Chase the odd angle first — then test it "
+                     "honestly (build the sim, run the numbers, try to kill it). Odd AND verified.")
+        if not self.notes_path:
+            return text
+        try:
+            notes = Path(self.notes_path).read_text(encoding="utf-8").strip()
+        except OSError:
+            return text
+        if not notes:
+            return text
+        if len(notes) > NOTES_LIMIT_CHARS:
+            notes = "(older notes trimmed)\n" + notes[-NOTES_LIMIT_CHARS:]
+        return text + "\n\n# Project notebook (FORGE-NOTES.md)\n" + notes
+
+    def _turn_context(self) -> str:
+        """The per-turn tail: what changed since last turn (files edited behind
+        her back, updated findings). Goes INSIDE the current user message and is
+        stored with it. Empty for an ordinary chat turn."""
+        text = ""
+        stale = self._stale_files()
+        if stale:
+            text += ("# Files changed since you read them\n"
+                     + "\n".join(f"- {p}" for p in stale)
+                     + "\nSomeone edited these directly since your last read "
+                       "(the author writing straight into the world is "
+                       "normal here). Don't trust what you remember about "
+                       "them — read_file again before using or restating "
+                       "anything from them.")
+        # Working findings — the per-task scratchpad (survives compaction).
+        try:
+            from .tools import FINDINGS_DIR
+            _sid = getattr(self, "session_id", "")
+            _ff = (FINDINGS_DIR / f"{_sid}.md") if _sid else None
+            if _ff and _ff.exists():
+                _fnd = _ff.read_text(encoding="utf-8", errors="replace").strip()
+                if _fnd:
+                    if len(_fnd) > 2000:
+                        _fnd = "(older findings trimmed)\n" + _fnd[-2000:]
+                    import hashlib as _h
+                    _sig = _h.md5(_fnd.encode("utf-8", "replace")).hexdigest()
+                    if _sig != getattr(self, "_findings_sig", ""):
+                        self._findings_sig = _sig
+                        text += (("\n\n" if text else "") +
+                                 "# Working findings (this task — your scratchpad, "
+                                 "survives memory compaction)\n" + _fnd)
+        except Exception:
+            pass
+        return text
+
+
+    def _session_context(self) -> str:
+        """Per-session facts, delivered ONCE — inside the first user message of
+        the session (stored). Style of the mode, where the user is, who they
+        are, privacy rules."""
+        text = ""
         if self.client_env:
             text += (f"\n\n# Where the user is right now\n"
                      f"They're reaching you from: {self.client_env}. Adapt "
@@ -546,62 +625,13 @@ class Agent:
                      "your own knowledge and your safe tools (web, calculator, "
                      "and the like). Nothing here is saved. If they need the "
                      "files, tell them to switch out of knowledge-only mode.")
-        shelf_sims = sims.shelf_line()
-        shelf_ds = datasets.shelf_line()
-        if shelf_sims or shelf_ds:
-            text += ("\n\n# Your shelf — instruments you've already built (USE THEM)\n"
-                     f"Sims: {shelf_sims or '(none yet)'}\n"
-                     f"Datasets: {shelf_ds or '(none yet)'}\n"
-                     "These are yours, on disk from past work (✓ = validated/corroborated, "
-                     "⚠ = not confirmed). If a question matches what one of these does, RUN it "
-                     "(run_sim / query_dataset) — do NOT re-derive the formula with compute or "
-                     "in your head. You WILL make an arithmetic slip (a dropped factor, a wrong "
-                     "sign) that a validated sim already got right and won't. The whole point of "
-                     "building it was so you never hand-compute this again. Reach for the shelf "
-                     "first; build a new one only if nothing here fits.\n"
-                     "Beyond reusing — PATTERN-MATCH across your own shelf and memory. A problem "
-                     "in one domain often has the exact shape of something you already built in "
-                     "another: a rocket's mass ratio, compound interest, and radioactive decay "
-                     "are one equation in three costumes. When something new lands, ask 'what "
-                     "that I already have is this secretly the same as?' And think ODD — reach "
-                     "for the unconventional cross-domain analogy, the weird connection the "
-                     "obvious answer skips. Your edge isn't being conventional; it's seeing the "
-                     "structure other people miss. Chase the odd angle first — then test it "
-                     "honestly (build the sim, run the numbers, try to kill it). Odd AND verified.")
-        stale = self._stale_files()
-        if stale:
-            text += ("\n\n# Files changed since you read them\n"
-                     + "\n".join(f"- {p}" for p in stale)
-                     + "\nSomeone edited these directly since your last read "
-                       "(the author writing straight into the world is "
-                       "normal here). Don't trust what you remember about "
-                       "them — read_file again before using or restating "
-                       "anything from them.")
-        # Working findings — the per-task scratchpad (survives compaction).
-        try:
-            from .tools import FINDINGS_DIR
-            _sid = getattr(self, "session_id", "")
-            _ff = (FINDINGS_DIR / f"{_sid}.md") if _sid else None
-            if _ff and _ff.exists():
-                _fnd = _ff.read_text(encoding="utf-8", errors="replace").strip()
-                if _fnd:
-                    if len(_fnd) > 4000:
-                        _fnd = "(older findings trimmed)\n" + _fnd[-4000:]
-                    text += ("\n\n# Working findings (this task — your scratchpad, "
-                             "survives memory compaction)\n" + _fnd)
-        except Exception:
-            pass
-        if not self.notes_path:
-            return text
-        try:
-            notes = Path(self.notes_path).read_text(encoding="utf-8").strip()
-        except OSError:
-            return text
-        if not notes:
-            return text
-        if len(notes) > NOTES_LIMIT_CHARS:
-            notes = "(older notes trimmed)\n" + notes[-NOTES_LIMIT_CHARS:]
-        return text + "\n\n# Project notebook (FORGE-NOTES.md)\n" + notes
+        return text.strip()
+
+    def _style_context(self) -> str:
+        """The mode's style note. Sent when the mode changes (and on the first
+        turn), inside the user message — never in the head."""
+        _mode = get_mode(self.active_mode)
+        return f"# Style: {_mode['label']}\n{_mode['nudge']}" if _mode["nudge"] else ""
 
     @property
     def ephemeral(self) -> bool:
@@ -646,7 +676,25 @@ class Agent:
         by token as it's written (the chat UI uses this). Only the reply is
         streamed; the superego and summarizer stay one-shot.
         """
-        _turn_user_msg = {"role": "user", "content": user_message}
+        _ctx_parts: list[str] = []
+        try:
+            if not getattr(self, "_session_ctx_sent", False):
+                _sc = self._session_context()
+                if _sc:
+                    _ctx_parts.append(_sc)
+                self._session_ctx_sent = True
+            if self.active_mode != getattr(self, "_styled_mode", None):
+                _st = self._style_context()
+                if _st:
+                    _ctx_parts.append(_st)
+                self._styled_mode = self.active_mode
+            _tc = self._turn_context()
+            if _tc:
+                _ctx_parts.append(_tc)
+        except Exception:
+            pass
+        _stored = ("\n\n".join(_ctx_parts) + "\n\n---\n\n" + user_message) if _ctx_parts else user_message
+        _turn_user_msg = {"role": "user", "content": _stored}
         self.history.append(_turn_user_msg)
 
         # Resolve the style for this turn. "auto" reads the message's intent and
