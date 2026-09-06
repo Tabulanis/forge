@@ -106,8 +106,17 @@ MODES = {
         # findings written and no answer — the ceiling, not the reasoning.
         "wall_seconds": 1800,
         "forensic": True,
+        # The date procedure lives HERE as well as in the playbook: run A on
+        # 2026-09-05 showed a rule in the system prompt does not reach the
+        # moment of action — she ran 22 `git show`s and zero `--since`.
         "nudge": "Diagnostic mode: everything you do is being recorded so a "
-                 "failure can be reconstructed later. Narrate as you go — say "
+                 "failure can be reconstructed later. Before reading any code or "
+                 "any diff: (1) find a DATE it last worked — a comment, a commit "
+                 "body, a log line; (2) `git log --oneline --since=<date> -- <the "
+                 "part that broke>`; (3) `git show` the FIRST commit after that "
+                 "date, in full, however boring its message; (4) only then read "
+                 "code. Write each of those four results into FINDINGS.md as you "
+                 "get it. Narrate as you go — say "
                  "what you're about to try and why, what you expected, and what "
                  "actually came back, especially when they differ. If a tool "
                  "errors or returns something odd, quote the actual text rather "
