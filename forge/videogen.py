@@ -5,8 +5,10 @@ first frame). Video renders take minutes, so they live on the render box —
 the old machine's TITAN — reached over the wire; where that is comes from
 config (media.videogen_url), never from code.
 
-Recipe is Comfy's own wan2.2 5B template: 20 steps, cfg 5, uni_pc/simple,
-shift 8, 24 fps. Frames must be 4k+1 (WAN's rule); 121 frames = 5 s.
+Two recipes: "fast" (default) = Comfy's wan2.2 5B template + the FastWan distilled LoRA,
+8 steps, cfg 1.0; "quality" = the stock 20 steps, cfg 5. Both uni_pc/simple, shift 8,
+24 fps. Frames must be 4k+1 (WAN's rule); 121 frames = 5 s. Models stay resident on the
+render box between clips (unload=False) — reloading cost ~60-90 s per clip when measured.
 """
 from __future__ import annotations
 
@@ -26,11 +28,21 @@ _NEGATIVE = ("色调艳丽，过曝，静态，细节模糊不清，字幕，风
              "低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，"
              "毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走")
 
-PRESET = {
+_BASE = {
     "unet": "wan2.2_ti2v_5B_fp16.safetensors", "clip": "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
     "clip_type": "wan", "vae": "wan2.2_vae.safetensors",
-    "steps": 20, "cfg": 5.0, "sampler": "uni_pc", "scheduler": "simple", "shift": 8.0, "fps": 24,
+    "sampler": "uni_pc", "scheduler": "simple", "shift": 8.0, "fps": 24,
 }
+PRESETS = {
+    # Comfy's stock 5B recipe: 20 steps with guidance. Slow, the reference for quality.
+    "quality": {**_BASE, "steps": 20, "cfg": 5.0, "lora": None, "lora_strength": 0.0},
+    # FastWan distilled LoRA (Apache 2.0, from FastVideo via Kijai's ComfyUI repack): a handful of
+    # steps, and guidance MUST be 1.0 or it distorts (Kijai/WanVideo_comfy discussion 61).
+    "fast": {**_BASE, "steps": 8, "cfg": 1.0,
+             "lora": "Wan2_2_5B_FastWanFullAttn_lora_rank_128_bf16.safetensors", "lora_strength": 1.0},
+}
+DEFAULT_PRESET = "fast"   # measured 2026-09-06: fast@8 ≈ quality@20 to the eye, ~4x quicker
+PRESET = PRESETS[DEFAULT_PRESET]
 
 
 def available(base: str = DEFAULT_URL) -> tuple[bool, str]:
@@ -43,8 +55,9 @@ def available(base: str = DEFAULT_URL) -> tuple[bool, str]:
 
 
 def _workflow(prompt: str, seed: int, width: int, height: int, frames: int,
-              start_image: str | None) -> dict:
-    p = PRESET
+              start_image: str | None, preset: str = DEFAULT_PRESET, steps: int | None = None) -> dict:
+    p = PRESETS[preset]
+    steps = int(steps or p["steps"])
     w = {
         "1": {"class_type": "UNETLoader", "inputs": {"unet_name": p["unet"], "weight_dtype": "default"}},
         "2": {"class_type": "CLIPLoader", "inputs": {"clip_name": p["clip"], "type": p["clip_type"], "device": "default"}},
@@ -53,13 +66,18 @@ def _workflow(prompt: str, seed: int, width: int, height: int, frames: int,
         "5": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["2", 0], "text": prompt}},
         "6": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["2", 0], "text": _NEGATIVE}},
         "7": {"class_type": "Wan22ImageToVideoLatent", "inputs": {"vae": ["3", 0], "width": width, "height": height, "length": frames, "batch_size": 1}},
-        "8": {"class_type": "KSampler", "inputs": {"model": ["4", 0], "seed": seed, "steps": p["steps"], "cfg": p["cfg"],
+        "8": {"class_type": "KSampler", "inputs": {"model": ["4", 0], "seed": seed, "steps": steps, "cfg": p["cfg"],
               "sampler_name": p["sampler"], "scheduler": p["scheduler"], "denoise": 1.0,
               "positive": ["5", 0], "negative": ["6", 0], "latent_image": ["7", 0]}},
         "9": {"class_type": "VAEDecode", "inputs": {"samples": ["8", 0], "vae": ["3", 0]}},
         "10": {"class_type": "CreateVideo", "inputs": {"images": ["9", 0], "fps": p["fps"]}},
         "11": {"class_type": "SaveVideo", "inputs": {"video": ["10", 0], "filename_prefix": "merge/vid", "format": "auto", "codec": "auto"}},
     }
+    if p.get("lora"):
+        # LoRA sits between the raw model and the shift node: 1 -> 13 (lora) -> 4 (shift) -> sampler
+        w["13"] = {"class_type": "LoraLoaderModelOnly", "inputs": {"model": ["1", 0], "lora_name": p["lora"],
+                                                                     "strength_model": p["lora_strength"]}}
+        w["4"]["inputs"]["model"] = ["13", 0]
     if start_image:
         w["12"] = {"class_type": "LoadImage", "inputs": {"image": start_image}}
         w["7"]["inputs"]["start_image"] = ["12", 0]
@@ -68,13 +86,17 @@ def _workflow(prompt: str, seed: int, width: int, height: int, frames: int,
 
 def render(prompt: str, out_path: str, image: str | None = None, seconds: float = 5.0,
            width: int = 1280, height: int = 704, seed: int | None = None,
-           base: str = DEFAULT_URL, unload: bool = True) -> str:
-    """Make one clip; save the mp4 to out_path; return the path. Raises on failure."""
-    frames = max(5, int(round(seconds * PRESET["fps"])))
+           base: str = DEFAULT_URL, unload: bool = False,
+           preset: str = DEFAULT_PRESET, steps: int | None = None) -> str:
+    """Make one clip; save the mp4 to out_path; return the path. Raises on failure.
+    preset: "quality" (stock 20-step) or "fast" (FastWan LoRA, ~4 steps). steps overrides the preset's count."""
+    if preset not in PRESETS:
+        raise ValueError(f"unknown video preset {preset!r}; choose from {sorted(PRESETS)}")
+    frames = max(5, int(round(seconds * PRESETS[preset]["fps"])))
     frames = (frames // 4) * 4 + 1                       # WAN wants 4k+1
     seed = random.randrange(2 ** 31) if seed is None else int(seed)
     start = _upload(base, Path(image).expanduser()) if image else None
-    pid = _post(base, "/prompt", {"prompt": _workflow(prompt, seed, width, height, frames, start)}, 30)["prompt_id"]
+    pid = _post(base, "/prompt", {"prompt": _workflow(prompt, seed, width, height, frames, start, preset, steps)}, 30)["prompt_id"]
     t0 = time.time()
     try:
         while True:

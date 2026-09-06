@@ -646,7 +646,7 @@ def _generate_image(ws_root: str, prompt: str, filename: str = "",
 
 
 def _generate_video(ws_root: str, prompt: str, image: str = "", seconds=5,
-                    filename: str = "", seed=None) -> str:
+                    filename: str = "", seed=None, quality: str = "fast") -> str:
     """A clip via the render box's ComfyUI (forge.videogen). Same workspace
     rules as images: everything in, everything out, stays inside the workspace."""
     from . import videogen
@@ -679,7 +679,8 @@ def _generate_video(ws_root: str, prompt: str, image: str = "", seconds=5,
     secs = max(2.0, min(float(seconds or 5), 8.0))
     try:
         t0 = time.time()
-        path = videogen.render(prompt, str(out), image=img, seconds=secs, seed=seed, base=base)
+        preset = "quality" if str(quality).lower() in ("best", "quality", "high") else "fast"
+        path = videogen.render(prompt, str(out), image=img, seconds=secs, seed=seed, base=base, preset=preset)
     except Exception as e:
         return f"Error generating video: {str(e)[:500]}"
     return (f"Video saved to {path} ({secs:.0f}s clip, took {time.time() - t0:.0f}s). "
@@ -2484,8 +2485,9 @@ def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provi
             description="Make a short video clip (default 5 s, 1280x704, 24 fps) from a "
                         "text prompt — or animate a still: give `image` (a workspace "
                         "path) and it becomes the first frame. Runs on the render box "
-                        "over the wire, so it takes a few minutes; saves an MP4 into the "
-                        "workspace and returns the path. Describe motion and camera, "
+                        "over the wire: about 25 s per second of clip at the default "
+                        "'fast' quality, roughly 4x longer at 'best'. Saves an MP4 into "
+                        "the workspace and returns the path. Describe motion and camera, "
                         "not just a scene.",
             parameters={
                 "type": "object",
@@ -2495,11 +2497,13 @@ def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provi
                     "seconds": {"type": "number", "description": "Clip length in seconds, 2-8 (default 5)"},
                     "filename": {"type": "string", "description": "Optional output name; defaults to a slug"},
                     "seed": {"type": "integer", "description": "Optional seed for a repeatable clip"},
+                    "quality": {"type": "string", "enum": ["fast", "best"],
+                                "description": "fast (default, 8 distilled steps) or best (stock 20 steps, ~4x slower)"},
                 },
                 "required": ["prompt"],
             },
-            run=guard(lambda prompt, image="", seconds=5, filename="", seed=None:
-                      _generate_video(str(ws.root), prompt, image, seconds, filename, seed)),
+            run=guard(lambda prompt, image="", seconds=5, filename="", seed=None, quality="fast":
+                      _generate_video(str(ws.root), prompt, image, seconds, filename, seed, quality)),
             needs_permission=True,
             summarize=lambda a: f"generate video: {a.get('prompt', '')[:60]}",
         ),
