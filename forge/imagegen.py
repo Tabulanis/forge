@@ -3,17 +3,15 @@
 Presets are the house's picture-making tiers (2026-09-05):
   sketch      Z-Image-Turbo — ~20 s, text only. The everyday one.
   reference   FLUX.2-klein 9B — takes reference images: "make it look like this".
-  masterpiece Qwen-Image — the flagship (Apache 2.0). ~28 GB, so it can't sit
-              beside her brain: the caller sleeps the brain, renders, wakes it.
+  masterpiece Qwen-Image — the flagship (Apache 2.0).
   (Licensing rule, 2026-09-05: only permissively licensed models — Apache/MIT.
    FLUX.2-dev and klein-9B are non-commercial-licensed and were removed.)
 
-ComfyUI keeps nothing resident between jobs: every render ends with /free so
-the brain keeps the memory. Cold render costs ~20 s more than warm. Measured:
-the first time both stayed loaded, swap filled and the box strained.
-
-Everything about WHERE this runs is config (media.imagegen_url) — ComfyUI on
-this box today, could be any box tomorrow.
+Where this runs is config (media.imagegen_url). Since 2026-09-06 it is the
+render box — the old machine's TITAN, over the wire — because on the brain's
+box every image model fought the 122B for memory (swap filled, and once the
+GPU wedged). The brain's box does one thing now. Every render still ends with
+/free so the render box stays clean between jobs.
 """
 from __future__ import annotations
 
@@ -24,7 +22,7 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-DEFAULT_URL = "http://127.0.0.1:8188"
+DEFAULT_URL = "http://10.42.0.1:8189"
 
 PRESETS = {
     "sketch": {
@@ -41,16 +39,14 @@ PRESETS = {
         "latent": "EmptyFlux2LatentImage", "references": True,
     },
     # Qwen-Image (Apache 2.0) — the flagship. Comfy's recipe: fp8 model +
-    # Lightning 8-step LoRA, shift 3.1, euler/simple, cfg 1, 1328². ~28 GB, so
-    # it does NOT fit beside her 122B brain: the tool puts the brain to sleep,
-    # renders, and wakes it (see tools._generate_image). Minutes, not seconds.
+    # Lightning 8-step LoRA, shift 3.1, euler/simple, cfg 1, 1328².
     "masterpiece": {
         "unet": "qwen_image_fp8_e4m3fn.safetensors", "clip": "qwen_2.5_vl_7b_fp8_scaled.safetensors",
         "clip_type": "qwen_image", "vae": "qwen_image_vae.safetensors",
         "lora": "Qwen-Image-Lightning-8steps-V1.0.safetensors",
         "steps": 8, "cfg": 1.0, "sampler": "euler", "scheduler": "simple",
         "shift": 3.1, "latent": "EmptySD3LatentImage", "references": False,
-        "size": 1328, "needs_brain_asleep": True,
+        "size": 1328,
     },
 }
 

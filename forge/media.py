@@ -46,7 +46,7 @@ class MediaConfig:
     vision_model: str = "qwen3.5-122b"
     vision_fallback_url: str = ""          # optional second endpoint; none by default
     vision_fallback_model: str = ""
-    imagegen_url: str = "http://127.0.0.1:8188"   # ComfyUI (forge.imagegen)
+    imagegen_url: str = "http://10.42.0.1:8189"   # ComfyUI on the render box (forge.imagegen)
     imagegen_preset: str = "sketch"
     videogen_url: str = "http://10.42.0.1:8189"   # ComfyUI + WAN 2.2 (forge.videogen)
     whisper_bin: str = str(Path.home() / "whisper.cpp/build/bin/whisper-cli")
