@@ -699,6 +699,31 @@ def _restyle_video(ws_root: str, video: str, prompt: str, reference_image: str =
             f"You can't watch it yourself yet — tell the user where it is.")
 
 
+def _extract_pose(ws_root: str, image: str, filename: str = "", media=None) -> str:
+    """Pose skeleton of a workspace picture (forge.imagegen.pose_map) — for `edit` as a pose reference."""
+    from . import imagegen
+    root = Path(ws_root).resolve()
+    src = (root / image).resolve() if not str(image).startswith("/") else Path(image).resolve()
+    if (src != root and root not in src.parents) or not src.is_file():
+        return f"Error: image not found in the workspace: {image}"
+    name = filename if filename else f"generated/{src.stem}-pose.png"
+    name = name if name.lower().endswith(".png") else name + ".png"
+    out = (root / name).resolve()
+    if root != out and root not in out.parents:
+        return f"Error: output path is outside the workspace: {out}"
+    try:
+        from .config import load_config
+        from .media import load_media_config
+        base = getattr(load_media_config(load_config()), "imagegen_url", "") or imagegen.DEFAULT_URL
+    except Exception:
+        base = imagegen.DEFAULT_URL
+    try:
+        path = imagegen.pose_map(str(src), str(out), base=base)
+    except Exception as e:
+        return f"Error extracting pose: {str(e)[:400]}"
+    return f"Pose skeleton saved to {path}. Use it as a reference for generate_image preset 'edit' (\"in the pose of image 1\")."
+
+
 def _generate_video(ws_root: str, prompt: str, image: str = "", seconds=5,
                     filename: str = "", seed=None, quality: str = "fast") -> str:
     """A clip via the render box's ComfyUI (forge.videogen). Same workspace
@@ -2512,8 +2537,8 @@ def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provi
                         "composition, ~4 min), 'real' (Qwen-Image-2512 + realism LoRA — for "
                         "photographic, un-plastic people and places, ~5 min), 'edit' (Qwen-Image-Edit — give 1-3 `references` "
                         "and say what to change; keeps the same face/character/object across "
-                        "new poses and scenes, ~5 min). Any Qwen preset can also follow a "
-                        "`control_image`: its pose (default), depth or edges steer the result. "
+                        "new poses and scenes, ~5 min). For a specific pose use extract_pose + "
+                        "edit (see the playbook); `control_image` is experimental on this card. "
                         "Give a vivid, specific prompt.",
             parameters={
                 "type": "object",
@@ -2573,6 +2598,20 @@ def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provi
                       _generate_video(str(ws.root), prompt, image, seconds, filename, seed, quality)),
             needs_permission=True,
             summarize=lambda a: f"generate video: {a.get('prompt', '')[:60]}",
+        ),
+        Tool(
+            name="extract_pose",
+            description="Turn any picture or video frame in the workspace into a pose skeleton "
+                        "(stick figure on black, ~10 s). Feed that skeleton to generate_image "
+                        "preset 'edit' as the first reference, with the character as the second, "
+                        "to put that character in that pose.",
+            parameters={"type": "object",
+                        "properties": {"image": {"type": "string", "description": "Workspace path of the picture to read the pose from"},
+                                       "filename": {"type": "string", "description": "Optional output name (.png)"}},
+                        "required": ["image"]},
+            run=guard(lambda image, filename="": _extract_pose(str(ws.root), image, filename)),
+            needs_permission=False,
+            summarize=lambda a: f"extract pose from {a.get('image', '')}",
         ),
         Tool(
             name="restyle_video",

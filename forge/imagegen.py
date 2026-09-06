@@ -294,3 +294,30 @@ if __name__ == "__main__":
         print("usage: python -m forge.imagegen <prompt> <out.png> [preset] [ref.png ...]"); sys.exit(1)
     preset = sys.argv[3] if len(sys.argv) > 3 else "sketch"
     print("saved:", render(sys.argv[1], sys.argv[2], preset, sys.argv[4:]))
+
+
+def pose_map(image: str, out_path: str, base: str = DEFAULT_URL) -> str:
+    """Skeleton (DWPose) of the people in a picture, as a PNG on black — the thing `edit`
+    takes as a pose reference. ~10 s on the render box."""
+    name = _upload(base, Path(image).expanduser())
+    wf = {"1": {"class_type": "LoadImage", "inputs": {"image": name}},
+          "2": {"class_type": "DWPreprocessor", "inputs": {"image": ["1", 0], "detect_hand": "enable", "detect_body": "enable", "detect_face": "enable", "resolution": 1024}},
+          "3": {"class_type": "SaveImage", "inputs": {"images": ["2", 0], "filename_prefix": "merge/pose"}}}
+    pid = _post(base, "/prompt", {"prompt": wf}, 30)["prompt_id"]
+    t0 = time.time()
+    while True:
+        h = json.loads(_get(base, f"/history/{pid}")).get(pid)
+        st = (h or {}).get("status", {})
+        if st.get("completed"):
+            break
+        if st.get("status_str") == "error":
+            msgs = [m[1].get("exception_message", "") for m in st.get("messages", []) if m[0] == "execution_error"]
+            raise RuntimeError("pose extraction failed: " + ("; ".join(msgs) or json.dumps(st))[:300])
+        if time.time() - t0 > 600:
+            raise TimeoutError("pose extraction took over 10 minutes")
+        time.sleep(1.0)
+    im = h["outputs"]["3"]["images"][0]
+    q = urllib.parse.urlencode({"filename": im["filename"], "subfolder": im.get("subfolder", ""), "type": im.get("type", "output")})
+    out = Path(out_path).expanduser(); out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_bytes(_get(base, f"/view?{q}", 120))
+    return str(out)

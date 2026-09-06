@@ -44,6 +44,7 @@ _CORE = {
     "generate_image",                                               # her hands
     "generate_video",                                               # her hands, moving
     "restyle_video",                                                # same shot, different world
+    "extract_pose",                                                 # a skeleton from any picture
 }
 
 # 2026-09-06: every mode advertises the SAME tool set (_ALL). The model's chat template puts
@@ -150,7 +151,7 @@ def get_mode(name: str) -> dict:
 # chat can leave no trace. `deny` names tools removed on top of the style's
 # own toolset; `ephemeral` means nothing about the chat is written to disk.
 _WRITES_DISK = {"write_file", "edit_file", "undo_file", "save_note",
-                "run_command", "format_code", "generate_image", "generate_video", "restyle_video", "take_screenshot",
+                "run_command", "format_code", "generate_image", "generate_video", "restyle_video", "extract_pose", "take_screenshot",
                 "build_sim", "run_sim", "build_dataset"}
 _TOUCHES_FILES = _WRITES_DISK | {"read_file", "list_dir", "search"}
 
