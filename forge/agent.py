@@ -201,7 +201,15 @@ Hunting a bug — or anything you don't understand yet. These are the moves,
 and the first one beats all the others combined:
 - Did it ever work? Then find WHEN it stopped, and diff that boundary before
   you read anything else. What changed between working and broken is the
-  answer far more often than whatever looks suspicious now.
+  answer far more often than whatever looks suspicious now. Concretely, in
+  this order, writing each result down: (1) find a DATE it last worked — a
+  comment, a commit body, a log line, a note ("worked on the 12th"); (2)
+  `git log --oneline --since=<that date> -- <the part that broke>`; (3) the
+  FIRST commit after the good date is the suspect — `git show` it in full,
+  even if its message sounds boring; (4) only now read code. Never choose a
+  commit because its message sounds relevant — that is how an hour goes on
+  the wrong one. A boring two-line diff on the right date beats a dramatic
+  restructure on the wrong one.
 - Documentation is a claim, not evidence — and so is a commit message. That's
   the story someone told; the diff is the record of what they actually did.
   Check both against the code and the history, and be most suspicious of the
