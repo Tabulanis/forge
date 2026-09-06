@@ -38,6 +38,7 @@ PRESETS = {
         "steps": 4, "cfg": 1.0, "sampler": "euler", "scheduler": "flux2",
         "latent": "EmptyFlux2LatentImage", "references": True,
     },
+}
 
 
 def _post(base: str, path: str, body: dict, timeout: float = 60) -> dict:
