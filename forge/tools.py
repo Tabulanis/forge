@@ -2619,8 +2619,10 @@ def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provi
                         "its motion and framing: 'the same shot at night', '1975 handheld 16mm film, "
                         "faded Kodachrome, grain', 'as a charcoal animation'. Optionally give a "
                         "`reference_image` for the exact look. Structure is read from the source as "
-                        "depth (default), edges, or the people's poses. Runs on the render box, about "
-                        "2-3 min per 5 s of video at ~480p, 16 fps. Saves an MP4 into the workspace.",
+                        "depth (default), edges, or the people's poses. Needs a source with structure "
+                        "(people, rooms, streets); a mostly-sky or flat shot gives it nothing to hold and "
+                        "it invents a scene — use control='edges' for those. Runs on the render box, about "
+                        "2-5 min per 5 s of video at ~480p, 16 fps. Saves an MP4 into the workspace.",
             parameters={
                 "type": "object",
                 "properties": {

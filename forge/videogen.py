@@ -177,7 +177,9 @@ def _restyle_workflow(src_name: str, prompt: str, seed: int, width: int, height:
         "3": {"class_type": "VAELoader", "inputs": {"vae_name": p["vae"]}},
         "4": {"class_type": "ModelSamplingSD3", "inputs": {"model": ["1l", 0], "shift": p["shift"]}},
         "5": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["2", 0], "text": prompt}},
-        "6": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["2", 0], "text": _NEGATIVE}},
+        # NOT the stock quality-negative: it forbids grain, blur, faded colour and "low quality",
+        # which is exactly what a period or film look asks for. Only ban the failure modes.
+        "6": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["2", 0], "text": "static, frozen, still image, subtitles, text, watermark, logo, extra fingers, deformed hands, duplicated person"}},
         "v0": {"class_type": "LoadVideo", "inputs": {"file": src_name}},
         "v1": {"class_type": "GetVideoComponents", "inputs": {"video": ["v0", 0]}},
         "v2": {"class_type": "ImageScale", "inputs": {"image": ["v1", 0], "upscale_method": "lanczos", "width": width, "height": height, "crop": "center"}},
