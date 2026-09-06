@@ -600,7 +600,8 @@ def _physics_sim(scenario: str, params: dict | None = None) -> str:
 
 def _generate_image(ws_root: str, prompt: str, filename: str = "",
                     preset: str = "", references: list | None = None,
-                    seed=None, steps=None, media=None) -> str:
+                    seed=None, steps=None, media=None,
+                    control_image: str = "", control_type: str = "pose", control_strength: float = 0.8) -> str:
     """Make an image on the GPU through ComfyUI (forge.imagegen). The picture
     lands in the workspace; references (paths in the workspace) are what
     "make it look like this" means."""
@@ -637,8 +638,18 @@ def _generate_image(ws_root: str, prompt: str, filename: str = "",
         return f"Error: {why}"
     try:
         t0 = time.time()
+        cimg = None
+        if control_image:
+            cp = (Path(ws_root) / control_image).resolve() if not str(control_image).startswith("/") else Path(control_image)
+            if Path(ws_root).resolve() != cp and Path(ws_root).resolve() not in cp.parents:
+                return f"Error: control image is outside the workspace: {cp}"
+            if not cp.is_file():
+                return f"Error: control image not found: {cp}"
+            cimg = str(cp)
         path = imagegen.render(prompt, str(out), preset=preset, references=refs,
-                               seed=seed, steps=steps, base=base)
+                               seed=seed, steps=steps, base=base,
+                               control_image=cimg, control_type=control_type or "pose",
+                               control_strength=float(control_strength or 0.8))
     except Exception as e:
         return f"Error generating image ({preset}): {str(e)[:500]}"
     return (f"Image saved to {path} ({preset}, {time.time() - t0:.0f}s). "
@@ -2455,7 +2466,11 @@ def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provi
                         "'schnell' (FLUX.1 schnell — photographic, good with text in the "
                         "picture, ~1.5 min), 'reference' (FLUX klein, takes reference "
                         "images, ~1 min), 'masterpiece' (Qwen-Image — best text and "
-                        "composition, ~4 min). Give a vivid, specific prompt.",
+                        "composition, ~4 min), 'edit' (Qwen-Image-Edit — give 1-3 `references` "
+                        "and say what to change; keeps the same face/character/object across "
+                        "new poses and scenes, ~5 min). Any Qwen preset can also follow a "
+                        "`control_image`: its pose (default), depth or edges steer the result. "
+                        "Give a vivid, specific prompt.",
             parameters={
                 "type": "object",
                 "properties": {
@@ -2464,7 +2479,12 @@ def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provi
                     "filename": {"type": "string",
                                  "description": "Optional output name; defaults to a slug"},
                     "preset": {"type": "string",
-                               "description": "sketch | schnell | reference | masterpiece (default sketch)"},
+                               "description": "sketch | schnell | reference | masterpiece | edit (default sketch)"},
+                    "control_image": {"type": "string",
+                                      "description": "Optional workspace path of a picture whose pose/depth/edges the result must follow (Qwen presets: masterpiece, edit)"},
+                    "control_type": {"type": "string", "enum": ["pose", "depth", "edges"],
+                                     "description": "What to take from control_image (default pose)"},
+                    "control_strength": {"type": "number", "description": "0-1, how strictly to follow it (default 0.8)"},
                     "references": {"type": "array", "items": {"type": "string"},
                                    "description": "Workspace paths of images to work FROM — "
                                                   "the result will resemble them"},
@@ -2475,9 +2495,11 @@ def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provi
                 },
                 "required": ["prompt"],
             },
-            run=guard(lambda prompt, filename="", preset="", references=None, seed=None, steps=None:
+            run=guard(lambda prompt, filename="", preset="", references=None, seed=None, steps=None,
+                             control_image="", control_type="pose", control_strength=0.8:
                       _generate_image(str(ws.root), prompt, filename, preset, references,
-                                      seed, steps)),
+                                      seed, steps, control_image=control_image,
+                                      control_type=control_type, control_strength=control_strength)),
             needs_permission=True,
             summarize=lambda a: f"generate image: {a.get('prompt', '')[:60]}",
         ),

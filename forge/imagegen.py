@@ -26,7 +26,10 @@ DEFAULT_URL = "http://10.42.0.1:8189"
 
 PRESETS = {
     "sketch": {
-        "unet": "z_image_turbo_bf16.safetensors", "clip": "qwen_3_4b.safetensors",
+        # text encoder as GGUF Q8 (4 GB) instead of bf16 (8 GB): the old card has no bf16 and
+        # both encoder + model no longer fit on it together — measured 2026-09-06: prompt 33 s,
+        # sampling 64 s (spilled) vs 8 s (fits).
+        "unet": "z_image_turbo_bf16.safetensors", "clip": "qwen3-4b-Q8_0.gguf", "clip_loader": "CLIPLoaderGGUF",
         "clip_type": "lumina2", "vae": "z_image_ae.safetensors",
         "steps": 8, "cfg": 1.0, "sampler": "res_multistep", "scheduler": "simple",
         "shift": 3.0, "latent": "EmptySD3LatentImage", "references": False,
@@ -47,6 +50,16 @@ PRESETS = {
         "clip_loader": "DualCLIPLoaderGGUF", "clip_type": "flux", "vae": "flux1-ae.safetensors",
         "steps": 4, "cfg": 1.0, "sampler": "euler", "scheduler": "simple",
         "latent": "EmptySD3LatentImage", "references": False,
+    },
+    # Qwen-Image-Edit-2511 (Apache 2.0) — reference-driven editing: give it 1-3 pictures and say
+    # what to change/keep; it holds faces, characters and objects across poses and scenes. GGUF Q6
+    # build + its own 8-step Lightning LoRA. Same text encoder + VAE as masterpiece.
+    "edit": {
+        "unet": "qwen-image-edit-2511-Q6_K.gguf", "unet_loader": "UnetLoaderGGUF",
+        "clip": "qwen_2.5_vl_7b_fp8_scaled.safetensors", "clip_type": "qwen_image", "vae": "qwen_image_vae.safetensors",
+        "lora": "Qwen-Image-Edit-2511-Lightning-8steps-V1.0-bf16.safetensors",
+        "steps": 8, "cfg": 1.0, "sampler": "euler", "scheduler": "simple", "shift": 3.0,
+        "latent": "EmptySD3LatentImage", "references": True, "edit": True, "size": 1024,
     },
     # Qwen-Image (Apache 2.0) — the flagship. Comfy's recipe: fp8 model +
     # Lightning 8-step LoRA, shift 3.1, euler/simple, cfg 1, 1328².
@@ -96,14 +109,28 @@ def _upload(base: str, path: Path) -> str:
         return json.load(r)["name"]
 
 
+# Control (pose / depth / edges) rides on the Qwen-Image ControlNet-Union (InstantX, Apache 2.0):
+# a picture goes through a preprocessor, the union net is told which kind it is, and the
+# conditioning is steered by it. Only the Qwen-Image presets (masterpiece, edit) carry it.
+CONTROL = {
+    "pose":  {"pre": "DWPreprocessor", "pre_inputs": {"detect_hand": "enable", "detect_body": "enable", "detect_face": "enable", "resolution": 1024}, "union": "openpose"},
+    "depth": {"pre": "DepthAnythingV2Preprocessor", "pre_inputs": {"ckpt_name": "depth_anything_v2_vitl.pth", "resolution": 1024}, "union": "depth"},
+    "edges": {"pre": "CannyEdgePreprocessor", "pre_inputs": {"low_threshold": 100, "high_threshold": 200, "resolution": 1024}, "union": "canny/lineart/anime_lineart/mlsd"},
+}
+CONTROLNET_FILE = "Qwen-Image-ControlNet-Union.safetensors"
+
+
 def _workflow(p: dict, prompt: str, seed: int, width: int, height: int,
-              steps: int | None, ref_names: list[str]) -> dict:
+              steps: int | None, ref_names: list[str],
+              control: dict | None = None) -> dict:
     w = {
         "1": ({"class_type": "UnetLoaderGGUF", "inputs": {"unet_name": p["unet"]}}
               if p.get("unet_loader") == "UnetLoaderGGUF" else
               {"class_type": "UNETLoader", "inputs": {"unet_name": p["unet"], "weight_dtype": "default"}}),
         "2": ({"class_type": p["clip_loader"], "inputs": {"clip_name1": p["clip"], "clip_name2": p["clip2"], "type": p["clip_type"]}}
               if p.get("clip2") else
+              {"class_type": "CLIPLoaderGGUF", "inputs": {"clip_name": p["clip"], "type": p["clip_type"]}}
+              if p.get("clip_loader") == "CLIPLoaderGGUF" else
               {"class_type": "CLIPLoader", "inputs": {"clip_name": p["clip"], "type": p["clip_type"], "device": "default"}}),
         "3": {"class_type": "VAELoader", "inputs": {"vae_name": p["vae"]}},
         "5": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["2", 0], "text": prompt}},
@@ -120,6 +147,30 @@ def _workflow(p: dict, prompt: str, seed: int, width: int, height: int,
         w["4"] = {"class_type": "ModelSamplingAuraFlow", "inputs": {"model": model, "shift": p["shift"]}}
         model = ["4", 0]
     positive = ["5", 0]
+    negative = ["6", 0]
+    if p.get("edit"):
+        # Qwen-Image-Edit: the references go INTO the text encoder (up to 3), and the
+        # first one, scaled to ~1 MP, becomes the starting latent so composition and
+        # aspect are kept. Empty prompt on the same node = the negative.
+        for i, name in enumerate(ref_names[:3]):
+            w[f"e{i}"] = {"class_type": "LoadImage", "inputs": {"image": name}}
+        imgs = {f"image{i + 1}": [f"e{i}", 0] for i in range(min(3, len(ref_names)))}
+        w["5"] = {"class_type": "TextEncodeQwenImageEditPlus", "inputs": {"clip": ["2", 0], "prompt": prompt, "vae": ["3", 0], **imgs}}
+        w["6"] = {"class_type": "TextEncodeQwenImageEditPlus", "inputs": {"clip": ["2", 0], "prompt": "", "vae": ["3", 0], **imgs}}
+        if ref_names:
+            w["es"] = {"class_type": "ImageScaleToTotalPixels", "inputs": {"image": ["e0", 0], "upscale_method": "lanczos", "megapixels": 1.0, "resolution_steps": 1}}
+            w["7"] = {"class_type": "VAEEncode", "inputs": {"pixels": ["es", 0], "vae": ["3", 0]}}
+        ref_names = []          # consumed here, not by the FLUX-style reference chain below
+    if control and control.get("image"):
+        c = CONTROL[control.get("type", "pose")]
+        w["c0"] = {"class_type": "LoadImage", "inputs": {"image": control["image"]}}
+        w["c1"] = {"class_type": c["pre"], "inputs": {"image": ["c0", 0], **c["pre_inputs"]}}
+        w["c2"] = {"class_type": "ControlNetLoader", "inputs": {"control_net_name": CONTROLNET_FILE}}
+        w["c3"] = {"class_type": "SetUnionControlNetType", "inputs": {"control_net": ["c2", 0], "type": c["union"]}}
+        w["c4"] = {"class_type": "ControlNetApplyAdvanced", "inputs": {"positive": positive, "negative": negative, "control_net": ["c3", 0],
+                   "image": ["c1", 0], "vae": ["3", 0], "strength": float(control.get("strength", 0.8)), "start_percent": 0.0, "end_percent": 1.0}}
+        positive, negative = ["c4", 0], ["c4", 1]
+        w["c5"] = {"class_type": "SaveImage", "inputs": {"images": ["c1", 0], "filename_prefix": "merge/control"}}   # the map, for the record
     # References: each image is encoded by the VAE and chained onto the
     # conditioning — the FLUX.2 way of saying "like this one".
     for i, name in enumerate(ref_names):
@@ -141,13 +192,14 @@ def _workflow(p: dict, prompt: str, seed: int, width: int, height: int,
         w["8"] = {"class_type": "KSampler", "inputs": {
             "model": model, "seed": seed, "steps": steps or p["steps"], "cfg": p["cfg"],
             "sampler_name": p["sampler"], "scheduler": p["scheduler"], "denoise": 1.0,
-            "positive": positive, "negative": ["6", 0], "latent_image": ["7", 0]}}
+            "positive": positive, "negative": negative, "latent_image": ["7", 0]}}
     return w
 
 
 def render(prompt: str, out_path: str, preset: str = "sketch", references: list[str] | None = None,
+           control_image: str | None = None, control_type: str = "pose", control_strength: float = 0.8,
            seed: int | None = None, steps: int | None = None, width: int = 1024, height: int = 1024,
-           base: str = DEFAULT_URL, unload: bool = True) -> str:
+           base: str = DEFAULT_URL, unload: bool = False) -> str:
     """Make one image; save it to out_path; return the path. Raises on failure."""
     p = PRESETS.get(preset)
     if not p:
@@ -162,7 +214,12 @@ def render(prompt: str, out_path: str, preset: str = "sketch", references: list[
     if p.get("size") and width == 1024 and height == 1024:
         width = height = p["size"]           # the preset's native square
     names = [_upload(base, r) for r in refs]
-    wf = _workflow(p, prompt, seed, width, height, steps, names)
+    control = None
+    if control_image:
+        if control_type not in CONTROL:
+            raise ValueError(f"control_type must be one of {sorted(CONTROL)}")
+        control = {"image": _upload(base, Path(control_image).expanduser()), "type": control_type, "strength": control_strength}
+    wf = _workflow(p, prompt, seed, width, height, steps, names, control)
     from . import renderbox
     cid = renderbox.new_client_id()
     pid = _post(base, "/prompt", {"prompt": wf, "client_id": cid}, 30)["prompt_id"]
