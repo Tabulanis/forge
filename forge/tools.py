@@ -635,6 +635,18 @@ def _generate_image(ws_root: str, prompt: str, filename: str = "",
     ok, why = imagegen.available(base)
     if not ok:
         return f"Error: {why}"
+    if preset == "masterpiece":
+        # FLUX.2-dev is ~50 GB; beside a resident 122B brain the box runs out
+        # of memory (measured). Until the sleep→render→wake choreography is
+        # built, refuse rather than take the machine down mid-turn.
+        try:
+            from . import power
+            if "big122" in {power.short(u) for u in power.running()}:
+                return ("Error: 'masterpiece' needs the brain asleep first (it won't fit "
+                        "beside the 122B). Ask the user to press Sleep, or use "
+                        "'reference' / 'sketch' instead.")
+        except Exception:
+            pass
     try:
         t0 = time.time()
         path = imagegen.render(prompt, str(out), preset=preset, references=refs,
