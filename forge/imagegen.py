@@ -38,6 +38,16 @@ PRESETS = {
         "steps": 4, "cfg": 1.0, "sampler": "euler", "scheduler": "flux2",
         "latent": "EmptyFlux2LatentImage", "references": True,
     },
+    # FLUX.1 schnell (Apache 2.0) — the permissive FLUX. 4-step distilled, 12B; the GGUF
+    # Q8 build so the old card doesn't convert bf16/fp8 on the way in. Two text
+    # encoders (clip_l + T5-XXL, the T5 also GGUF Q8). No shift, no guidance.
+    "schnell": {
+        "unet": "flux1-schnell-Q8_0.gguf", "unet_loader": "UnetLoaderGGUF",
+        "clip": "clip_l.safetensors", "clip2": "t5-v1_1-xxl-encoder-Q8_0.gguf",
+        "clip_loader": "DualCLIPLoaderGGUF", "clip_type": "flux", "vae": "flux1-ae.safetensors",
+        "steps": 4, "cfg": 1.0, "sampler": "euler", "scheduler": "simple",
+        "latent": "EmptySD3LatentImage", "references": False,
+    },
     # Qwen-Image (Apache 2.0) — the flagship. Comfy's recipe: fp8 model +
     # Lightning 8-step LoRA, shift 3.1, euler/simple, cfg 1, 1328².
     "masterpiece": {
@@ -89,8 +99,12 @@ def _upload(base: str, path: Path) -> str:
 def _workflow(p: dict, prompt: str, seed: int, width: int, height: int,
               steps: int | None, ref_names: list[str]) -> dict:
     w = {
-        "1": {"class_type": "UNETLoader", "inputs": {"unet_name": p["unet"], "weight_dtype": "default"}},
-        "2": {"class_type": "CLIPLoader", "inputs": {"clip_name": p["clip"], "type": p["clip_type"], "device": "default"}},
+        "1": ({"class_type": "UnetLoaderGGUF", "inputs": {"unet_name": p["unet"]}}
+              if p.get("unet_loader") == "UnetLoaderGGUF" else
+              {"class_type": "UNETLoader", "inputs": {"unet_name": p["unet"], "weight_dtype": "default"}}),
+        "2": ({"class_type": p["clip_loader"], "inputs": {"clip_name1": p["clip"], "clip_name2": p["clip2"], "type": p["clip_type"]}}
+              if p.get("clip2") else
+              {"class_type": "CLIPLoader", "inputs": {"clip_name": p["clip"], "type": p["clip_type"], "device": "default"}}),
         "3": {"class_type": "VAELoader", "inputs": {"vae_name": p["vae"]}},
         "5": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["2", 0], "text": prompt}},
         "6": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["2", 0], "text": ""}},

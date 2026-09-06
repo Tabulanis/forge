@@ -2450,11 +2450,12 @@ def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provi
             description="Make an image on the GPU from a text prompt, and optionally "
                         "from reference images (\"make it look like this\"). Saves a "
                         "PNG into the workspace and returns the path — then "
-                        "look_at_image it to check your work. Presets: 'sketch' "
-                        "(default, ~20s, text only), 'reference' (takes reference "
-                        "images, ~30s), 'masterpiece' (the flagship — slow, and it "
-                        "needs your brain asleep first, so only when asked for it). "
-                        "Give a vivid, specific prompt.",
+                        "look_at_image it to check your work. Renders on the render "
+                        "box over the wire. Presets: 'sketch' (default, Z-Image, ~1.5 min), "
+                        "'schnell' (FLUX.1 schnell — photographic, good with text in the "
+                        "picture, ~1.5 min), 'reference' (FLUX klein, takes reference "
+                        "images, ~1 min), 'masterpiece' (Qwen-Image — best text and "
+                        "composition, ~4 min). Give a vivid, specific prompt.",
             parameters={
                 "type": "object",
                 "properties": {
@@ -2463,7 +2464,7 @@ def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provi
                     "filename": {"type": "string",
                                  "description": "Optional output name; defaults to a slug"},
                     "preset": {"type": "string",
-                               "description": "sketch | reference | masterpiece (default sketch)"},
+                               "description": "sketch | schnell | reference | masterpiece (default sketch)"},
                     "references": {"type": "array", "items": {"type": "string"},
                                    "description": "Workspace paths of images to work FROM — "
                                                   "the result will resemble them"},
