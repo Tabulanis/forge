@@ -37,13 +37,13 @@ import httpx
 @dataclass
 class MediaConfig:
     """Where the eyes and ears live. Overridable from config.yaml."""
-    # Primary vision is Merge's OWN native eyes (the 27B on 8085, started with
-    # its mmproj) — far better than the old 7B, and she sees the real pixels
-    # instead of reading a smaller model's summary. When she isn't the running
-    # model (e.g. the fast 30B is up), 8085 is simply down and vision falls
-    # through to the shared CPU 7B backstop below, which is always serving.
-    vision_url: str = "http://127.0.0.1:8085/v1"
-    vision_model: str = "qwen3.6-27b"
+    # Primary vision is Merge's OWN native eyes — her brain started with its
+    # mmproj — so she sees the real pixels instead of reading a smaller
+    # model's summary. Which port that is follows the brain (config.yaml
+    # media.vision_url); since 2026-09-05 it's the 122B on 8087. A fallback
+    # endpoint is optional and only used if the first doesn't answer.
+    vision_url: str = "http://127.0.0.1:8087/v1"
+    vision_model: str = "qwen3.5-122b"
     vision_fallback_url: str = "http://127.0.0.1:8090/v1"
     vision_fallback_model: str = "qwen2.5-vl"
     whisper_bin: str = str(Path.home() / "whisper.cpp/build/bin/whisper-cli")
@@ -80,12 +80,13 @@ def vision_available(mc: MediaConfig) -> tuple[bool, str]:
         try:
             r = httpx.get(f"{url.rstrip('/')}/models", timeout=3.0)
             if r.status_code == 200:
-                which = "Merge's own eyes" if ":8085" in url else "the 7B backstop"
+                which = "Merge's own eyes" if url == mc.vision_url else "the fallback"
                 return True, f"vision serving via {which} ({url})"
         except Exception:
             continue
-    return False, ("no vision server reachable (tried Merge's eyes on 8085 and "
-                   "the 7B on 8090) — start one with: ~/forge/start-model.sh vision")
+    tried = ", ".join(u for u, _ in _endpoints(mc))
+    return False, (f"no vision server reachable (tried {tried}) — her brain "
+                   f"needs to be running with its mmproj")
 
 
 def see(image_path: str, question: str, mc: MediaConfig,
@@ -145,9 +146,10 @@ def see(image_path: str, question: str, mc: MediaConfig,
         except Exception as e:              # unreachable, timeout, HTTP error
             last = e
             continue
-    return (f"Error: no vision endpoint answered (tried Merge's eyes on 8085 and "
-            f"the 7B on 8090). Last error: {type(last).__name__}: {last}. "
-            f"Start one with: ~/forge/start-model.sh vision")
+    tried = ", ".join(u for u, _ in _endpoints(mc))
+    return (f"Error: no vision endpoint answered (tried {tried}). "
+            f"Last error: {type(last).__name__}: {last}. "
+            f"Her brain needs to be running with its mmproj.")
 
 
 # ------------------------------------------------------------ screenshot

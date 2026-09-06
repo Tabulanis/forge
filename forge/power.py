@@ -13,38 +13,58 @@ from __future__ import annotations
 import subprocess
 import time
 
-# Order matters only for display. big is the workhorse; the others exist
-# but are usually stopped anyway.
-MODEL_UNITS = ("forge-model-big", "forge-model-merge", "forge-model-vision",
-               "forge-model-little", "forge-model-tiny")
+# Order matters only for display. big122 is her brain since 2026-09-05; the
+# 27B (merge) and 30B (big) are retired but their units still exist.
+MODEL_UNITS = ("forge-model-big122", "forge-model-big", "forge-model-merge",
+               "forge-model-vision", "forge-model-little", "forge-model-tiny")
 
-PORTS = {"big": 8080, "merge": 8085, "vision": 8090, "little": 8083, "tiny": 8081}
+PORTS = {"big122": 8087, "big": 8084, "merge": 8085, "vision": 8090,
+         "little": 8083, "tiny": 8081}
 
-# How much VRAM each model takes once loaded — measured. Only used to draw
-# the loading bar; if a model ever changes, the bar just runs fast or slow.
-EXPECTED_LOAD_MB = {"big": 19300, "merge": 21000}
+# How much GPU memory each model takes once loaded — measured. Only used to
+# draw the loading bar; if a model ever changes, the bar just runs fast or slow.
+EXPECTED_LOAD_MB = {"big122": 70000, "big": 17700, "merge": 17300}
 
-# Models that can't share the card at once (measured: big alone holds ~19GB,
-# merge needs ~21GB of the 24GB total — together they don't fit). Starting
-# one now auto-stops the other first, instead of leaving that as a comment
-# a human has to remember — same lesson as everything else found this
-# session: a rule that isn't enforced gets crossed eventually.
-EXCLUSIVE = {"big": "merge", "merge": "big"}
+# Models that shouldn't share the GPU at once. On the 24GB TITAN big and merge
+# never fit together; on Void (64GB carve-out) the 122B plus either of them
+# pushes into borrowed system RAM hard enough to matter. Starting one
+# auto-stops its rivals first, instead of leaving that as a comment a human
+# has to remember — a rule that isn't enforced gets crossed eventually.
+EXCLUSIVE = {"big122": ("big", "merge"), "big": ("merge", "big122"),
+             "merge": ("big", "big122")}
 
 
 def _run(*args: str) -> subprocess.CompletedProcess:
     return subprocess.run(args, capture_output=True, text=True, timeout=60)
 
 
+def _amd_mb() -> tuple[int, int] | None:
+    """(used, total) MiB from the amdgpu sysfs counters — the AMD box has no
+    nvidia-smi. Picks the first card that exposes the counters."""
+    import glob
+    for d in glob.glob("/sys/class/drm/card*/device"):
+        try:
+            used = int(open(f"{d}/mem_info_vram_used").read())
+            total = int(open(f"{d}/mem_info_vram_total").read())
+            return used // 1048576, total // 1048576
+        except Exception:
+            continue
+    return None
+
+
 def vram() -> str:
-    """'22.8 / 24.0 GB used' — or '' on a machine with no NVIDIA GPU."""
+    """'22.8 / 24.0 GB used' — NVIDIA or AMD; '' if neither answers."""
     try:
         r = _run("nvidia-smi", "--query-gpu=memory.used,memory.total",
                  "--format=csv,noheader,nounits")
         used, total = r.stdout.strip().splitlines()[0].split(",")
         return f"{int(used) / 1024:.1f} / {int(total) / 1024:.1f} GB used"
     except Exception:
-        return ""
+        pass
+    amd = _amd_mb()
+    if amd:
+        return f"{amd[0] / 1024:.1f} / {amd[1] / 1024:.1f} GB used"
+    return ""
 
 
 def vram_mb() -> int | None:
@@ -53,7 +73,9 @@ def vram_mb() -> int | None:
                  "--format=csv,noheader,nounits")
         return int(r.stdout.strip().splitlines()[0])
     except Exception:
-        return None
+        pass
+    amd = _amd_mb()
+    return amd[0] if amd else None
 
 
 def is_ready(which: str) -> bool:
@@ -98,7 +120,7 @@ def off() -> dict:
     return {"stopped": [short(u) for u in stopped], "vram": vram()}
 
 
-def on(which: str = "big") -> dict:
+def on(which: str = "big122") -> dict:
     """Start one model service. Loading a model takes a minute — this
     returns as soon as systemd accepts the job, it does not wait.
     Auto-stops whatever this model can't share the card with (see
@@ -109,11 +131,16 @@ def on(which: str = "big") -> dict:
                 "error": f"no model service named {which!r} — "
                          f"try: {', '.join(short(u) for u in MODEL_UNITS)}"}
     stopped = []
-    rival = EXCLUSIVE.get(which)
-    if rival and rival in running():
-        _run("systemctl", "--user", "stop", f"forge-model-{rival}.service")
-        stopped = [rival]
-        time.sleep(1.5)   # let the driver actually release the VRAM
+    # running() returns full unit names; compare like with like. (The old
+    # check compared "merge" against "forge-model-merge" and never fired —
+    # the auto-stop had been decorative since it was written.)
+    live = {short(u) for u in running()}
+    for rival in EXCLUSIVE.get(which, ()):
+        if rival in live:
+            _run("systemctl", "--user", "stop", f"forge-model-{rival}.service")
+            stopped.append(rival)
+    if stopped:
+        time.sleep(1.5)   # let the driver actually release the memory
     r = _run("systemctl", "--user", "start", unit + ".service")
     err = r.stderr.strip()
     return {"started": [] if err else [which], "stopped_for_room": stopped,

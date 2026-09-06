@@ -496,7 +496,7 @@ async def upload_image(request: Request, session: str = ""):
 
 class PowerSpec(BaseModel):
     action: str            # "off" or "on"
-    model: str = "big"     # which one to wake, for "on"
+    model: str = "big122"  # which one to wake, for "on" — her brain since 2026-09-05
 
 
 @app.get("/api/power", dependencies=[Depends(require_token)])

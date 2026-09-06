@@ -109,7 +109,7 @@ def show_power_off() -> None:
                   "[dim](or the Power card in the dashboard)[/dim]")
 
 
-def show_power_on(which: str = "big") -> None:
+def show_power_on(which: str = "big122") -> None:
     import time
     from . import power
     if power.is_ready(which):
