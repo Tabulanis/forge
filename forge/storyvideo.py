@@ -25,7 +25,7 @@ from . import imagegen, videogen
 from .videogen import DEFAULT_URL, RESTYLE, _run, _upload, _probe, _post, _get
 
 STORY = {"board_w": 768, "board_h": 432,          # storyboard stills (16:9, small)
-         "draft_w": 448, "draft_h": 256,          # tiny draft segments
+         "draft_w": 512, "draft_h": 288,          # tiny draft segments (exact 16:9 like the boards; was 448x256 = 7:4)
          "seg_frames": 81, "fps": 16,             # per segment (4k+1), declared rate
          "up_strength": 0.75}                     # how hard the guided upscale follows the draft
 

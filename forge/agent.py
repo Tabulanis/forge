@@ -403,6 +403,7 @@ Your notebook:
 
 Pictures and video (they render on the second machine; every call is a minute or more — say what you're about to make, don't fire renders speculatively, and look_at_image the result before calling it good):
 - Presets: reference = the workhorse (FLUX.2 klein: photographic, ~7 s, takes reference pictures); sketch = rough; real = the slow Qwen flagship (~5 min, only when asked for the best possible still); masterpiece = anything with text (~5 min); edit = slow Qwen edit (~5 min). A recurring character is made ONCE (reference), then every later shot is `reference` with that file in references; for a pose, extract_pose any picture and use reference with [skeleton, character].
+- Shape: any size or aspect — give width+height, or aspect ('16:9', '9:16', '1:1', '2.39:1', 'phone') + size (long edge). Shapes inherit down the chain: a picture made from references keeps the first reference's shape, a storyboard keeps the hero's shape, the video keeps the keyframes' shape. So make the hero in the final video's aspect (16:9 widescreen, 9:16 phone).
 - A planned shot: hero picture (real) -> storyboard (approve the stills) -> story_video (small draft, approve) -> upscale=true. Anything over 8 s is a small draft first. Never finish or climb a draft nobody approved.
 - restyle_video: the prompt changes content/era keeping motion (needs a source with structure; edges for flat shots); `stock` is the film finish. finish_video sharpens an approved draft.
 

@@ -344,6 +344,7 @@ def apply_stock(video: str, out_path: str, stock: str) -> str:
 #    low denoise with a realism prompt. That puts real detail back (a resize can't) and, because
 #    the pass is low-noise and the prompt is constant, keeps the look identical across chunks.
 # 3. Join (dropping each chunk's duplicated first frame) and RIFE-interpolate 2x for smoothness.
+FINISH_MAX_SIDE = 1792   # 1792x1024 finished fine on the 24GB card; bigger is untested
 LONG = {"width": 640, "height": 352, "chunk_frames": 81, "refine_steps": 6, "refine_denoise": 0.28,
         "realism": ", photographic, natural skin texture, real fabric and surfaces, subtle film grain, no plastic sheen"}
 
@@ -491,7 +492,8 @@ def finish_video(video: str, prompt: str, out_path: str, interpolate: int = 2, f
                         "-vf", f"select=between(n\\,{i}\\,{i + n - 1}),setpts=N/FRAME_RATE/TB", "-frames:v", str(n), "-an",
                         "-c:v", "libx264", "-crf", "14", "-pix_fmt", "yuv420p", str(pc)], check=True, timeout=600)
         pieces.append(pc); i += n
-    w2, h2 = (sw * 2) // 16 * 16, (sh * 2) // 16 * 16
+    up = min(2.0, FINISH_MAX_SIDE / max(sw, sh))          # 2x, but never past the long edge the TITAN has proven
+    w2, h2 = int(sw * up) // 16 * 16, int(sh * up) // 16 * 16
     dn = L["refine_denoise"] if denoise is None else float(denoise)
     refined = [_run(base, _refine_workflow(_upload(base, pc), prompt + L["realism"], seed, w2, h2, L["refine_steps"], dn),
                     f"finish: refine {k + 1}/{len(pieces)}", work / f"ref{k:02d}.mp4") for k, pc in enumerate(pieces)]
@@ -514,7 +516,7 @@ def finish_video(video: str, prompt: str, out_path: str, interpolate: int = 2, f
 # control video, with a mask that is 0 over those frames (keep) and 1 over the rest (generate), and it
 # continues the motion instead of restarting from a still. Chunks stay small; the finish stack
 # (finish_video) brings size and frame rate back.
-LONG2 = {"width": 448, "height": 256, "chunk_frames": 81, "overlap": 13, "fps": 16}
+LONG2 = {"width": 512, "height": 288, "chunk_frames": 81, "overlap": 13, "fps": 16}   # exact 16:9 (was 448x256)
 
 
 def _vace_extend_workflow(prompt: str, seed: int, width: int, height: int, frames: int,

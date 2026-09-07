@@ -229,6 +229,71 @@ def _workflow(p: dict, prompt: str, seed: int, width: int, height: int,
     return w
 
 
+GRID = 16                       # every model here wants both sides on a 16-pixel grid
+MIN_SIDE, MAX_SIDE = 256, 2048
+_ASPECT_NAMES = {"square": 1.0, "wide": 16 / 9, "widescreen": 16 / 9, "landscape": 16 / 9, "video": 16 / 9,
+                 "tall": 9 / 16, "portrait": 9 / 16, "phone": 9 / 16, "vertical": 9 / 16,
+                 "cinema": 2.39, "scope": 2.39, "classic": 4 / 3}
+
+
+def parse_aspect(aspect) -> float | None:
+    """'16:9', '9:16', '2.39:1', '1.5', 'phone' -> width/height. None when empty or unreadable."""
+    if aspect is None or aspect == "":
+        return None
+    if isinstance(aspect, (int, float)):
+        return float(aspect) if aspect > 0 else None
+    s = str(aspect).strip().lower().replace("x", ":").replace("/", ":")
+    if s in _ASPECT_NAMES:
+        return _ASPECT_NAMES[s]
+    try:
+        if ":" in s:
+            a, b = s.split(":", 1)
+            return float(a) / float(b)
+        return float(s)
+    except (ValueError, ZeroDivisionError):
+        return None
+
+
+def _snap(v: float) -> int:
+    return int(max(MIN_SIDE, min(MAX_SIDE, round(v / GRID) * GRID)))
+
+
+def image_aspect(path) -> float | None:
+    """width/height of a picture on disk, or None."""
+    try:
+        from PIL import Image
+        with Image.open(str(Path(path).expanduser())) as im:
+            w, h = im.size
+        return w / h
+    except Exception:
+        return None
+
+
+def fit_size(width=None, height=None, aspect=None, size=None, like=None,
+             default: tuple[int, int] = (1024, 1024)) -> tuple[int, int]:
+    """Any size, any shape, on the grid.
+    Priority: width+height as given > an aspect ('16:9', 'phone'...) or the shape of the picture `like`,
+    with `size` as the long edge > one given side + that aspect > the default."""
+    w = int(width) if width else 0
+    h = int(height) if height else 0
+    if w and h:
+        return _snap(w), _snap(h)
+    ratio = parse_aspect(aspect)
+    if ratio is None and like:
+        ratio = image_aspect(like)
+    if ratio is None and not (w or h) and not size:
+        return _snap(default[0]), _snap(default[1])
+    ratio = ratio or default[0] / default[1]
+    if w:
+        return _snap(w), _snap(w / ratio)
+    if h:
+        return _snap(h * ratio), _snap(h)
+    long = int(size) if size else max(default)
+    if ratio >= 1:
+        return _snap(long), _snap(long / ratio)
+    return _snap(long * ratio), _snap(long)
+
+
 def render(prompt: str, out_path: str, preset: str = "sketch", references: list[str] | None = None,
            control_image: str | None = None, control_type: str = "pose", control_strength: float = 0.8,
            seed: int | None = None, steps: int | None = None, width: int = 1024, height: int = 1024,
@@ -244,6 +309,7 @@ def render(prompt: str, out_path: str, preset: str = "sketch", references: list[
         if not r.is_file():
             raise FileNotFoundError(f"reference image not found: {r}")
     seed = random.randrange(2 ** 31) if seed is None else int(seed)
+    width, height = fit_size(width, height)      # whatever was asked, on the grid
     if p.get("size") and (width, height) == (1024, 1024):
         width = height = p["size"]           # the preset's native square, unless the caller chose a size
     names = [_upload(base, r) for r in refs]

@@ -601,7 +601,8 @@ def _physics_sim(scenario: str, params: dict | None = None) -> str:
 def _generate_image(ws_root: str, prompt: str, filename: str = "",
                     preset: str = "", references: list | None = None,
                     seed=None, steps=None, media=None,
-                    control_image: str = "", control_type: str = "pose", control_strength: float = 0.8) -> str:
+                    control_image: str = "", control_type: str = "pose", control_strength: float = 0.8,
+                    width=None, height=None, aspect: str = "", size=None) -> str:
     """Make an image on the GPU through ComfyUI (forge.imagegen). The picture
     lands in the workspace; references (paths in the workspace) are what
     "make it look like this" means."""
@@ -646,8 +647,10 @@ def _generate_image(ws_root: str, prompt: str, filename: str = "",
             if not cp.is_file():
                 return f"Error: control image not found: {cp}"
             cimg = str(cp)
+        # Shape: as asked; else a picture made FROM references keeps the first reference's shape.
+        w, h = imagegen.fit_size(width, height, aspect, size, like=(refs[0] if refs else None))
         path = imagegen.render(prompt, str(out), preset=preset, references=refs,
-                               seed=seed, steps=steps, base=base,
+                               seed=seed, steps=steps, base=base, width=w, height=h,
                                control_image=cimg, control_type=control_type or "pose",
                                control_strength=float(control_strength or 0.8))
     except Exception as e:
@@ -731,7 +734,8 @@ def _ws_path(ws_root: str, rel: str) -> Path | None:
     return q if (q == root or root in q.parents) else None
 
 
-def _storyboard(ws_root: str, hero: str, shots: list, name: str = "", seed=None, media=None) -> str:
+def _storyboard(ws_root: str, hero: str, shots: list, name: str = "", seed=None, media=None,
+                aspect: str = "", size=None) -> str:
     """Keyframes from a hero picture, one per shot (forge.storyvideo.storyboard)."""
     from . import storyvideo, imagegen
     h = _ws_path(ws_root, hero)
@@ -748,7 +752,8 @@ def _storyboard(ws_root: str, hero: str, shots: list, name: str = "", seed=None,
         base = imagegen.DEFAULT_URL
     try:
         t0 = time.time()
-        frames = storyvideo.storyboard(str(h), [str(x) for x in shots][:8], str(out_dir), base=base, seed=seed)
+        bw, bh = imagegen.fit_size(None, None, aspect, size or 768, like=str(h), default=(768, 432))   # the hero's shape, small
+        frames = storyvideo.storyboard(str(h), [str(x) for x in shots][:8], str(out_dir), base=base, seed=seed, width=bw, height=bh)
     except Exception as e:
         return f"Error making the storyboard: {str(e)[:400]}"
     return (f"Storyboard: {len(frames)} keyframes in {out_dir} ({time.time() - t0:.0f}s):\n" + "\n".join(frames) +
@@ -783,8 +788,11 @@ def _story_video(ws_root: str, keyframes: list, hero: str, prompt: str, filename
         base = videogen.DEFAULT_URL
     try:
         t0 = time.time()
-        draft = storyvideo.fill(keys, prompt, str(h), str(out), base=base, seed=seed, camera=[str(c) for c in camera] if camera else None)
-        msg = f"Draft saved to {draft} ({time.time() - t0:.0f}s; small, {len(keys) - 1} segments pinned to your keyframes, hero as the identity anchor)."
+        from . import imagegen
+        dw, dh = imagegen.fit_size(None, None, None, 512, like=keys[0], default=(512, 288))   # the keyframes' shape, tiny
+        draft = storyvideo.fill(keys, prompt, str(h), str(out), base=base, seed=seed, width=dw, height=dh,
+                                camera=[str(c) for c in camera] if camera else None)
+        msg = f"Draft saved to {draft} ({time.time() - t0:.0f}s; small {dw}x{dh}, {len(keys) - 1} segments pinned to your keyframes, hero as the identity anchor)."
         if upscale:
             # small to big, one smooth climb: the model's refine pass twice (faithful — it keeps slabs as slabs),
             # frame doubling at the end. The identity repaint (guided_up) is a rescue, not a step every shot takes.
@@ -799,7 +807,8 @@ def _story_video(ws_root: str, keyframes: list, hero: str, prompt: str, filename
 
 
 def _generate_video(ws_root: str, prompt: str, image: str = "", seconds=5,
-                    filename: str = "", seed=None, quality: str = "fast") -> str:
+                    filename: str = "", seed=None, quality: str = "fast",
+                    width=None, height=None, aspect: str = "") -> str:
     """A clip via the render box's ComfyUI (forge.videogen). Same workspace
     rules as images: everything in, everything out, stays inside the workspace."""
     from . import videogen
@@ -835,12 +844,16 @@ def _generate_video(ws_root: str, prompt: str, image: str = "", seconds=5,
         if secs > 8:
             # long form = a small DRAFT in chained chunks (continuity from frame to frame). Cheap to
             # judge motion and story; finish_video refines and smooths the one the user approves.
-            path = videogen.long_video2(prompt, str(out), seconds=secs, reference_image=img, seed=seed, base=base)
-            return (f"Draft saved to {path} ({secs:.0f}s, small {videogen.LONG2['width']}x{videogen.LONG2['height']} preview at "
+            from . import imagegen
+            w, h = imagegen.fit_size(width, height, aspect, None, like=img, default=(videogen.LONG2["width"], videogen.LONG2["height"]))
+            path = videogen.long_video2(prompt, str(out), seconds=secs, reference_image=img, seed=seed, base=base, width=w, height=h)
+            return (f"Draft saved to {path} ({secs:.0f}s, small {w}x{h} preview at "
                     f"{videogen.LONG2['fps']} fps, motion carried across passes; took {time.time() - t0:.0f}s). "
                     f"Tell the user where it is and that it's a draft for judging motion — finish_video makes it sharp and smooth.")
         preset = "quality" if str(quality).lower() in ("best", "quality", "high") else "fast"
-        path = videogen.render(prompt, str(out), image=img, seconds=secs, seed=seed, base=base, preset=preset)
+        from . import imagegen
+        w, h = imagegen.fit_size(width, height, aspect, None, like=img, default=(1280, 704))   # a still to animate sets the shape
+        path = videogen.render(prompt, str(out), image=img, seconds=secs, seed=seed, base=base, preset=preset, width=w, height=h)
     except Exception as e:
         return f"Error generating video: {str(e)[:500]}"
     return (f"Video saved to {path} ({secs:.0f}s clip, took {time.time() - t0:.0f}s). "
@@ -2654,14 +2667,20 @@ def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provi
                              "description": "Optional seed for a repeatable image"},
                     "steps": {"type": "integer",
                               "description": "Optional override of the preset's step count"},
+                    "width": {"type": "integer", "description": "Exact width in pixels (any size, snapped to 16)"},
+                    "height": {"type": "integer", "description": "Exact height in pixels"},
+                    "aspect": {"type": "string", "description": "Shape instead of exact pixels: '16:9', '9:16', '1:1', '2.39:1', 'phone'... (default: the first reference's shape, else square)"},
+                    "size": {"type": "integer", "description": "Long edge in pixels when using aspect (default 1024)"},
                 },
                 "required": ["prompt"],
             },
             run=guard(lambda prompt, filename="", preset="", references=None, seed=None, steps=None,
-                             control_image="", control_type="pose", control_strength=0.8:
+                             control_image="", control_type="pose", control_strength=0.8,
+                             width=None, height=None, aspect="", size=None:
                       _generate_image(str(ws.root), prompt, filename, preset, references,
                                       seed, steps, control_image=control_image,
-                                      control_type=control_type, control_strength=control_strength)),
+                                      control_type=control_type, control_strength=control_strength,
+                                      width=width, height=height, aspect=aspect, size=size)),
             needs_permission=True,
             summarize=lambda a: f"generate image: {a.get('prompt', '')[:60]}",
         ),
@@ -2676,13 +2695,16 @@ def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provi
                     "seconds": {"type": "number", "description": "Seconds: 2-8 full size, 9-60 draft (default 5)"},
                     "filename": {"type": "string", "description": "Optional output name; defaults to a slug"},
                     "seed": {"type": "integer", "description": "Optional seed for a repeatable clip"},
+                    "aspect": {"type": "string", "description": "Shape: '16:9', '9:16', '1:1'... (default: the start image's shape, else 16:9)"},
+                    "width": {"type": "integer", "description": "Exact width in pixels (snapped to 16)"},
+                    "height": {"type": "integer", "description": "Exact height in pixels"},
                     "quality": {"type": "string", "enum": ["fast", "best"],
                                 "description": "fast (default) or best (~4x slower)"},
                 },
                 "required": ["prompt"],
             },
-            run=guard(lambda prompt, image="", seconds=5, filename="", seed=None, quality="fast":
-                      _generate_video(str(ws.root), prompt, image, seconds, filename, seed, quality)),
+            run=guard(lambda prompt, image="", seconds=5, filename="", seed=None, quality="fast", width=None, height=None, aspect="":
+                      _generate_video(str(ws.root), prompt, image, seconds, filename, seed, quality, width=width, height=height, aspect=aspect)),
             needs_permission=True,
             summarize=lambda a: f"generate video: {a.get('prompt', '')[:60]}",
         ),
@@ -2693,9 +2715,11 @@ def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provi
                         "properties": {"hero": {"type": "string", "description": "Workspace path of the hero picture"},
                                        "shots": {"type": "array", "items": {"type": "string"}, "description": "2-8 shots, in order"},
                                        "name": {"type": "string", "description": "Optional folder name for the keyframes"},
+                                       "aspect": {"type": "string", "description": "Shape of the keyframes (default: the hero's shape)"},
+                                       "size": {"type": "integer", "description": "Long edge of the keyframes (default 768)"},
                                        "seed": {"type": "integer", "description": "Optional seed"}},
                         "required": ["hero", "shots"]},
-            run=guard(lambda hero, shots, name="", seed=None: _storyboard(str(ws.root), hero, shots, name, seed)),
+            run=guard(lambda hero, shots, name="", seed=None, aspect="", size=None: _storyboard(str(ws.root), hero, shots, name, seed, aspect=aspect, size=size)),
             needs_permission=True,
             summarize=lambda a: f"storyboard: {len(a.get('shots') or [])} shots from {a.get('hero', '')}",
         ),
