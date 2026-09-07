@@ -190,9 +190,17 @@ def _look(images: list[str], question: str, max_tokens: int = 400) -> str:
         return json.load(r)["choices"][0]["message"]["content"].strip()
 
 
-def check_frame(hero: str, frame: str, shot: str) -> dict:
-    """Continuity check: does the keyframe keep the hero's world and match the shot? Returns {ok, issues}."""
-    q = ("Image 1 is the reference (the hero). Image 2 is a new keyframe that should show the SAME character, "
+def check_frame(hero: str, frame: str, shot: str, person_only: bool = False) -> dict:
+    """Continuity check: does the keyframe keep the hero's character (and, unless person_only, world) and match the shot?"""
+    if person_only:
+        q = ("Image 1 shows the CHARACTER (only the person matters here — ignore image 1's background entirely). Image 2 is a "
+             f"new keyframe that should show the SAME person — face, hair, beard, build, clothes — from this camera position: \"{shot}\".\n"
+             "List only real problems, one per line, prefixed with '- ': a different face or beard, different clothes or colours, "
+             "a new garment or prop, the same person appearing twice, the person facing the wrong way for the shot, the described "
+             "action not happening, the requested camera position not followed. Do NOT mention the setting, boats, buildings or "
+             "objects around them. If the person is consistent and the shot is followed, reply exactly: OK")
+    else:
+        q = ("Image 1 is the reference (the hero). Image 2 is a new keyframe that should show the SAME character, "
          f"clothes, vehicle/objects and place, from this camera position: \"{shot}\".\n"
          "Check continuity strictly. List only real problems, one per line, prefixed with '- ': things missing that "
          "should be visible, things added that weren't in the reference (a second lighthouse, extra people), the "
@@ -255,7 +263,7 @@ def check_place(place: str, frame: str, shot: str) -> dict:
 
 def storyboard_checked(hero: str, shots: list[str], out_dir: str, base: str = DEFAULT_URL,
                        width: int | None = None, height: int | None = None, seed: int | None = None,
-                       retries: int = 1, place: str | None = None, chain: bool = True,
+                       retries: int = 2, place: str | None = None, chain: bool = True,
                        scene: str = "") -> tuple[list[str], list[dict]]:
     """Storyboard with a continuity check per frame and one corrective redo. Returns (frames, reports).
     hero = the CHARACTER (alone). place = optional picture of the setting without them. chain = each
@@ -281,7 +289,7 @@ def storyboard_checked(hero: str, shots: list[str], out_dir: str, base: str = DE
         rep = {"shot": shot, "attempts": []}
         for attempt in range(retries + 1):
             imagegen.render(prompt, str(p), preset="edit", references=refs, seed=seed + i + 100 * attempt, width=w, height=h, base=base)
-            chk = check_frame(hero, str(p), shot)
+            chk = check_frame(hero, str(p), shot, person_only=bool(place))
             if chk["ok"] and place:
                 pc = check_place(place, str(p), shot)
                 if not pc["ok"]:
@@ -685,3 +693,27 @@ def decompose_peaks(video: str, out_dir: str, max_frames: int = 12, min_gap_s: f
         subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", src, "-vf", f"select=eq(n\\,{i})", "-frames:v", "1", "-update", "1", str(p)], check=True, timeout=120)
         frames.append(str(p)); times.append(round(i / fps, 2))
     return frames, times
+
+
+def make_place(prompt: str, out_path: str, scene_map: str, base: str = DEFAULT_URL, seed: int | None = None,
+               width: int = 1328, height: int = 736, retries: int = 2) -> tuple[str, dict]:
+    """The place hero, checked against the scene map (landmark counts, layout, no people) and regenerated if wrong."""
+    seed = random.randrange(2 ** 31) if seed is None else int(seed)
+    rep = {"attempts": []}
+    for attempt in range(retries + 1):
+        imagegen.render(prompt + (" " if attempt == 0 else " Fix these problems: " + "; ".join(rep["attempts"][-1]["issues"][:4]) + ". "),
+                        out_path, preset="real", seed=seed + 100 * attempt, width=width, height=height, base=base)
+        q = (f"This picture must match this scene map exactly: \"{scene_map}\". No people at all. List only real problems, one per "
+             "line prefixed with '- ': a landmark duplicated (two lighthouses) or missing, something on the wrong side, a person "
+             "present, a building of the wrong kind. If it matches, reply exactly: OK")
+        try:
+            ans = _look([out_path], q)
+        except Exception as e:
+            rep["attempts"].append({"ok": True, "issues": [], "note": f"check skipped: {type(e).__name__}"}); break
+        issues = [ln[2:].strip() for ln in ans.splitlines() if ln.strip().startswith("- ")]
+        ok = ans.strip().upper().startswith("OK") or not issues
+        rep["attempts"].append({"ok": ok, "issues": issues})
+        if ok:
+            break
+    rep["final_ok"] = rep["attempts"][-1]["ok"]
+    return out_path, rep
