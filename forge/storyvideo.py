@@ -500,7 +500,7 @@ def fill_bidir(keyframes: list[str], prompt: str, hero: str, out_path: str, base
                 # later passes: only from their middle pin (which is the previous pass's end pin) onward —
                 # the pin frame is identical in both, so the cut lands on it and motion flows through
                 cut = work / f"c{i:02d}.mp4"
-                subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", str(full), "-vf", f"select=gte(n\,{a + 1}),setpts=N/FRAME_RATE/TB",
+                subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", str(full), "-vf", f"select=gte(n\\,{a + 1}),setpts=N/FRAME_RATE/TB",
                                 "-c:v", "libx264", "-crf", "14", "-pix_fmt", "yuv420p", "-an", str(cut)], check=True, timeout=600)
                 parts.append(cut)
     out = Path(out_path).expanduser(); out.parent.mkdir(parents=True, exist_ok=True)
