@@ -577,6 +577,12 @@ def long_video2(prompt: str, out_path: str, seconds: float = 12.0, reference_ima
     ref = _upload(base, Path(reference_image).expanduser()) if reference_image else None
     chunks: list[Path] = []; tail: Path | None = None; got = 0; k = 0
     while got < total:
+        if ref is None and k == 1:
+            # no hero given: the first pass's opening frame becomes the anchor for every later pass
+            # (measured 2026-09-07: without an anchor the boat, the light and the landmarks drift pass to pass)
+            anchor = work / "anchor.png"
+            subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", str(chunks[0]), "-frames:v", "1", "-update", "1", str(anchor)], check=True, timeout=120)
+            ref = _upload(base, anchor)
         n = min(L["chunk_frames"], total - got + (L["overlap"] if tail else 0))
         n = (n // 4) * 4 + 1 if n >= 5 else 5
         tail_name = _upload(base, tail) if tail else None
