@@ -22,7 +22,7 @@ import time
 from pathlib import Path
 
 from . import imagegen, videogen
-from .videogen import DEFAULT_URL, RESTYLE, _run, _upload, _probe
+from .videogen import DEFAULT_URL, RESTYLE, _run, _upload, _probe, _post, _get
 
 STORY = {"board_w": 768, "board_h": 432,          # storyboard stills (16:9, small)
          "draft_w": 448, "draft_h": 256,          # tiny draft segments
@@ -814,3 +814,58 @@ def fill_posed(keyframes: list[str], pose_video: str, prompt: str, hero: str, ou
     subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-f", "concat", "-safe", "0", "-i", str(lst),
                     "-vf", f"setpts=N/({fps_d}*TB)", "-r", str(fps_d), "-c:v", "libx264", "-crf", "14", "-pix_fmt", "yuv420p", "-an", str(out)], check=True, timeout=900)
     return str(out)
+
+
+# ---- the body as data: keypoints from pictures, pose tracks from storyboards ------------------------
+def keypoints_of(image: str, base: str = DEFAULT_URL, resolution: int = 512) -> tuple[dict, int, int]:
+    """DWPose keypoints (OpenPose-18 record) of a picture, plus the canvas size they're in."""
+    name = _upload(base, Path(image).expanduser())
+    wf = {"1": {"class_type": "LoadImage", "inputs": {"image": name}},
+          "2": {"class_type": "DWPreprocessor", "inputs": {"image": ["1", 0], "detect_hand": "disable", "detect_body": "enable", "detect_face": "disable", "resolution": resolution}},
+          "3": {"class_type": "SavePoseKpsAsJsonFile", "inputs": {"pose_kps": ["2", 1], "filename_prefix": "merge/kps"}},
+          "4": {"class_type": "SaveImage", "inputs": {"images": ["2", 0], "filename_prefix": "merge/kpsimg"}}}
+    pid = _post(base, "/prompt", {"prompt": wf}, 30)["prompt_id"]
+    t0 = time.time()
+    while True:
+        h = json.loads(_get(base, f"/history/{pid}")).get(pid)
+        st = (h or {}).get("status", {})
+        if st.get("completed"):
+            break
+        if st.get("status_str") == "error":
+            raise RuntimeError("keypoints failed: " + json.dumps(st)[:300])
+        if time.time() - t0 > 600:
+            raise TimeoutError("keypoints took over 10 minutes")
+        time.sleep(1.0)
+    # the json node reports nothing in history; find the newest merge/kps_*.json via the image's numbering
+    img = h["outputs"]["4"]["images"][0]
+    num = img["filename"].split("_")[-2]
+    import urllib.parse
+    for cand in (f"kps_{num}_.json", f"kps_{num}.json"):
+        try:
+            raw = _get(base, "/view?" + urllib.parse.urlencode({"filename": cand, "subfolder": "merge", "type": "output"}), 30)
+            data = json.loads(raw)
+            break
+        except Exception:
+            data = None
+    if data is None:
+        raise RuntimeError("keypoint json not found in ComfyUI output")
+    rec = data[0] if isinstance(data, list) else data
+    return rec, int(rec.get("canvas_width", resolution)), int(rec.get("canvas_height", resolution))
+
+
+def pose_track_from_keyframes(keyframes: list[str], times: list[float], out_path: str, base: str = DEFAULT_URL,
+                              width: int | None = None, height: int | None = None, walking: list[bool] | None = None,
+                              fps: int = 24) -> str:
+    """Puppetmaster route with no actor: skeleton each keyframe, interpolate the joints across the beat times, lay a
+    walk cycle on the walking intervals, render an OpenPose track at draft size."""
+    from . import poselib as P
+    w, h = width or STORY["draft_w"], height or STORY["draft_h"]
+    poses = []
+    for k in keyframes:
+        rec, cw, ch = keypoints_of(k, base=base)
+        p = P.from_dwpose(rec)
+        if p is None:
+            raise RuntimeError(f"no person found in {k}")
+        poses.append(P.denormalize(P.normalize(p, cw, ch), w, h))
+    frames = P.track(poses, times, fps=fps, walking=walking)
+    return P.render_video(frames, w, h, out_path, fps=fps)
