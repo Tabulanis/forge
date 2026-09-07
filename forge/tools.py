@@ -656,8 +656,8 @@ def _generate_image(ws_root: str, prompt: str, filename: str = "",
             f"Use look_at_image on that path to see what you made.")
 
 
-def _restyle_video(ws_root: str, video: str, prompt: str, reference_image: str = "", control: str = "depth",
-                   strength: float = 1.0, start: float = 0.0, seconds=None, filename: str = "", seed=None) -> str:
+def _restyle_video(ws_root: str, video: str, prompt: str = "", reference_image: str = "", control: str = "depth",
+                   strength: float = 1.0, start: float = 0.0, seconds=None, filename: str = "", seed=None, stock: str = "") -> str:
     """Repaint a workspace video to a prompt while keeping its motion and structure (forge.videogen.restyle)."""
     from . import videogen
     root = Path(ws_root).resolve()
@@ -675,7 +675,7 @@ def _restyle_video(ws_root: str, video: str, prompt: str, reference_image: str =
     if filename:
         name = filename if filename.lower().endswith(".mp4") else filename + ".mp4"
     else:
-        slug = re.sub(r"[^a-z0-9]+", "-", prompt.lower()).strip("-")[:40] or "restyled"
+        slug = re.sub(r"[^a-z0-9]+", "-", (prompt or stock or "").lower()).strip("-")[:40] or "restyled"
         name = f"generated/{src.stem}-{slug}.mp4"
     out = (root / name).resolve()
     if root != out and root not in out.parents:
@@ -691,8 +691,9 @@ def _restyle_video(ws_root: str, video: str, prompt: str, reference_image: str =
         return f"Error: {why}"
     try:
         t0 = time.time()
-        path = videogen.restyle(str(src), prompt, str(out), reference_image=(str(ref) if ref else None), control=control or "depth",
-                                strength=float(strength or 1.0), start=float(start or 0), seconds=(float(seconds) if seconds else None), seed=seed, base=base)
+        path = videogen.restyle(str(src), prompt or "", str(out), reference_image=(str(ref) if ref else None), control=control or "depth",
+                                strength=float(strength or 1.0), start=float(start or 0), seconds=(float(seconds) if seconds else None), seed=seed, base=base,
+                                stock=(stock or ""))
     except Exception as e:
         return f"Error restyling video: {str(e)[:500]}"
     return (f"Restyled video saved to {path} (took {time.time() - t0:.0f}s). "
@@ -2615,10 +2616,13 @@ def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provi
         ),
         Tool(
             name="restyle_video",
-            description="Re-paint an existing video (a workspace path) to a new look while keeping "
-                        "its motion and framing: 'the same shot at night', '1975 handheld 16mm film, "
-                        "faded Kodachrome, grain', 'as a charcoal animation'. Optionally give a "
-                        "`reference_image` for the exact look. Structure is read from the source as "
+            description="Change the look of an existing video (a workspace path). Two layers: a `prompt` "
+                        "re-paints CONTENT and era with the model while keeping motion and framing "
+                        "('the same shot at night', 'a 1975 living room', 'as a charcoal animation'), "
+                        "and a `stock` lays a film look over it deterministically in seconds "
+                        "(16mm, super8, vhs, noir). Use both for '1975 16mm'; use stock alone when only "
+                        "the finish should change. Optionally give a `reference_image` for the exact look. "
+                        "Structure is read from the source as "
                         "depth (default), edges, or the people's poses. Needs a source with structure "
                         "(people, rooms, streets); a mostly-sky or flat shot gives it nothing to hold and "
                         "it invents a scene — use control='edges' for those. Runs on the render box, about "
@@ -2635,11 +2639,13 @@ def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provi
                     "seconds": {"type": "number", "description": "How many seconds to restyle (default: all, in 5 s passes)"},
                     "filename": {"type": "string", "description": "Optional output name"},
                     "seed": {"type": "integer", "description": "Optional seed"},
+                    "stock": {"type": "string", "enum": ["16mm", "super8", "vhs", "noir"],
+                              "description": "Film-stock finish applied after (or instead of) the model pass"},
                 },
-                "required": ["video", "prompt"],
+                "required": ["video"],
             },
-            run=guard(lambda video, prompt, reference_image="", control="depth", strength=1.0, start=0.0, seconds=None, filename="", seed=None:
-                      _restyle_video(str(ws.root), video, prompt, reference_image, control, strength, start, seconds, filename, seed)),
+            run=guard(lambda video, prompt="", reference_image="", control="depth", strength=1.0, start=0.0, seconds=None, filename="", seed=None, stock="":
+                      _restyle_video(str(ws.root), video, prompt, reference_image, control, strength, start, seconds, filename, seed, stock)),
             needs_permission=True,
             summarize=lambda a: f"restyle video: {a.get('prompt', '')[:60]}",
         ),

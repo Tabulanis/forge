@@ -236,9 +236,21 @@ def _prep_chunks(src: str, work: Path, fps: int, max_frames: int, long_side: int
 
 def restyle(video: str, prompt: str, out_path: str, reference_image: str | None = None,
             control: str = "depth", strength: float = 1.0, start: float = 0.0, seconds: float | None = None,
-            seed: int | None = None, base: str = DEFAULT_URL) -> str:
-    """Repaint a video to a prompt while keeping its structure. Saves an mp4 to out_path; returns the path."""
+            seed: int | None = None, base: str = DEFAULT_URL, stock: str = "") -> str:
+    """Repaint a video to a prompt while keeping its structure, then (optionally) lay a film stock
+    over it. An empty prompt with a stock = the stock alone, no model pass (seconds, not minutes).
+    Saves an mp4 to out_path; returns the path."""
     import subprocess, tempfile
+    if not (prompt or "").strip():
+        if not stock:
+            raise ValueError("give a prompt, a stock, or both")
+        src = str(Path(video).expanduser())
+        if start or seconds:
+            tmp = Path(tempfile.mkdtemp(prefix="restyle-")) / "cut.mp4"
+            cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-ss", str(start), "-i", src]
+            if seconds: cmd += ["-t", str(seconds)]
+            subprocess.run(cmd + ["-c:v", "libx264", "-crf", "16", "-an", str(tmp)], check=True, timeout=600); src = str(tmp)
+        return apply_stock(src, out_path, stock)
     if control not in _RESTYLE_CONTROL:
         raise ValueError(f"control must be one of {sorted(_RESTYLE_CONTROL)}")
     p = RESTYLE
@@ -280,9 +292,46 @@ def restyle(video: str, prompt: str, out_path: str, reference_image: str | None 
         q = urllib.parse.urlencode({"filename": vid["filename"], "subfolder": vid.get("subfolder", ""), "type": vid.get("type", "output")})
         part = work / f"out{k:02d}.mp4"; part.write_bytes(_get(base, f"/view?{q}", 300)); outs.append(part)
     out = Path(out_path).expanduser(); out.parent.mkdir(parents=True, exist_ok=True)
+    joined = work / "joined.mp4"
     if len(outs) == 1:
-        out.write_bytes(outs[0].read_bytes())
+        joined = outs[0]
     else:
         lst = work / "list.txt"; lst.write_text("".join(f"file '{o}'\n" for o in outs))
-        subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-f", "concat", "-safe", "0", "-i", str(lst), "-c", "copy", str(out)], check=True, timeout=600)
+        subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-f", "concat", "-safe", "0", "-i", str(lst), "-c", "copy", str(joined)], check=True, timeout=600)
+    if stock:
+        return apply_stock(str(joined), str(out), stock)
+    out.write_bytes(joined.read_bytes())
+    return str(out)
+
+
+# ---- film stock: the look, applied deterministically after (or instead of) the model ----------
+# A distilled video model resolves toward clean output; grain, fade, softness and weave are
+# better done by hand, identically every time. Each entry is an ffmpeg filter chain.
+STOCKS = {
+    "16mm": ("fps=18,"
+             "eq=saturation=0.78:contrast=1.08:brightness=0.02,"
+             "curves=preset=vintage,"
+             "colorbalance=rs=0.06:gs=0.02:bs=-0.05:rm=0.04:bm=-0.04,"
+             "gblur=sigma=0.6,"
+             "noise=alls=22:allf=t+u,"
+             "vignette=PI/4.5,"
+             "crop=iw-8:ih-8:4+4*sin(n/7):4+3*cos(n/11),"     # gate weave
+             "scale=trunc(iw/2)*2:trunc(ih/2)*2"),
+    "super8": ("fps=16,eq=saturation=0.7:contrast=1.12,curves=preset=vintage,gblur=sigma=0.9,"
+               "noise=alls=30:allf=t+u,vignette=PI/4,crop=iw-12:ih-12:6+6*sin(n/5):6+4*cos(n/9),scale=trunc(iw/2)*2:trunc(ih/2)*2"),
+    "vhs":   ("scale=iw*0.6:ih*0.6,scale=iw/0.6:ih/0.6:flags=neighbor,eq=saturation=1.15:contrast=0.95,"
+              "chromashift=cbh=3:crv=-3,noise=alls=12:allf=t,gblur=sigma=0.4"),
+    "noir":  ("hue=s=0,eq=contrast=1.25:brightness=-0.03,curves=preset=strong_contrast,noise=alls=14:allf=t+u,vignette=PI/4"),
+}
+
+
+def apply_stock(video: str, out_path: str, stock: str) -> str:
+    """Run a film-stock look over a video (CPU, seconds). Returns out_path."""
+    import subprocess
+    if stock not in STOCKS:
+        raise ValueError(f"stock must be one of {sorted(STOCKS)}")
+    out = Path(out_path).expanduser(); out.parent.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", str(Path(video).expanduser()),
+                    "-vf", STOCKS[stock], "-c:v", "libx264", "-crf", "17", "-pix_fmt", "yuv420p", "-an", str(out)],
+                   check=True, timeout=1800)
     return str(out)
