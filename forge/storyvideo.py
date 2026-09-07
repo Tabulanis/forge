@@ -267,3 +267,46 @@ def inbetweens(keyframes: list[str], hero: str, out_dir: str, base: str = DEFAUL
                         str(p), preset="edit", references=[keyframes[i], keyframes[i + 1]], seed=seed + i, width=w, height=h, base=base)
         expanded += [str(p), keyframes[i + 1]]
     return expanded
+
+
+# ---- reverse: from a video to a storyboard, then recast -------------------------------------------
+def decompose(video: str, out_dir: str, every: float = 2.0, max_frames: int = 12) -> list[str]:
+    """Keyframes out of an existing clip: scene cuts first, then evenly spaced pulls to fill in.
+    Returns ordered PNG paths."""
+    import subprocess, re
+    out = Path(out_dir).expanduser(); out.mkdir(parents=True, exist_ok=True)
+    src = str(Path(video).expanduser())
+    _, _, fps, dur = _probe(src)
+    # scene-cut times
+    r = subprocess.run(["ffmpeg", "-hide_banner", "-i", src, "-vf", "select='gt(scene,0.35)',showinfo", "-f", "null", "-"],
+                       capture_output=True, text=True, timeout=600)
+    cuts = [float(m) for m in re.findall(r"pts_time:([0-9.]+)", r.stderr)]
+    times = sorted({0.0, *cuts, *[t for t in [i * every for i in range(int(dur / every) + 1)] if t < dur - 0.05], max(0.0, dur - 0.1)})
+    if len(times) > max_frames:   # thin evenly, keep first and last
+        step = (len(times) - 1) / (max_frames - 1); times = [times[round(i * step)] for i in range(max_frames)]
+    frames = []
+    for i, t in enumerate(times):
+        p = out / f"src{i + 1:02d}.png"
+        subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-ss", f"{t:.3f}", "-i", src, "-frames:v", "1", "-update", "1", str(p)], check=True, timeout=120)
+        frames.append(str(p))
+    return frames
+
+
+def recast(src_frames: list[str], hero: str, out_dir: str, base: str = DEFAULT_URL,
+           width: int | None = None, height: int | None = None, seed: int | None = None,
+           keep: str = "everything else — the place, the camera, the pose, the light") -> list[str]:
+    """Swap the person in each source frame for the hero's character, keeping the shot. Chained so the
+    result continues shot to shot. Returns the recast keyframes."""
+    out = Path(out_dir).expanduser(); out.mkdir(parents=True, exist_ok=True)
+    w, h = width or STORY["board_w"], height or STORY["board_h"]
+    seed = random.randrange(2 ** 31) if seed is None else int(seed)
+    frames = []
+    for i, f in enumerate(src_frames):
+        p = out / f"key{i + 1:02d}.png"
+        refs = [f, hero] + ([frames[-1]] if frames else [])
+        prev = " Image 3 is the previous recast shot: keep the character exactly as there." if frames else ""
+        prompt = (f"Replace the person in image 1 with the character from image 2, in the same pose and position, keeping {keep}."
+                  f"{prev} {RULES}")
+        imagegen.render(prompt, str(p), preset="edit", references=refs, seed=seed + i, width=w, height=h, base=base)
+        frames.append(str(p))
+    return frames
