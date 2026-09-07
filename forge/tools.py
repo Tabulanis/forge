@@ -762,8 +762,9 @@ def _generate_video(ws_root: str, prompt: str, image: str = "", seconds=5,
         if secs > 8:
             # long form = a small DRAFT in chained chunks (continuity from frame to frame). Cheap to
             # judge motion and story; finish_video refines and smooths the one the user approves.
-            path = videogen.long_video(prompt, str(out), seconds=secs, image=img, refine=False, interpolate=1, seed=seed, base=base)
-            return (f"Draft saved to {path} ({secs:.0f}s, small {videogen.LONG['width']}x{videogen.LONG['height']} preview, took {time.time() - t0:.0f}s). "
+            path = videogen.long_video2(prompt, str(out), seconds=secs, reference_image=img, seed=seed, base=base)
+            return (f"Draft saved to {path} ({secs:.0f}s, small {videogen.LONG2['width']}x{videogen.LONG2['height']} preview at "
+                    f"{videogen.LONG2['fps']} fps, motion carried across passes; took {time.time() - t0:.0f}s). "
                     f"Tell the user where it is and that it's a draft for judging motion — finish_video makes it sharp and smooth.")
         preset = "quality" if str(quality).lower() in ("best", "quality", "high") else "fast"
         path = videogen.render(prompt, str(out), image=img, seconds=secs, seed=seed, base=base, preset=preset)
@@ -2610,7 +2611,8 @@ def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provi
             description="Make a video clip from a text prompt — or animate a still: give `image` "
                         "(a workspace path) and it becomes the first frame. Up to 8 s renders "
                         "full size (1280x704, ~25 s per second of clip). Longer (9-60 s) makes a "
-                        "small DRAFT in continuous chunks — cheap, for judging motion and story — "
+                        "small DRAFT in passes that hand motion to each other (~30 s per second of "
+                        "clip) — cheap, for judging motion and story — "
                         "then finish_video makes the approved draft sharp and smooth. Saves an "
                         "MP4 into the workspace. Describe motion and camera, not just a scene.",
             parameters={

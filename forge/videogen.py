@@ -506,3 +506,93 @@ def finish_video(video: str, prompt: str, out_path: str, interpolate: int = 2, f
     else:
         out.write_bytes(joined.read_bytes())
     return str(out)
+
+
+# ---- long form v2: VACE continuation (motion memory across chunks) ---------------------------------
+# Wan 2.1 VACE extends video: give it the tail of the previous chunk as the first frames of the
+# control video, with a mask that is 0 over those frames (keep) and 1 over the rest (generate), and it
+# continues the motion instead of restarting from a still. Chunks stay small; the finish stack
+# (finish_video) brings size and frame rate back.
+LONG2 = {"width": 448, "height": 256, "chunk_frames": 81, "overlap": 13, "fps": 16}
+
+
+def _vace_extend_workflow(prompt: str, seed: int, width: int, height: int, frames: int,
+                          tail_name: str | None, overlap: int, ref_name: str | None) -> dict:
+    p = RESTYLE
+    w = {
+        "1": {"class_type": "UnetLoaderGGUF", "inputs": {"unet_name": p["unet"]}},
+        "1l": {"class_type": "LoraLoaderModelOnly", "inputs": {"model": ["1", 0], "lora_name": p["lora"], "strength_model": 1.0}},
+        "2": {"class_type": "CLIPLoader", "inputs": {"clip_name": p["clip"], "type": "wan", "device": "default"}},
+        "3": {"class_type": "VAELoader", "inputs": {"vae_name": p["vae"]}},
+        "4": {"class_type": "ModelSamplingSD3", "inputs": {"model": ["1l", 0], "shift": p["shift"]}},
+        "5": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["2", 0], "text": prompt}},
+        "6": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["2", 0], "text": "static, frozen, still image, subtitles, text, watermark, logo, extra fingers, deformed hands, duplicated person"}},
+        "7": {"class_type": "WanVaceToVideo", "inputs": {"positive": ["5", 0], "negative": ["6", 0], "vae": ["3", 0],
+              "width": width, "height": height, "length": frames, "batch_size": 1, "strength": 1.0}},
+        "8": {"class_type": "KSampler", "inputs": {"model": ["4", 0], "seed": seed, "steps": p["steps"], "cfg": p["cfg"],
+              "sampler_name": p["sampler"], "scheduler": p["scheduler"], "denoise": 1.0,
+              "positive": ["7", 0], "negative": ["7", 1], "latent_image": ["7", 2]}},
+        "9t": {"class_type": "TrimVideoLatent", "inputs": {"samples": ["8", 0], "trim_amount": ["7", 3]}},
+        "9": {"class_type": "VAEDecode", "inputs": {"samples": ["9t", 0], "vae": ["3", 0]}},
+        "10": {"class_type": "CreateVideo", "inputs": {"images": ["9", 0], "fps": 24}},
+        "11": {"class_type": "SaveVideo", "inputs": {"video": ["10", 0], "filename_prefix": "merge/vace_ext", "format": "auto", "codec": "auto"}},
+    }
+    if tail_name:
+        # control video = the previous tail (overlap frames) padded with grey to `frames`; mask = 0 on the tail, 1 after
+        w["t0"] = {"class_type": "LoadVideo", "inputs": {"file": tail_name}}
+        w["t1"] = {"class_type": "GetVideoComponents", "inputs": {"video": ["t0", 0]}}
+        w["t2"] = {"class_type": "ImageScale", "inputs": {"image": ["t1", 0], "upscale_method": "lanczos", "width": width, "height": height, "crop": "center"}}
+        w["g0"] = {"class_type": "EmptyImage", "inputs": {"width": width, "height": height, "batch_size": frames - overlap, "color": 8355711}}   # 0x7F7F7F grey
+        w["c0"] = {"class_type": "ImageBatch", "inputs": {"image1": ["t2", 0], "image2": ["g0", 0]}}
+        w["m0"] = {"class_type": "SolidMask", "inputs": {"value": 0.0, "width": width, "height": height}}
+        w["m1"] = {"class_type": "SolidMask", "inputs": {"value": 1.0, "width": width, "height": height}}
+        w["mb0"] = {"class_type": "RepeatImageBatch", "inputs": {"image": ["mk0", 0], "amount": overlap}}
+        w["mb1"] = {"class_type": "RepeatImageBatch", "inputs": {"image": ["mk1", 0], "amount": frames - overlap}}
+        w["mk0"] = {"class_type": "MaskToImage", "inputs": {"mask": ["m0", 0]}}
+        w["mk1"] = {"class_type": "MaskToImage", "inputs": {"mask": ["m1", 0]}}
+        w["mc"] = {"class_type": "ImageBatch", "inputs": {"image1": ["mb0", 0], "image2": ["mb1", 0]}}
+        w["mm"] = {"class_type": "ImageToMask", "inputs": {"image": ["mc", 0], "channel": "red"}}
+        w["7"]["inputs"]["control_video"] = ["c0", 0]
+        w["7"]["inputs"]["control_masks"] = ["mm", 0]
+    if ref_name:
+        w["r0"] = {"class_type": "LoadImage", "inputs": {"image": ref_name}}
+        w["7"]["inputs"]["reference_image"] = ["r0", 0]
+    return w
+
+
+def long_video2(prompt: str, out_path: str, seconds: float = 12.0, reference_image: str | None = None,
+                width: int | None = None, height: int | None = None, fps_declared: int | None = None,
+                seed: int | None = None, base: str = DEFAULT_URL) -> str:
+    """Long DRAFT with motion memory: VACE chunks, each continuing from the last `overlap` frames of
+    the previous one. Output declared at fps_declared (default 16 — 1.5x slower than model motion;
+    24 = true speed, 10 = long and slow). Returns out_path."""
+    import subprocess, tempfile
+    L = LONG2
+    w, h = width or L["width"], height or L["height"]
+    fps_d = fps_declared or L["fps"]
+    seed = random.randrange(2 ** 31) if seed is None else int(seed)
+    work = Path(tempfile.mkdtemp(prefix="longvid2-"))
+    total = max(5, int(round(seconds * fps_d)))          # frames of output at the declared rate
+    ref = _upload(base, Path(reference_image).expanduser()) if reference_image else None
+    chunks: list[Path] = []; tail: Path | None = None; got = 0; k = 0
+    while got < total:
+        n = min(L["chunk_frames"], total - got + (L["overlap"] if tail else 0))
+        n = (n // 4) * 4 + 1 if n >= 5 else 5
+        tail_name = _upload(base, tail) if tail else None
+        wf = _vace_extend_workflow(prompt, seed + k, w, h, n, tail_name, L["overlap"], ref)
+        part = _run(base, wf, f"long clip: pass {k + 1}", work / f"chunk{k:02d}.mp4")
+        # new frames only (drop the overlap that repeats the previous tail)
+        keep = work / f"keep{k:02d}.mp4"
+        skip = L["overlap"] if tail else 0
+        subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", str(part), "-vf", f"select=gte(n\\,{skip}),setpts=N/FRAME_RATE/TB",
+                        "-c:v", "libx264", "-crf", "14", "-pix_fmt", "yuv420p", "-an", str(keep)], check=True, timeout=600)
+        chunks.append(keep); got += n - skip
+        tail = work / f"tail{k:02d}.mp4"
+        subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", str(part), "-vf", f"select=gte(n\\,{n - L['overlap']}),setpts=N/FRAME_RATE/TB",
+                        "-c:v", "libx264", "-crf", "14", "-pix_fmt", "yuv420p", "-an", str(tail)], check=True, timeout=600)
+        k += 1
+    lst = work / "list.txt"; lst.write_text("".join(f"file '{c}'\n" for c in chunks))
+    out = Path(out_path).expanduser(); out.parent.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-f", "concat", "-safe", "0", "-i", str(lst),
+                    "-vf", f"setpts=N/({fps_d}*TB)", "-r", str(fps_d), "-c:v", "libx264", "-crf", "14", "-pix_fmt", "yuv420p", "-an", str(out)], check=True, timeout=600)
+    return str(out)
