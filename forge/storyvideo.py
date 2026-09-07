@@ -212,7 +212,8 @@ def check_frame(hero: str, frame: str, shot: str) -> dict:
 
 
 RULES = ("The character appears EXACTLY ONCE in the frame. Exactly one of each landmark. "
-         "Anything the character has left behind (a boat, a chair) is empty. ")
+         "Anything the character has left behind (a boat, a chair) is empty. Every door, window and wall belongs to a "
+         "building that is visible in the frame and matches the place; nothing stands on its own. ")
 
 
 def check_transition(prev_frame: str, frame: str, prev_beat: str, beat: str, cause: str = "") -> dict:
@@ -225,6 +226,24 @@ def check_transition(prev_frame: str, frame: str, prev_beat: str, beat: str, cau
          "prefixed with '- '. If it follows, reply exactly: OK")
     try:
         ans = _look([prev_frame, frame], q)
+    except Exception as e:
+        return {"ok": True, "issues": [], "note": f"check skipped: {type(e).__name__}"}
+    issues = [ln[2:].strip() for ln in ans.splitlines() if ln.strip().startswith("- ")]
+    return {"ok": ans.strip().upper().startswith("OK") or not issues, "issues": issues, "raw": ans[:600]}
+
+
+def check_place(place: str, frame: str, shot: str) -> dict:
+    """Structure check: do the buildings, boat and landmarks in the frame belong to the place, and does every
+    door/window/wall belong to a building that is actually there?"""
+    q = ("Image 1 is the PLACE (no people): its buildings, boat, quay and landmarks are the only ones that exist. Image 2 is a "
+         f"keyframe that must be set in that place, from this camera position: \"{shot}\".\n"
+         "List only real problems, one per line prefixed with '- ': a building or boat of a different design than image 1; "
+         "a door, window or wall that is not part of a building visible in the frame (a door standing on its own, a door on "
+         "the wrong building, a door where image 1 has a wall); a landmark duplicated or missing; a new structure that image 1 "
+         "does not have. Do NOT flag what the camera position itself causes (size, angle, cropping). If the structures are "
+         "consistent, reply exactly: OK")
+    try:
+        ans = _look([place, frame], q)
     except Exception as e:
         return {"ok": True, "issues": [], "note": f"check skipped: {type(e).__name__}"}
     issues = [ln[2:].strip() for ln in ans.splitlines() if ln.strip().startswith("- ")]
@@ -260,6 +279,10 @@ def storyboard_checked(hero: str, shots: list[str], out_dir: str, base: str = DE
         for attempt in range(retries + 1):
             imagegen.render(prompt, str(p), preset="edit", references=refs, seed=seed + i + 100 * attempt, width=w, height=h, base=base)
             chk = check_frame(hero, str(p), shot)
+            if chk["ok"] and place:
+                pc = check_place(place, str(p), shot)
+                if not pc["ok"]:
+                    chk = {"ok": False, "issues": ["structure: " + x for x in pc["issues"]], "raw": pc.get("raw", "")}
             if chk["ok"] and frames:
                 tr = check_transition(frames[-1], str(p), shots[i - 1], shot)
                 if not tr["ok"]:
