@@ -786,9 +786,12 @@ def _story_video(ws_root: str, keyframes: list, hero: str, prompt: str, filename
         draft = storyvideo.fill(keys, prompt, str(h), str(out), base=base, seed=seed, camera=[str(c) for c in camera] if camera else None)
         msg = f"Draft saved to {draft} ({time.time() - t0:.0f}s; small, {len(keys) - 1} segments pinned to your keyframes, hero as the identity anchor)."
         if upscale:
+            # small to big, one smooth climb: guided 2x held to the hero, then refine 2x + frame doubling
             up = str(out.with_name(out.stem + "-up.mp4"))
             storyvideo.guided_up(draft, prompt, str(h), up, base=base, seed=seed)
-            msg += f" Guided 2x upscale saved to {up} ({time.time() - t0:.0f}s total)."
+            fin = str(out.with_name(out.stem + "-finished.mp4"))
+            videogen.finish_video(up, prompt, fin, seed=seed, base=base)
+            msg += f" Climbed to full frame: {fin} (guided 2x then refine 2x + frame doubling; {time.time() - t0:.0f}s total)."
     except Exception as e:
         return f"Error making the story video: {str(e)[:500]}"
     return msg + " Tell the user where it is; it's a draft to judge motion and continuity."
@@ -2725,8 +2728,10 @@ def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provi
             description="Turn approved keyframes into a small draft video: each pair of keyframes is "
                         "filled with motion, pinned at both ends, with the hero picture holding the "
                         "character's identity throughout (no drift across the joins). Optional `camera` "
-                        "notes per segment ('slow pan left', 'dolly in'). `upscale=true` adds a guided 2x "
-                        "pass that keeps identity to the hero. About 1.5 min per segment for the draft.",
+                        "notes per segment ('slow pan left', 'dolly in'). `upscale=true` (only after the user "
+                        "approves the draft) climbs it small-to-big in one go: guided 2x held to the hero, then "
+                        "refine 2x and frame doubling, to ~1800x1000. About 1.5 min per segment for the draft; "
+                        "the climb is roughly 10 min per 10 s.",
             parameters={"type": "object",
                         "properties": {"keyframes": {"type": "array", "items": {"type": "string"}, "description": "Workspace paths of the approved keyframes, in order"},
                                        "hero": {"type": "string", "description": "Workspace path of the hero picture"},
