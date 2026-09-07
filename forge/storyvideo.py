@@ -472,3 +472,57 @@ def bridge(clip_a: str, clip_b: str, prompt: str, out_path: str, hero: str | Non
     lst = work / "list.txt"; lst.write_text(f"file '{a}'\nfile '{gen}'\nfile '{b}'\n")
     subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-f", "concat", "-safe", "0", "-i", str(lst), "-vf", f"fps={fps}", "-c:v", "libx264", "-crf", "14", "-pix_fmt", "yuv420p", "-an", str(out)], check=True, timeout=900)
     return str(out)
+
+
+# ---- beats: the story in small steps of time ---------------------------------------------------------
+def _ask(question: str, max_tokens: int = 900) -> str:
+    """Plain-text question to the house brain (same endpoint her eyes use)."""
+    import urllib.request
+    from .config import load_config
+    from .media import load_media_config
+    mc = load_media_config(load_config())
+    url = (getattr(mc, "vision_url", "") or "http://127.0.0.1:8087/v1").rstrip("/") + "/chat/completions"
+    body = {"model": getattr(mc, "vision_model", "") or "brain", "messages": [{"role": "user", "content": question}],
+            "max_tokens": max_tokens, "temperature": 0.3, "chat_template_kwargs": {"enable_thinking": False}}
+    req = urllib.request.Request(url, json.dumps(body).encode(), {"Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=240) as r:
+        return json.load(r)["choices"][0]["message"]["content"].strip()
+
+
+def beat_sheet(idea: str, seconds: float, beat_seconds: float = 2.5, character: str = "the character",
+               scene_map: str = "") -> list[dict]:
+    """The shot as beats: one every `beat_seconds`, each the plausible NEXT moment of the one before —
+    one small physical change, same place unless the beat is a cut, with a camera note.
+    Returns [{"t": s, "beat": ..., "camera": ...}, ...] including t=0 and t=seconds."""
+    n = max(2, int(round(seconds / beat_seconds)) + 1)
+    q = (f"Plan a single continuous video shot as {n} keyframes, one every {beat_seconds:.1f} seconds, from t=0 to t={seconds:.0f} s.\n"
+         f"The shot: {idea}\nCharacter: {character}.\n" + (f"Scene map (fixed, never contradict it): {scene_map}\n" if scene_map else "") +
+         f"Rules: each keyframe is what is physically true {beat_seconds:.1f} seconds after the previous one — ONE small change "
+         "(a few steps, a hand on a handle, a turn of the head), never a jump to a new place; the same place unless a beat "
+         "explicitly says CUT; the character appears exactly once; what they leave behind stays where it was, empty. "
+         "Describe what the camera sees, not the story. Give a short camera note per keyframe (e.g. 'static wide', "
+         "'slow pan left following', 'push in').\n"
+         "Answer as JSON only: a list of objects with keys t (seconds), beat (one or two sentences), camera (a few words).")
+    raw = _ask(q)
+    import re
+    m = re.search(r"\[.*\]", raw, re.S)
+    beats = json.loads(m.group(0)) if m else []
+    beats = [b for b in beats if isinstance(b, dict) and b.get("beat")]
+    if not beats:
+        raise RuntimeError("the brain did not return a beat list: " + raw[:200])
+    for i, b in enumerate(beats):
+        b.setdefault("t", round(i * beat_seconds, 1)); b.setdefault("camera", "")
+    return beats
+
+
+def story_from_beats(beats: list[dict], hero: str, out_dir: str, prompt: str, out_path: str, base: str = DEFAULT_URL,
+                     place: str | None = None, scene_map: str = "", seed: int | None = None,
+                     draft_w: int | None = None, draft_h: int | None = None, fps_declared: int | None = None) -> dict:
+    """Beats -> chained, checked keyframes -> through-the-event fill sized to the beat spacing. Returns paths + reports."""
+    fps_d = fps_declared or STORY["fps"]
+    shots = [f"t={b['t']}s: {b['beat']} Camera: {b.get('camera', '')}." for b in beats]
+    keys, reports = storyboard_checked(hero, shots, out_dir, base=base, seed=seed, place=place, chain=True, scene=scene_map)
+    spacing = (beats[1]["t"] - beats[0]["t"]) if len(beats) > 1 else 2.5
+    half = max(8, int(round(spacing * fps_d)))          # frames per interval at the declared rate
+    draft = fill_bidir(keys, prompt, hero, out_path, base=base, width=draft_w, height=draft_h, half=half, fps_declared=fps_d, seed=seed)
+    return {"keyframes": keys, "reports": reports, "draft": draft, "beats": beats}
