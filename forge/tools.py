@@ -756,15 +756,47 @@ def _generate_video(ws_root: str, prompt: str, image: str = "", seconds=5,
     ok, why = videogen.available(base)
     if not ok:
         return f"Error: {why}"
-    secs = max(2.0, min(float(seconds or 5), 8.0))
+    secs = max(2.0, min(float(seconds or 5), 60.0))
     try:
         t0 = time.time()
+        if secs > 8:
+            # long form = a small DRAFT in chained chunks (continuity from frame to frame). Cheap to
+            # judge motion and story; finish_video refines and smooths the one the user approves.
+            path = videogen.long_video(prompt, str(out), seconds=secs, image=img, refine=False, interpolate=1, seed=seed, base=base)
+            return (f"Draft saved to {path} ({secs:.0f}s, small {videogen.LONG['width']}x{videogen.LONG['height']} preview, took {time.time() - t0:.0f}s). "
+                    f"Tell the user where it is and that it's a draft for judging motion — finish_video makes it sharp and smooth.")
         preset = "quality" if str(quality).lower() in ("best", "quality", "high") else "fast"
         path = videogen.render(prompt, str(out), image=img, seconds=secs, seed=seed, base=base, preset=preset)
     except Exception as e:
         return f"Error generating video: {str(e)[:500]}"
     return (f"Video saved to {path} ({secs:.0f}s clip, took {time.time() - t0:.0f}s). "
             f"You can't watch it yourself yet — tell the user where it is.")
+
+
+def _finish_video(ws_root: str, video: str, prompt: str, filename: str = "", seed=None, media=None) -> str:
+    """Refine + smooth an approved small draft (forge.videogen.finish_video)."""
+    from . import videogen
+    root = Path(ws_root).resolve()
+    src = (root / video).resolve() if not str(video).startswith("/") else Path(video).resolve()
+    if (src != root and root not in src.parents) or not src.is_file():
+        return f"Error: video not found in the workspace: {video}"
+    name = filename if filename else f"generated/{src.stem}-finished.mp4"
+    name = name if name.lower().endswith(".mp4") else name + ".mp4"
+    out = (root / name).resolve()
+    if root != out and root not in out.parents:
+        return f"Error: output path is outside the workspace: {out}"
+    try:
+        from .config import load_config
+        from .media import load_media_config
+        base = getattr(load_media_config(load_config()), "videogen_url", "") or videogen.DEFAULT_URL
+    except Exception:
+        base = videogen.DEFAULT_URL
+    try:
+        t0 = time.time()
+        path = videogen.finish_video(str(src), prompt, str(out), seed=seed, base=base)
+    except Exception as e:
+        return f"Error finishing video: {str(e)[:500]}"
+    return f"Finished video saved to {path} (2x sharper, realism pass, frame-doubled; took {time.time() - t0:.0f}s). Tell the user where it is."
 
 
 _INDEX_REGISTRY: dict = {}
@@ -2575,19 +2607,18 @@ def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provi
         ),
         Tool(
             name="generate_video",
-            description="Make a short video clip (default 5 s, 1280x704, 24 fps) from a "
-                        "text prompt — or animate a still: give `image` (a workspace "
-                        "path) and it becomes the first frame. Runs on the render box "
-                        "over the wire: about 25 s per second of clip at the default "
-                        "'fast' quality, roughly 4x longer at 'best'. Saves an MP4 into "
-                        "the workspace and returns the path. Describe motion and camera, "
-                        "not just a scene.",
+            description="Make a video clip from a text prompt — or animate a still: give `image` "
+                        "(a workspace path) and it becomes the first frame. Up to 8 s renders "
+                        "full size (1280x704, ~25 s per second of clip). Longer (9-60 s) makes a "
+                        "small DRAFT in continuous chunks — cheap, for judging motion and story — "
+                        "then finish_video makes the approved draft sharp and smooth. Saves an "
+                        "MP4 into the workspace. Describe motion and camera, not just a scene.",
             parameters={
                 "type": "object",
                 "properties": {
                     "prompt": {"type": "string", "description": "What happens in the clip — subject, motion, camera"},
                     "image": {"type": "string", "description": "Optional workspace path of a still to animate (first frame)"},
-                    "seconds": {"type": "number", "description": "Clip length in seconds, 2-8 (default 5)"},
+                    "seconds": {"type": "number", "description": "Clip length in seconds: 2-8 full size, 9-60 as a small draft (default 5)"},
                     "filename": {"type": "string", "description": "Optional output name; defaults to a slug"},
                     "seed": {"type": "integer", "description": "Optional seed for a repeatable clip"},
                     "quality": {"type": "string", "enum": ["fast", "best"],
@@ -2599,6 +2630,23 @@ def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provi
                       _generate_video(str(ws.root), prompt, image, seconds, filename, seed, quality)),
             needs_permission=True,
             summarize=lambda a: f"generate video: {a.get('prompt', '')[:60]}",
+        ),
+        Tool(
+            name="finish_video",
+            description="Finishing pass for a small draft video the user approved: doubles the "
+                        "resolution with a real refinement pass (the model puts detail back — a "
+                        "resize can't), adds a photographic realism pass, keeps the look constant "
+                        "across the whole clip, and doubles the frame rate with interpolation. Give "
+                        "the same `prompt` the draft was made with. About 1.5 min per 3 s of clip.",
+            parameters={"type": "object",
+                        "properties": {"video": {"type": "string", "description": "Workspace path of the draft (small) video"},
+                                       "prompt": {"type": "string", "description": "The prompt the draft was made with"},
+                                       "filename": {"type": "string", "description": "Optional output name"},
+                                       "seed": {"type": "integer", "description": "Optional seed"}},
+                        "required": ["video", "prompt"]},
+            run=guard(lambda video, prompt, filename="", seed=None: _finish_video(str(ws.root), video, prompt, filename, seed)),
+            needs_permission=True,
+            summarize=lambda a: f"finish video: {a.get('video', '')}",
         ),
         Tool(
             name="extract_pose",

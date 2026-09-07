@@ -335,3 +335,174 @@ def apply_stock(video: str, out_path: str, stock: str) -> str:
                     "-vf", STOCKS[stock], "-c:v", "libx264", "-crf", "17", "-pix_fmt", "yuv420p", "-an", str(out)],
                    check=True, timeout=1800)
     return str(out)
+
+
+# ---- long form: small and long, then refined up, then smoothed ---------------------------------
+# 1. Render at ~640x352 in chunks of 81 frames; every chunk starts from the last frame of the one
+#    before (first-frame conditioning), which is what keeps the story continuous.
+# 2. Refine: each chunk is scaled 2x, encoded back to latent, and re-sampled by the same model at
+#    low denoise with a realism prompt. That puts real detail back (a resize can't) and, because
+#    the pass is low-noise and the prompt is constant, keeps the look identical across chunks.
+# 3. Join (dropping each chunk's duplicated first frame) and RIFE-interpolate 2x for smoothness.
+LONG = {"width": 640, "height": 352, "chunk_frames": 81, "refine_steps": 6, "refine_denoise": 0.28,
+        "realism": ", photographic, natural skin texture, real fabric and surfaces, subtle film grain, no plastic sheen"}
+
+
+def _refine_workflow(src_name: str, prompt: str, seed: int, width: int, height: int, steps: int, denoise: float) -> dict:
+    p = PRESETS["fast"]
+    return {
+        "1": {"class_type": "UNETLoader", "inputs": {"unet_name": p["unet"], "weight_dtype": "default"}},
+        "13": {"class_type": "LoraLoaderModelOnly", "inputs": {"model": ["1", 0], "lora_name": p["lora"], "strength_model": 0.6}},
+        "2": {"class_type": "CLIPLoader", "inputs": {"clip_name": p["clip"], "type": p["clip_type"], "device": "default"}},
+        "3": {"class_type": "VAELoader", "inputs": {"vae_name": p["vae"]}},
+        "4": {"class_type": "ModelSamplingSD3", "inputs": {"model": ["13", 0], "shift": p["shift"]}},
+        "5": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["2", 0], "text": prompt}},
+        "6": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["2", 0], "text": _NEGATIVE}},
+        "v0": {"class_type": "LoadVideo", "inputs": {"file": src_name}},
+        "v1": {"class_type": "GetVideoComponents", "inputs": {"video": ["v0", 0]}},
+        "v2": {"class_type": "ImageScale", "inputs": {"image": ["v1", 0], "upscale_method": "lanczos", "width": width, "height": height, "crop": "disabled"}},
+        "7": {"class_type": "VAEEncode", "inputs": {"pixels": ["v2", 0], "vae": ["3", 0]}},
+        "8": {"class_type": "KSampler", "inputs": {"model": ["4", 0], "seed": seed, "steps": steps, "cfg": 1.0,
+              "sampler_name": p["sampler"], "scheduler": p["scheduler"], "denoise": denoise,
+              "positive": ["5", 0], "negative": ["6", 0], "latent_image": ["7", 0]}},
+        "9": {"class_type": "VAEDecode", "inputs": {"samples": ["8", 0], "vae": ["3", 0]}},
+        "10": {"class_type": "CreateVideo", "inputs": {"images": ["9", 0], "fps": p["fps"]}},
+        "11": {"class_type": "SaveVideo", "inputs": {"video": ["10", 0], "filename_prefix": "merge/refine", "format": "auto", "codec": "auto"}},
+    }
+
+
+def _rife_workflow(src_name: str, multiplier: int, fps_out: float) -> dict:
+    return {
+        "1": {"class_type": "LoadVideo", "inputs": {"file": src_name}},
+        "2": {"class_type": "GetVideoComponents", "inputs": {"video": ["1", 0]}},
+        "3": {"class_type": "RIFE VFI", "inputs": {"ckpt_name": "rife49.pth", "frames": ["2", 0], "clear_cache_after_n_frames": 10,
+              "multiplier": multiplier, "fast_mode": True, "ensemble": True, "scale_factor": 1.0, "dtype": "float32", "torch_compile": False, "batch_size": 1}},
+        "4": {"class_type": "CreateVideo", "inputs": {"images": ["3", 0], "fps": fps_out}},
+        "11": {"class_type": "SaveVideo", "inputs": {"video": ["4", 0], "filename_prefix": "merge/rife", "format": "mp4", "codec": "h264"}},
+    }
+
+
+def _run(base: str, wf: dict, label: str, out_file: Path, node: str = "11", timeout: int = 3600) -> Path:
+    """Post a workflow, wait, download the named node's video output to out_file."""
+    from . import renderbox
+    cid = renderbox.new_client_id()
+    pid = _post(base, "/prompt", {"prompt": wf, "client_id": cid}, 30)["prompt_id"]
+    renderbox.start_watch(base, cid, pid, wf, label)
+    t0 = time.time()
+    try:
+        while True:
+            h = json.loads(_get(base, f"/history/{pid}")).get(pid)
+            st = (h or {}).get("status", {})
+            if st.get("completed"):
+                break
+            if st.get("status_str") == "error":
+                msgs = [m[1].get("exception_message", "") for m in st.get("messages", []) if m[0] == "execution_error"]
+                raise RuntimeError(f"{label}: " + ("; ".join(msgs) or json.dumps(st))[:400])
+            if time.time() - t0 > timeout:
+                raise TimeoutError(f"{label} took over {timeout} s")
+            time.sleep(2.0)
+    finally:
+        renderbox.finish(pid)
+    vid = None
+    for key in ("images", "gifs", "videos"):
+        if h["outputs"].get(node, {}).get(key):
+            vid = h["outputs"][node][key][0]; break
+    if not vid:
+        raise RuntimeError(f"{label} finished but produced no file")
+    q = urllib.parse.urlencode({"filename": vid["filename"], "subfolder": vid.get("subfolder", ""), "type": vid.get("type", "output")})
+    out_file.write_bytes(_get(base, f"/view?{q}", 600))
+    return out_file
+
+
+def long_video(prompt: str, out_path: str, seconds: float = 12.0, image: str | None = None,
+               width: int | None = None, height: int | None = None, refine: bool = True,
+               interpolate: int = 2, fps_out: float | None = None, seed: int | None = None,
+               base: str = DEFAULT_URL, on_progress=None) -> str:
+    """Long clip: chained small chunks -> optional 2x refine -> optional RIFE. Returns out_path."""
+    import subprocess, tempfile
+    p = PRESETS["fast"]; L = LONG
+    w, h = width or L["width"], height or L["height"]
+    seed = random.randrange(2 ** 31) if seed is None else int(seed)
+    work = Path(tempfile.mkdtemp(prefix="longvid-"))
+    total = max(5, int(round(seconds * p["fps"])))
+    chunks: list[Path] = []
+    start_img = Path(image).expanduser() if image else None
+    done = 0
+    k = 0
+    while done < total:
+        n = min(L["chunk_frames"], total - done)
+        n = (n // 4) * 4 + 1 if n >= 5 else 5
+        start_name = _upload(base, start_img) if start_img else None
+        wf = _workflow(prompt, seed + k, w, h, n, start_name, "fast", None)
+        wf["11"]["inputs"]["filename_prefix"] = "merge/longchunk"
+        part = _run(base, wf, f"long clip: chunk {k + 1}", work / f"chunk{k:02d}.mp4")
+        chunks.append(part)
+        # the next chunk starts where this one ended
+        last = work / f"last{k:02d}.png"
+        subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-sseof", "-0.05", "-i", str(part), "-frames:v", "1", "-update", "1", str(last)], check=True, timeout=120)
+        start_img = last
+        done += (n - 1) if k > 0 else n
+        k += 1
+    if refine:
+        refined = []
+        for i, ch in enumerate(chunks):
+            rw = _refine_workflow(_upload(base, ch), prompt + L["realism"], seed, w * 2, h * 2, L["refine_steps"], L["refine_denoise"])
+            refined.append(_run(base, rw, f"long clip: refine {i + 1}/{len(chunks)}", work / f"ref{i:02d}.mp4"))
+        chunks = refined
+    # join, dropping the duplicated first frame of every chunk after the first
+    parts = []
+    for i, ch in enumerate(chunks):
+        if i == 0:
+            parts.append(ch); continue
+        cut = work / f"cut{i:02d}.mp4"
+        subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", str(ch), "-vf", "select=gte(n\\,1),setpts=N/FRAME_RATE/TB", "-c:v", "libx264", "-crf", "14", "-pix_fmt", "yuv420p", "-an", str(cut)], check=True, timeout=600)
+        parts.append(cut)
+    joined = work / "joined.mp4"
+    if len(parts) == 1:
+        joined = parts[0]
+    else:
+        lst = work / "list.txt"; lst.write_text("".join(f"file '{x}'\n" for x in parts))
+        subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-f", "concat", "-safe", "0", "-i", str(lst), "-c:v", "libx264", "-crf", "14", "-pix_fmt", "yuv420p", "-an", str(joined)], check=True, timeout=600)
+    out = Path(out_path).expanduser(); out.parent.mkdir(parents=True, exist_ok=True)
+    if interpolate and interpolate > 1:
+        fps = fps_out or p["fps"] * interpolate
+        _run(base, _rife_workflow(_upload(base, joined), int(interpolate), float(fps)), "long clip: smoothing", out)
+    else:
+        out.write_bytes(joined.read_bytes())
+    return str(out)
+
+
+def finish_video(video: str, prompt: str, out_path: str, interpolate: int = 2, fps_out: float | None = None,
+                 seed: int | None = None, base: str = DEFAULT_URL) -> str:
+    """The finishing pass for an approved draft: 2x refine (the model as a latent upscaler, low noise,
+    realism prompt) in <=81-frame pieces, join, RIFE-smooth. Returns out_path."""
+    import subprocess, tempfile
+    p = PRESETS["fast"]; L = LONG
+    seed = random.randrange(2 ** 31) if seed is None else int(seed)
+    work = Path(tempfile.mkdtemp(prefix="finish-"))
+    sw, sh, fps, dur = _probe(str(Path(video).expanduser()))
+    n_total = int(dur * fps + 0.5)
+    # cut into pieces of <=81 frames (each piece overlaps nothing; the seams are refined with the same seed)
+    pieces: list[Path] = []; i = 0
+    while i < n_total:
+        n = min(L["chunk_frames"], n_total - i)
+        pc = work / f"piece{len(pieces):02d}.mp4"
+        subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", str(Path(video).expanduser()),
+                        "-vf", f"select=between(n\\,{i}\\,{i + n - 1}),setpts=N/FRAME_RATE/TB", "-frames:v", str(n), "-an",
+                        "-c:v", "libx264", "-crf", "14", "-pix_fmt", "yuv420p", str(pc)], check=True, timeout=600)
+        pieces.append(pc); i += n
+    w2, h2 = (sw * 2) // 16 * 16, (sh * 2) // 16 * 16
+    refined = [_run(base, _refine_workflow(_upload(base, pc), prompt + L["realism"], seed, w2, h2, L["refine_steps"], L["refine_denoise"]),
+                    f"finish: refine {k + 1}/{len(pieces)}", work / f"ref{k:02d}.mp4") for k, pc in enumerate(pieces)]
+    joined = work / "joined.mp4"
+    if len(refined) == 1:
+        joined = refined[0]
+    else:
+        lst = work / "list.txt"; lst.write_text("".join(f"file '{x}'\n" for x in refined))
+        subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-f", "concat", "-safe", "0", "-i", str(lst), "-c:v", "libx264", "-crf", "14", "-pix_fmt", "yuv420p", "-an", str(joined)], check=True, timeout=600)
+    out = Path(out_path).expanduser(); out.parent.mkdir(parents=True, exist_ok=True)
+    if interpolate and interpolate > 1:
+        _run(base, _rife_workflow(_upload(base, joined), int(interpolate), float(fps_out or fps * interpolate)), "finish: smoothing", out)
+    else:
+        out.write_bytes(joined.read_bytes())
+    return str(out)
