@@ -310,3 +310,165 @@ def recast(src_frames: list[str], hero: str, out_dir: str, base: str = DEFAULT_U
         imagegen.render(prompt, str(p), preset="edit", references=refs, seed=seed + i, width=w, height=h, base=base)
         frames.append(str(p))
     return frames
+
+
+# ---- through the event: pins inside a pass, not at its edges ----------------------------------------
+def _pinned_workflow(prompt: str, seed: int, w: int, h: int, n: int, pins: list[tuple[int, str]], hero_name: str | None,
+                     tail: tuple[str, int] | None = None, head: tuple[str, int] | None = None) -> dict:
+    """VACE pass of n frames. pins = [(frame index, uploaded image)] held exactly (mask 0); everything
+    else generated. tail = (uploaded clip, k): its last k frames occupy frames 0..k-1 (kept);
+    head = (uploaded clip, k): its first k frames occupy frames n-k..n-1 (kept). Motion flows through."""
+    p = RESTYLE
+    grey = 8355711
+    wf = {
+        "1": {"class_type": "UnetLoaderGGUF", "inputs": {"unet_name": p["unet"]}},
+        "1l": {"class_type": "LoraLoaderModelOnly", "inputs": {"model": ["1", 0], "lora_name": p["lora"], "strength_model": 1.0}},
+        "2": {"class_type": "CLIPLoader", "inputs": {"clip_name": p["clip"], "type": "wan", "device": "default"}},
+        "3": {"class_type": "VAELoader", "inputs": {"vae_name": p["vae"]}},
+        "4": {"class_type": "ModelSamplingSD3", "inputs": {"model": ["1l", 0], "shift": p["shift"]}},
+        "5": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["2", 0], "text": prompt}},
+        "6": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["2", 0], "text": "static, frozen, still image, subtitles, text, watermark, logo, extra fingers, deformed hands, duplicated person, morphing"}},
+        "m0": {"class_type": "SolidMask", "inputs": {"value": 0.0, "width": w, "height": h}},
+        "m1": {"class_type": "SolidMask", "inputs": {"value": 1.0, "width": w, "height": h}},
+        "mk0": {"class_type": "MaskToImage", "inputs": {"mask": ["m0", 0]}},
+        "mk1": {"class_type": "MaskToImage", "inputs": {"mask": ["m1", 0]}},
+    }
+    # frame-by-frame plan: (image source node, keep?)
+    plan: list[tuple[list, bool]] = [(["g1", 0], False)] * n
+    plan = list(plan)
+    wf["g1"] = {"class_type": "EmptyImage", "inputs": {"width": w, "height": h, "batch_size": 1, "color": grey}}
+    if tail:
+        name, k = tail
+        wf["t0"] = {"class_type": "LoadVideo", "inputs": {"file": name}}
+        wf["t1"] = {"class_type": "GetVideoComponents", "inputs": {"video": ["t0", 0]}}
+        wf["t2"] = {"class_type": "ImageScale", "inputs": {"image": ["t1", 0], "upscale_method": "lanczos", "width": w, "height": h, "crop": "center"}}
+        for j in range(k):
+            wf[f"tf{j}"] = {"class_type": "ImageFromBatch", "inputs": {"image": ["t2", 0], "batch_index": j, "length": 1}}
+            plan[j] = ([f"tf{j}", 0], True)
+    if head:
+        name, k = head
+        wf["h0"] = {"class_type": "LoadVideo", "inputs": {"file": name}}
+        wf["h1"] = {"class_type": "GetVideoComponents", "inputs": {"video": ["h0", 0]}}
+        wf["h2"] = {"class_type": "ImageScale", "inputs": {"image": ["h1", 0], "upscale_method": "lanczos", "width": w, "height": h, "crop": "center"}}
+        for j in range(k):
+            wf[f"hf{j}"] = {"class_type": "ImageFromBatch", "inputs": {"image": ["h2", 0], "batch_index": j, "length": 1}}
+            plan[n - k + j] = ([f"hf{j}", 0], True)
+    for i, (idx, name) in enumerate(pins):
+        wf[f"p{i}"] = {"class_type": "LoadImage", "inputs": {"image": name}}
+        wf[f"p{i}s"] = {"class_type": "ImageScale", "inputs": {"image": [f"p{i}", 0], "upscale_method": "lanczos", "width": w, "height": h, "crop": "center"}}
+        plan[idx] = ([f"p{i}s", 0], True)
+    # batch the frames and the mask in order (runs of identical sources are merged to keep the graph small)
+    runs: list[tuple[list, bool, int]] = []
+    for src, keep in plan:
+        if runs and runs[-1][0] == src and runs[-1][1] == keep and src == ["g1", 0]:
+            runs[-1] = (src, keep, runs[-1][2] + 1)
+        else:
+            runs.append((src, keep, 1))
+    prev_img = prev_msk = None
+    for r, (src, keep, cnt) in enumerate(runs):
+        img = src if cnt == 1 else [f"rep{r}", 0]
+        if cnt > 1:
+            wf[f"rep{r}"] = {"class_type": "RepeatImageBatch", "inputs": {"image": src, "amount": cnt}}
+        msk_src = ["mk0", 0] if keep else ["mk1", 0]
+        wf[f"mrep{r}"] = {"class_type": "RepeatImageBatch", "inputs": {"image": msk_src, "amount": cnt}}
+        msk = [f"mrep{r}", 0]
+        if prev_img is None:
+            prev_img, prev_msk = img, msk
+        else:
+            wf[f"cat{r}"] = {"class_type": "ImageBatch", "inputs": {"image1": prev_img, "image2": img}}
+            wf[f"mcat{r}"] = {"class_type": "ImageBatch", "inputs": {"image1": prev_msk, "image2": msk}}
+            prev_img, prev_msk = [f"cat{r}", 0], [f"mcat{r}", 0]
+    wf["mm"] = {"class_type": "ImageToMask", "inputs": {"image": prev_msk, "channel": "red"}}
+    vace = {"positive": ["5", 0], "negative": ["6", 0], "vae": ["3", 0], "width": w, "height": h, "length": n, "batch_size": 1,
+            "strength": 1.0, "control_video": prev_img, "control_masks": ["mm", 0]}
+    if hero_name:
+        wf["r0"] = {"class_type": "LoadImage", "inputs": {"image": hero_name}}
+        vace["reference_image"] = ["r0", 0]
+    wf["7"] = {"class_type": "WanVaceToVideo", "inputs": vace}
+    wf["8"] = {"class_type": "KSampler", "inputs": {"model": ["4", 0], "seed": seed, "steps": p["steps"], "cfg": p["cfg"],
+               "sampler_name": p["sampler"], "scheduler": p["scheduler"], "denoise": 1.0,
+               "positive": ["7", 0], "negative": ["7", 1], "latent_image": ["7", 2]}}
+    wf["9t"] = {"class_type": "TrimVideoLatent", "inputs": {"samples": ["8", 0], "trim_amount": ["7", 3]}}
+    wf["9"] = {"class_type": "VAEDecode", "inputs": {"samples": ["9t", 0], "vae": ["3", 0]}}
+    wf["10"] = {"class_type": "CreateVideo", "inputs": {"images": ["9", 0], "fps": 24}}
+    wf["11"] = {"class_type": "SaveVideo", "inputs": {"video": ["10", 0], "filename_prefix": "merge/story_pin", "format": "auto", "codec": "auto"}}
+    return wf
+
+
+def _crossfade_join(parts: list[Path], overlaps: list[int], out: Path, fps: int, work: Path) -> None:
+    """Join clips whose consecutive pairs overlap by `overlaps[i]` frames, blending the overlap linearly."""
+    import subprocess
+    cur = parts[0]
+    for i in range(1, len(parts)):
+        ov = overlaps[i - 1]
+        nxt = parts[i]
+        a_frames = int(_probe(str(cur))[3] * _probe(str(cur))[2] + 0.5)
+        d = ov / 24.0
+        joined = work / f"join{i:02d}.mp4"
+        # xfade over the overlap: cur's last ov frames blend into nxt's first ov frames
+        subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", str(cur), "-i", str(nxt),
+                        "-filter_complex", f"[0:v][1:v]xfade=transition=fade:duration={d:.4f}:offset={max(0.0, a_frames / 24.0 - d):.4f},format=yuv420p",
+                        "-c:v", "libx264", "-crf", "14", "-an", str(joined)], check=True, timeout=900)
+        cur = joined
+    subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", str(cur), "-vf", f"setpts=N/({fps}*TB)", "-r", str(fps),
+                    "-c:v", "libx264", "-crf", "14", "-pix_fmt", "yuv420p", "-an", str(out)], check=True, timeout=900)
+
+
+def fill_bidir(keyframes: list[str], prompt: str, hero: str, out_path: str, base: str = DEFAULT_URL,
+               width: int | None = None, height: int | None = None, half: int = 40, fps_declared: int | None = None,
+               seed: int | None = None) -> str:
+    """Bidirectional fill: every interior keyframe is the EVENT at the middle of its own pass
+    [prev, event, next], so motion flows through it. Consecutive passes overlap by one interval, and
+    the overlaps are crossfaded. With only two keyframes it is a single pinned pass."""
+    w, h = width or STORY["draft_w"], height or STORY["draft_h"]
+    fps_d = fps_declared or STORY["fps"]
+    seed = random.randrange(2 ** 31) if seed is None else int(seed)
+    work = Path(tempfile.mkdtemp(prefix="storybidir-"))
+    hero_name = _upload(base, Path(hero).expanduser())
+    names = [_upload(base, Path(k).expanduser()) for k in keyframes]
+    n = 2 * half + 1
+    if len(keyframes) == 2:
+        wf = _pinned_workflow(prompt, seed, w, h, n, [(0, names[0]), (n - 1, names[1])], hero_name)
+        part = _run(base, wf, "story: pinned pass", work / "p0.mp4")
+        parts, overlaps = [part], []
+    else:
+        parts, overlaps = [], []
+        for i in range(1, len(keyframes) - 1):
+            wf = _pinned_workflow(prompt, seed + i, w, h, n, [(0, names[i - 1]), (half, names[i]), (n - 1, names[i + 1])], hero_name)
+            parts.append(_run(base, wf, f"story: through event {i}/{len(keyframes) - 2}", work / f"p{i:02d}.mp4"))
+            if i > 1:
+                overlaps.append(half + 1)      # the shared interval prev->event
+    out = Path(out_path).expanduser(); out.parent.mkdir(parents=True, exist_ok=True)
+    if len(parts) == 1:
+        subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", str(parts[0]), "-vf", f"setpts=N/({fps_d}*TB)", "-r", str(fps_d),
+                        "-c:v", "libx264", "-crf", "14", "-pix_fmt", "yuv420p", "-an", str(out)], check=True, timeout=900)
+    else:
+        _crossfade_join(parts, overlaps, out, fps_d, work)
+    return str(out)
+
+
+def bridge(clip_a: str, clip_b: str, prompt: str, out_path: str, hero: str | None = None, base: str = DEFAULT_URL,
+           context: int = 12, gap: int = 33, seed: int | None = None) -> str:
+    """Join two clips with generated motion between them: the last `context` frames of A and the
+    first `context` frames of B are kept, `gap` frames are generated to connect them, both ways at
+    once. Output = A + bridge + B at A's size."""
+    seed = random.randrange(2 ** 31) if seed is None else int(seed)
+    work = Path(tempfile.mkdtemp(prefix="bridge-"))
+    a, b = Path(clip_a).expanduser(), Path(clip_b).expanduser()
+    sw, sh, fps, _ = _probe(str(a)); w, h = sw // 16 * 16, sh // 16 * 16
+    n = context + gap + context; n = (n // 4) * 4 + 1; gap = n - 2 * context
+    # the tail of A and the head of B as small clips
+    ta, hb = work / "tailA.mp4", work / "headB.mp4"
+    subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-sseof", f"-{context / fps + 0.05:.3f}", "-i", str(a), "-frames:v", str(context), "-an", "-c:v", "libx264", "-crf", "14", "-pix_fmt", "yuv420p", str(ta)], check=True, timeout=300)
+    subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", str(b), "-frames:v", str(context), "-an", "-c:v", "libx264", "-crf", "14", "-pix_fmt", "yuv420p", str(hb)], check=True, timeout=300)
+    hero_name = _upload(base, Path(hero).expanduser()) if hero else None
+    wf = _pinned_workflow(prompt, seed, w, h, n, [], hero_name, tail=(_upload(base, ta), context), head=(_upload(base, hb), context))
+    mid = _run(base, wf, "bridge: both ways", work / "bridge.mp4")
+    # the generated middle only (drop the kept context frames), then A + middle + B
+    gen = work / "gen.mp4"
+    subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", str(mid), "-vf", f"select=between(n\\,{context}\\,{context + gap - 1}),setpts=N/FRAME_RATE/TB,scale={sw}:{sh}",
+                    "-frames:v", str(gap), "-an", "-c:v", "libx264", "-crf", "14", "-pix_fmt", "yuv420p", str(gen)], check=True, timeout=300)
+    out = Path(out_path).expanduser(); out.parent.mkdir(parents=True, exist_ok=True)
+    lst = work / "list.txt"; lst.write_text(f"file '{a}'\nfile '{gen}'\nfile '{b}'\n")
+    subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-f", "concat", "-safe", "0", "-i", str(lst), "-vf", f"fps={fps}", "-c:v", "libx264", "-crf", "14", "-pix_fmt", "yuv420p", "-an", str(out)], check=True, timeout=900)
+    return str(out)
