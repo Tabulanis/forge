@@ -473,7 +473,7 @@ def long_video(prompt: str, out_path: str, seconds: float = 12.0, image: str | N
 
 
 def finish_video(video: str, prompt: str, out_path: str, interpolate: int = 2, fps_out: float | None = None,
-                 seed: int | None = None, base: str = DEFAULT_URL) -> str:
+                 seed: int | None = None, base: str = DEFAULT_URL, denoise: float | None = None) -> str:
     """The finishing pass for an approved draft: 2x refine (the model as a latent upscaler, low noise,
     realism prompt) in <=81-frame pieces, join, RIFE-smooth. Returns out_path."""
     import subprocess, tempfile
@@ -492,7 +492,8 @@ def finish_video(video: str, prompt: str, out_path: str, interpolate: int = 2, f
                         "-c:v", "libx264", "-crf", "14", "-pix_fmt", "yuv420p", str(pc)], check=True, timeout=600)
         pieces.append(pc); i += n
     w2, h2 = (sw * 2) // 16 * 16, (sh * 2) // 16 * 16
-    refined = [_run(base, _refine_workflow(_upload(base, pc), prompt + L["realism"], seed, w2, h2, L["refine_steps"], L["refine_denoise"]),
+    dn = L["refine_denoise"] if denoise is None else float(denoise)
+    refined = [_run(base, _refine_workflow(_upload(base, pc), prompt + L["realism"], seed, w2, h2, L["refine_steps"], dn),
                     f"finish: refine {k + 1}/{len(pieces)}", work / f"ref{k:02d}.mp4") for k, pc in enumerate(pieces)]
     joined = work / "joined.mp4"
     if len(refined) == 1:
