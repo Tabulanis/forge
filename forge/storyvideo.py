@@ -416,7 +416,7 @@ def _crossfade_join(parts: list[Path], overlaps: list[int], out: Path, fps: int,
 
 def fill_bidir(keyframes: list[str], prompt: str, hero: str, out_path: str, base: str = DEFAULT_URL,
                width: int | None = None, height: int | None = None, half: int = 40, fps_declared: int | None = None,
-               seed: int | None = None) -> str:
+               seed: int | None = None, times: list[float] | None = None) -> str:
     """Bidirectional fill: every interior keyframe is the EVENT at the middle of its own pass
     [prev, event, next], so motion flows through it. Consecutive passes overlap by one interval, and
     the overlaps are crossfaded. With only two keyframes it is a single pinned pass."""
@@ -426,18 +426,25 @@ def fill_bidir(keyframes: list[str], prompt: str, hero: str, out_path: str, base
     work = Path(tempfile.mkdtemp(prefix="storybidir-"))
     hero_name = _upload(base, Path(hero).expanduser())
     names = [_upload(base, Path(k).expanduser()) for k in keyframes]
-    n = 2 * half + 1
+    # frames per interval: from the beat times when given (irregular), else `half` each
+    if times and len(times) == len(keyframes):
+        ivals = [max(8, int(round((times[i + 1] - times[i]) * fps_d))) for i in range(len(keyframes) - 1)]
+    else:
+        ivals = [half] * (len(keyframes) - 1)
     if len(keyframes) == 2:
+        n = ivals[0] + 1; n = (n // 4) * 4 + 1
         wf = _pinned_workflow(prompt, seed, w, h, n, [(0, names[0]), (n - 1, names[1])], hero_name)
         part = _run(base, wf, "story: pinned pass", work / "p0.mp4")
         parts, overlaps = [part], []
     else:
         parts, overlaps = [], []
         for i in range(1, len(keyframes) - 1):
-            wf = _pinned_workflow(prompt, seed + i, w, h, n, [(0, names[i - 1]), (half, names[i]), (n - 1, names[i + 1])], hero_name)
+            a, b = ivals[i - 1], ivals[i]
+            n = a + b + 1; n = (n // 4) * 4 + 1; b = n - 1 - a
+            wf = _pinned_workflow(prompt, seed + i, w, h, n, [(0, names[i - 1]), (a, names[i]), (n - 1, names[i + 1])], hero_name)
             parts.append(_run(base, wf, f"story: through event {i}/{len(keyframes) - 2}", work / f"p{i:02d}.mp4"))
             if i > 1:
-                overlaps.append(half + 1)      # the shared interval prev->event
+                overlaps.append(a + 1)         # the shared interval prev->event
     out = Path(out_path).expanduser(); out.parent.mkdir(parents=True, exist_ok=True)
     if len(parts) == 1:
         subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", str(parts[0]), "-vf", f"setpts=N/({fps_d}*TB)", "-r", str(fps_d),
@@ -495,11 +502,15 @@ def beat_sheet(idea: str, seconds: float, beat_seconds: float = 2.5, character: 
     one small physical change, same place unless the beat is a cut, with a camera note.
     Returns [{"t": s, "beat": ..., "camera": ...}, ...] including t=0 and t=seconds."""
     n = max(2, int(round(seconds / beat_seconds)) + 1)
-    q = (f"Plan a single continuous video shot as {n} keyframes, one every {beat_seconds:.1f} seconds, from t=0 to t={seconds:.0f} s.\n"
+    q = (f"Plan a single continuous video shot as about {n} keyframes from t=0 to t={seconds:.0f} s. Put a keyframe wherever "
+         "something CHANGES — a step off, a hand on a handle, a turn, a door opening — and nowhere else: a long walk with "
+         "nothing new gets one keyframe at each end, a quick action gets several close together. Spacing between 1 and 6 "
+         f"seconds, never evenly spaced, first at t=0 and last at t={seconds:.0f}.\n"
          f"The shot: {idea}\nCharacter: {character}.\n" + (f"Scene map (fixed, never contradict it): {scene_map}\n" if scene_map else "") +
-         f"Rules: each keyframe is what is physically true {beat_seconds:.1f} seconds after the previous one — ONE small change "
+         "Rules: each keyframe is what is physically true at its time, following naturally from the previous one — ONE change "
          "(a few steps, a hand on a handle, a turn of the head), never a jump to a new place; the same place unless a beat "
-         "explicitly says CUT; the character appears exactly once; what they leave behind stays where it was, empty. "
+         "explicitly says CUT; the character appears exactly once; what they leave behind stays where it was, empty; "
+         "NO new props, clothing or objects that were not in the character or scene description (no sticks, gloves, bags, hats). "
          "Describe what the camera sees, not the story. Give a short camera note per keyframe (e.g. 'static wide', "
          "'slow pan left following', 'push in').\n"
          "Answer as JSON only: a list of objects with keys t (seconds), beat (one or two sentences), camera (a few words).")
@@ -512,6 +523,9 @@ def beat_sheet(idea: str, seconds: float, beat_seconds: float = 2.5, character: 
         raise RuntimeError("the brain did not return a beat list: " + raw[:200])
     for i, b in enumerate(beats):
         b.setdefault("t", round(i * beat_seconds, 1)); b.setdefault("camera", "")
+        b["t"] = float(b["t"])
+    beats.sort(key=lambda b: b["t"])
+    beats[0]["t"] = 0.0
     return beats
 
 
@@ -522,7 +536,6 @@ def story_from_beats(beats: list[dict], hero: str, out_dir: str, prompt: str, ou
     fps_d = fps_declared or STORY["fps"]
     shots = [f"t={b['t']}s: {b['beat']} Camera: {b.get('camera', '')}." for b in beats]
     keys, reports = storyboard_checked(hero, shots, out_dir, base=base, seed=seed, place=place, chain=True, scene=scene_map)
-    spacing = (beats[1]["t"] - beats[0]["t"]) if len(beats) > 1 else 2.5
-    half = max(8, int(round(spacing * fps_d)))          # frames per interval at the declared rate
-    draft = fill_bidir(keys, prompt, hero, out_path, base=base, width=draft_w, height=draft_h, half=half, fps_declared=fps_d, seed=seed)
+    draft = fill_bidir(keys, prompt, hero, out_path, base=base, width=draft_w, height=draft_h, fps_declared=fps_d, seed=seed,
+                       times=[float(b["t"]) for b in beats])
     return {"keyframes": keys, "reports": reports, "draft": draft, "beats": beats}
