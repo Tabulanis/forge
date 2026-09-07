@@ -201,7 +201,9 @@ def check_frame(hero: str, frame: str, shot: str) -> dict:
          "character facing the wrong way for the shot, impossible positions (walking through a wall, standing on "
          "water), a different vehicle or clothes, a different time of day. Do NOT flag differences the requested camera "
          "position itself causes — size in frame, angle, which side of the character is visible, what is cropped out. "
-         "If the frame is consistent and matches the shot, reply exactly: OK")
+         "If the frame is consistent and matches the shot, reply exactly: OK\n"
+         "Also check DIRECTION: if the requested camera position or the described action was not followed (wrong side, "
+         "wrong distance, the action not happening), list that as a problem too.")
     try:
         ans = _look([hero, frame], q)
     except Exception as e:
@@ -211,7 +213,8 @@ def check_frame(hero: str, frame: str, shot: str) -> dict:
     return {"ok": ok, "issues": issues, "raw": ans[:600]}
 
 
-RULES = ("The character appears EXACTLY ONCE in the frame. Exactly one of each landmark. "
+RULES = ("Same scene as the previous shot: the camera may move, the place may not. Follow the camera note and the action "
+         "exactly. The character appears EXACTLY ONCE in the frame. Exactly one of each landmark. "
          "Anything the character has left behind (a boat, a chair) is empty. Every door, window and wall belongs to a "
          "building that is visible in the frame and matches the place; nothing stands on its own. ")
 
@@ -567,9 +570,12 @@ def beat_sheet(idea: str, seconds: float, beat_seconds: float = 2.5, character: 
          "nothing new gets one keyframe at each end, a quick action gets several close together. Spacing between 1 and 6 "
          f"seconds, never evenly spaced, first at t=0 and last at t={seconds:.0f}.\n"
          f"The shot: {idea}\nCharacter: {character}.\n" + (f"Scene map (fixed, never contradict it): {scene_map}\n" if scene_map else "") +
-         "Rules: each keyframe is what is physically true at its time, following naturally from the previous one — ONE change "
-         "(a few steps, a hand on a handle, a turn of the head), never a jump to a new place; the same place unless a beat "
-         "explicitly says CUT; the character appears exactly once; what they leave behind stays where it was, empty; "
+         "THREE RULES. (1) ONE SCENE: the whole shot stays in one place; the camera may move, the place may not; never cut to "
+         "another location. (2) NO GUESSING: every keyframe states the concrete facts a picture needs — where the character "
+         "stands (left/centre/right, near/far), which way they face, which hand does what, what is in the background, where "
+         "the camera stands and points. (3) DIRECTION IS AN ORDER: the camera note and the action are to be followed exactly.\n"
+         "Each keyframe is what is physically true at its time, following naturally from the previous one — ONE change "
+         "(a few steps, a hand on a handle, a turn of the head), never a jump to a new place; always the same place; the character appears exactly once; what they leave behind stays where it was, empty; "
          "NO new props, clothing or objects that were not in the character or scene description (no sticks, gloves, bags, hats). "
          "Every keyframe after the first is CAUSED by the one before: state the cause. The time of a keyframe is the "
          "time of the previous one plus how long that consequence physically takes (a step: ~1 s; twenty metres of walking: "
