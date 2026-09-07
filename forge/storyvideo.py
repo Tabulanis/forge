@@ -719,3 +719,98 @@ def make_place(prompt: str, out_path: str, scene_map: str, base: str = DEFAULT_U
             break
     rep["final_ok"] = rep["attempts"][-1]["ok"]
     return out_path, rep
+
+
+# ---- pose-guided: the body is directed, not guessed ----------------------------------------------
+def pose_track(video: str, out_path: str, base: str = DEFAULT_URL, width: int | None = None, height: int | None = None) -> str:
+    """Skeleton every frame of a clip (DWPose) into a pose video — the control track for a guided fill."""
+    w, h = width or STORY["draft_w"], height or STORY["draft_h"]
+    name = _upload(base, Path(video).expanduser())
+    wf = {"1": {"class_type": "LoadVideo", "inputs": {"file": name}},
+          "2": {"class_type": "GetVideoComponents", "inputs": {"video": ["1", 0]}},
+          "3": {"class_type": "ImageScale", "inputs": {"image": ["2", 0], "upscale_method": "lanczos", "width": w, "height": h, "crop": "center"}},
+          "4": {"class_type": "DWPreprocessor", "inputs": {"image": ["3", 0], "detect_hand": "enable", "detect_body": "enable", "detect_face": "disable", "resolution": 512}},
+          "10": {"class_type": "CreateVideo", "inputs": {"images": ["4", 0], "fps": 24}},
+          "11": {"class_type": "SaveVideo", "inputs": {"video": ["10", 0], "filename_prefix": "merge/posetrack", "format": "auto", "codec": "auto"}}}
+    return str(_run(base, wf, "pose track", Path(out_path).expanduser()))
+
+
+def generated_actor(action: str, out_path: str, seconds: float = 5.0, base: str = DEFAULT_URL, seed: int | None = None,
+                    width: int | None = None, height: int | None = None) -> str:
+    """The model acts the action plainly (one person, plain clothes, plain room, no style) so its motion can be skeletoned."""
+    w, h = width or STORY["draft_w"], height or STORY["draft_h"]
+    prompt = (f"A plain reference clip for animators: one adult in plain grey clothes, full body always in frame, in an empty light-grey room, "
+              f"performs this action clearly and completely: {action}. Static camera, even lighting, nothing else in the scene.")
+    return videogen.render(prompt, str(Path(out_path).expanduser()), seconds=seconds, width=w, height=h, seed=seed, base=base, preset="fast")
+
+
+def fill_posed(keyframes: list[str], pose_video: str, prompt: str, hero: str, out_path: str, base: str = DEFAULT_URL,
+               width: int | None = None, height: int | None = None, fps_declared: int | None = None, seed: int | None = None,
+               times: list[float] | None = None, strength: float = 0.9) -> str:
+    """Draft where the pose track steers every frame (control video) and the keyframes are pinned at their times.
+    The pose track is re-timed to span the keyframe times. One VACE pass per <=81 frames, joined at the pins."""
+    import subprocess
+    w, h = width or STORY["draft_w"], height or STORY["draft_h"]
+    fps_d = fps_declared or STORY["fps"]
+    seed = random.randrange(2 ** 31) if seed is None else int(seed)
+    work = Path(out_path).expanduser().with_name(Path(out_path).stem + "-passes"); work.mkdir(parents=True, exist_ok=True)
+    hero_name = _upload(base, Path(hero).expanduser())
+    names = [_upload(base, Path(k).expanduser()) for k in keyframes]
+    n_keys = len(keyframes)
+    if not times or len(times) != n_keys:
+        times = [i * 2.5 for i in range(n_keys)]
+    total = max(5, int(round((times[-1] - times[0]) * fps_d)) + 1)
+    total = (total // 4) * 4 + 1
+    # re-time the pose track to `total` frames at 24 fps in the file (the model's native rate)
+    pt = work / "pose-retimed.mp4"
+    _, _, pfps, pdur = _probe(str(Path(pose_video).expanduser()))
+    factor = (total / 24.0) / max(pdur, 0.04)
+    subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", str(Path(pose_video).expanduser()),
+                    "-vf", f"setpts={factor:.6f}*PTS,fps=24,scale={w}:{h}", "-frames:v", str(total), "-an", "-c:v", "libx264", "-crf", "12", "-pix_fmt", "yuv420p", str(pt)], check=True, timeout=600)
+    pt_name = _upload(base, pt)
+    # pins at their frame indices within the whole track
+    pins_all = [(min(total - 1, int(round((t - times[0]) * fps_d))), nm) for t, nm in zip(times, names)]
+    # passes of <=81 frames, each starting on a pin frame where possible
+    parts = []; start = 0; k = 0
+    while start < total - 1:
+        n = min(81, total - start); n = (n // 4) * 4 + 1 if n >= 5 else 5
+        end = start + n - 1
+        pins = [(idx - start, nm) for idx, nm in pins_all if start <= idx <= end]
+        wf = _pinned_workflow(prompt, seed + k, w, h, n, pins, hero_name)
+        # swap the grey filler for the pose track segment: control = pose frames, mask 1 (guide) except pins (0)
+        wf["pt0"] = {"class_type": "LoadVideo", "inputs": {"file": pt_name}}
+        wf["pt1"] = {"class_type": "GetVideoComponents", "inputs": {"video": ["pt0", 0]}}
+        wf["pt2"] = {"class_type": "ImageFromBatch", "inputs": {"image": ["pt1", 0], "batch_index": start, "length": n}}
+        # pins composited over the pose frames: for each pin, replace that frame
+        cur = ["pt2", 0]
+        for j, (idx, nm) in enumerate(pins):
+            wf[f"pk{j}"] = {"class_type": "LoadImage", "inputs": {"image": nm}}
+            wf[f"pks{j}"] = {"class_type": "ImageScale", "inputs": {"image": [f"pk{j}", 0], "upscale_method": "lanczos", "width": w, "height": h, "crop": "center"}}
+            if idx > 0:
+                wf[f"pa{j}"] = {"class_type": "ImageFromBatch", "inputs": {"image": cur, "batch_index": 0, "length": idx}}
+                wf[f"pb{j}"] = {"class_type": "ImageBatch", "inputs": {"image1": [f"pa{j}", 0], "image2": [f"pks{j}", 0]}}
+                head = [f"pb{j}", 0]
+            else:
+                head = [f"pks{j}", 0]
+            if idx < n - 1:
+                wf[f"pc{j}"] = {"class_type": "ImageFromBatch", "inputs": {"image": cur, "batch_index": idx + 1, "length": n - idx - 1}}
+                wf[f"pd{j}"] = {"class_type": "ImageBatch", "inputs": {"image1": head, "image2": [f"pc{j}", 0]}}
+                cur = [f"pd{j}", 0]
+            else:
+                cur = head
+        wf["7"]["inputs"]["control_video"] = cur
+        wf["7"]["inputs"]["strength"] = float(strength)
+        part = work / f"p{k:02d}.mp4"
+        if not part.is_file() or part.stat().st_size < 1000:
+            part = _run(base, wf, f"posed fill: pass {k + 1}", part)
+        if k > 0:
+            cut = work / f"c{k:02d}.mp4"
+            subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", str(part), "-vf", "select=gte(n\\,1),setpts=N/FRAME_RATE/TB",
+                            "-c:v", "libx264", "-crf", "14", "-pix_fmt", "yuv420p", "-an", str(cut)], check=True, timeout=600)
+            part = cut
+        parts.append(part); start = end; k += 1
+    out = Path(out_path).expanduser()
+    lst = work / "list.txt"; lst.write_text("".join(f"file '{x}'\n" for x in parts))
+    subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-f", "concat", "-safe", "0", "-i", str(lst),
+                    "-vf", f"setpts=N/({fps_d}*TB)", "-r", str(fps_d), "-c:v", "libx264", "-crf", "14", "-pix_fmt", "yuv420p", "-an", str(out)], check=True, timeout=900)
+    return str(out)
