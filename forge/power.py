@@ -1,8 +1,8 @@
 """
 The power switch.
 
-The local models are the only thing here that holds the GPU — the 30B alone
-owns ~23 of the card's 24GB. Everything runs under systemd user units, so
+The local models are the only thing here that holds the GPU — on Void the
+122B brain owns ~70 of the 96GB carve-out. Everything runs under systemd user units, so
 "shut her down" is just stopping those units; this module is the one place
 that knows their names. The dashboard is left running on purpose: it uses no
 VRAM, and its Power card is how you wake her back up without a terminal.
@@ -26,8 +26,8 @@ PORTS = {"big122": 8087, "big": 8084, "merge": 8085, "vision": 8090,
 EXPECTED_LOAD_MB = {"big122": 70000, "big": 17700, "merge": 17300}
 
 # Models that shouldn't share the GPU at once. On the 24GB TITAN big and merge
-# never fit together; on Void (64GB carve-out) the 122B plus either of them
-# pushes into borrowed system RAM hard enough to matter. Starting one
+# never fit together; on Void (96GB carve-out, 128k window) the 122B plus
+# either of them would push into system RAM, which is off limits. Starting one
 # auto-stops its rivals first, instead of leaving that as a comment a human
 # has to remember — a rule that isn't enforced gets crossed eventually.
 EXCLUSIVE = {"big122": ("big", "merge"), "big": ("merge", "big122"),

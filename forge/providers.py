@@ -165,7 +165,7 @@ class AnthropicProvider(Provider):
                 "Claude rejected the API key. Set a valid one with\n"
                 "  export ANTHROPIC_API_KEY=sk-ant-...\n"
                 "before starting Forge, or paste it into the dashboard's "
-                "Add-a-model form. Or switch to a local model: /model qwen30b"
+                "Add-a-model form. Or switch to a local model: /model big122"
             ) from None
         except anthropic.NotFoundError:
             raise RuntimeError(
@@ -178,7 +178,7 @@ class AnthropicProvider(Provider):
         except anthropic.APIConnectionError:
             raise RuntimeError(
                 "Couldn't reach Claude's servers — is the internet up? "
-                "A local model works offline: /model qwen30b"
+                "A local model works offline: /model big122"
             ) from None
 
         usage = {
@@ -441,7 +441,7 @@ def build_provider(cfg: dict) -> Provider:
             context=int(cfg.get("context", 0)),
             # seconds of silence allowed before a call is declared dead; per
             # model, because the same weights run at very different speeds on
-            # different hardware (2026-09-05: 28 tok/s on the TITAN, 12.8 here)
+            # different hardware (2026-09-07: 28 tok/s on Void for the 122B; the TITAN ran the 27B at 12.8)
             timeout=float(cfg.get("timeout", 300)),
         )
     raise ValueError(f"Unknown provider: {kind!r}")

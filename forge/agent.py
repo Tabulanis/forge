@@ -129,11 +129,13 @@ VERDICT: bounce — <one short reason>"""
 
 COMPACT_AT = 0.70          # start compacting at 70% full
 COMPACT_KEEP = 0.25        # after compacting, recent turns may fill 25%
-# The summariser reads the whole compaction transcript in ONE pass, so keep
-# that chunk small: comfortably inside any small model's window AND fast to
-# prompt-process. A ~6k-token chunk on the CPU 3B froze compaction for ~3 min
-# (measured 161s); this budget keeps it quick even there, near-instant on GPU.
-SUMMARY_INPUT_TOKENS = 2500
+# The summariser reads the whole compaction transcript in ONE pass. It was
+# 2500 tokens while the CPU 3B did the job (a ~6k chunk froze it ~3 min); the
+# main brain on the GPU summarises first now, so it can read far more of what
+# it is about to forget. Still fits the 3B fallback's 8k window if it has to.
+# (2026-09-07: on the 128k window a compaction drops ~60k tokens — writing the
+# summary from the last 2.5k of them threw most of the day away.)
+SUMMARY_INPUT_TOKENS = 7000
 # Don't compact unless the part being summarized is at least this many
 # tokens. When one long tool-heavy turn fills the window by itself, the
 # compactable prefix shrinks to almost nothing — squeezing it again every
@@ -748,6 +750,11 @@ class Agent:
         _wall_warned = False
         _turn_t0 = time.time()
         self._progress_t0 = time.time()   # resets on genuine new progress (see tool exec)
+        # Seconds spent INSIDE tool calls this turn. Renders on the second box
+        # take 5-15 minutes each and she just waits; that waiting must not
+        # count against the turn wall, or a finished story render ends the
+        # turn before she can say a word or chain the next tool (2026-09-07).
+        self._tool_secs = 0.0
         _tidy_noted = False       # near-cap notes: once per turn, not per step
         _trim_noted = False
         # Hiccup ledger: everything that degraded THIS turn (failed tools,
@@ -789,7 +796,8 @@ class Agent:
             # guard — seen live 2026-08-25, several 7-10 min turns that never ended.
             # Warn her to land at 70%; hard-stop cleanly at the cap so she can never
             # lock up the session.
-            _elapsed = time.time() - _turn_t0
+            # Her OWN time only — waiting on a tool (a long render) is excluded.
+            _elapsed = time.time() - _turn_t0 - getattr(self, "_tool_secs", 0.0)
             _stall = time.time() - getattr(self, "_progress_t0", _turn_t0)
             # Progress-aware: a turn that keeps making NEW tool calls keeps resetting
             # its stall timer and runs until the (per-mode) absolute cap. A turn that
@@ -1855,6 +1863,7 @@ class Agent:
 
         result = str(result)
         self._tools_ran = True
+        self._tool_secs = getattr(self, "_tool_secs", 0.0) + (time.time() - _t_started)
         try:
             from . import forensic
             forensic.record(getattr(self, "session_id", ""), "tool",

@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # Start a local model (or the image server) for Forge to talk to.
-#   ./start-model.sh          -> the 30B (main workhorse, port 8080)
+#   ./start-model.sh          -> the 30B (RETIRED 2026-09-05, port 8084; files kept)
 #   ./start-model.sh tiny     -> TinyLlama (small + fast, port 8081)
-#   ./start-model.sh little   -> Qwen 3B on CPU (routing/titles/summaries, 8083)
+#   ./start-model.sh little   -> Qwen 3B (GPU on Void; librarian cards/notebook folding, 8083)
 #   ./start-model.sh coder14  -> Qwen2.5-Coder 14B (port 8082)
 #   ./start-model.sh vision   -> shared 7B vision/mmproj on CPU (port 8090)
-#   ./start-model.sh merge    -> Merge's sighted 27B (port 8085)
+#   ./start-model.sh merge    -> the sighted 27B (RETIRED 2026-09-05, port 8085)
 #   ./start-model.sh embed    -> nomic embedding organ, CPU (port 8086)
-#   ./start-model.sh big122   -> Qwen3.5-122B-A10B abliterated + eyes (port 8087, Void only)
+#   ./start-model.sh big122   -> MERGE'S BRAIN: Qwen3.5-122B-A10B abliterated + eyes (port 8087, Void, 128k)
 set -e
 LLAMA=~/llama.cpp/build/bin/llama-server
 

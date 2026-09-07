@@ -85,7 +85,7 @@ def run_checks() -> list[Check]:
     active = cfg.get("active_model", "")
     models = cfg.get("models", {})
     if active not in models:
-        alt = _reachable_local(models) or next(iter(models), "qwen30b")
+        alt = _reachable_local(models) or next(iter(models), "big122")
         out.append(Check("Active model", FAIL,
                          f"Set to {active!r}, which isn't configured.",
                          f"/model {alt}"))

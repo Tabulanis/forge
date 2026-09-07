@@ -40,7 +40,7 @@ prompt with {braces}, so steps feed each other:
   steps:
     - name: build
       kind: agent
-      model: qwen30b
+      model: big122
       prompt: "{input}"
     - name: verify
       kind: command

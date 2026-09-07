@@ -85,7 +85,7 @@ Claude subscription and is billed by usage. Then:
 
 SWITCHING
 In the terminal:      /model            (lists them)
-                      /model qwen30b    (switches)
+                      /model big122    (switches)
 In the browser:       click one in the list
 
 A model switched in the browser reaches the terminal on your next message.
@@ -231,7 +231,7 @@ fix. The common ones:
 
 "No Anthropic API key found"
     You're pointed at Claude but haven't given it a key. Either switch to a
-    local model (`/model qwen30b`) or set the key (see `forge help models`).
+    local model (`/model big122`) or set the key (see `forge help models`).
 
 It says it did something, but nothing changed
     Local models sometimes claim work they didn't do. Ask it to show you:
