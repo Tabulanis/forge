@@ -2633,20 +2633,7 @@ def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provi
         ),
         Tool(
             name="generate_image",
-            description="Make an image on the GPU from a text prompt, and optionally "
-                        "from reference images (\"make it look like this\"). Saves a "
-                        "PNG into the workspace and returns the path — then "
-                        "look_at_image it to check your work. Renders on the render "
-                        "box over the wire. Presets: 'sketch' (default, Z-Image, ~1.5 min), "
-                        "'schnell' (FLUX.1 schnell — photographic, good with text in the "
-                        "picture, ~1.5 min), 'reference' (FLUX klein, takes reference "
-                        "images, ~1 min), 'masterpiece' (Qwen-Image — best text and "
-                        "composition, ~4 min), 'real' (Qwen-Image-2512 + realism LoRA — for "
-                        "photographic, un-plastic people and places, ~5 min), 'edit' (Qwen-Image-Edit — give 1-3 `references` "
-                        "and say what to change; keeps the same face/character/object across "
-                        "new poses and scenes, ~5 min). For a specific pose use extract_pose + "
-                        "edit (see the playbook); `control_image` is experimental on this card. "
-                        "Give a vivid, specific prompt.",
+            description='Make a picture on the render box and save it in the workspace. Presets: sketch (rough, 15 s), schnell (fast photographic people), real (photographic flagship, ~3 min), masterpiece (text/signs/layouts, ~4 min), edit (change or continue an existing picture from 1-3 references; keeps faces, ~5 min), reference (loose likeness, fast). For a specific pose: extract_pose, then edit with [skeleton, character]. Then look_at_image the result.',
             parameters={
                 "type": "object",
                 "properties": {
@@ -2657,13 +2644,12 @@ def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provi
                     "preset": {"type": "string",
                                "description": "sketch | schnell | reference | masterpiece | real | edit (default sketch)"},
                     "control_image": {"type": "string",
-                                      "description": "Optional workspace path of a picture whose pose/depth/edges the result must follow (Qwen presets: masterpiece, edit)"},
+                                      "description": "Optional picture to follow (pose/depth/edges); experimental"},
                     "control_type": {"type": "string", "enum": ["pose", "depth", "edges"],
                                      "description": "What to take from control_image (default pose)"},
                     "control_strength": {"type": "number", "description": "0-1, how strictly to follow it (default 0.8)"},
                     "references": {"type": "array", "items": {"type": "string"},
-                                   "description": "Workspace paths of images to work FROM — "
-                                                  "the result will resemble them"},
+                                   "description": "Images to work from"},
                     "seed": {"type": "integer",
                              "description": "Optional seed for a repeatable image"},
                     "steps": {"type": "integer",
@@ -2681,23 +2667,17 @@ def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provi
         ),
         Tool(
             name="generate_video",
-            description="Make a video clip from a text prompt — or animate a still: give `image` "
-                        "(a workspace path) and it becomes the first frame. Up to 8 s renders "
-                        "full size (1280x704, ~25 s per second of clip). Longer (9-60 s) makes a "
-                        "small DRAFT in passes that hand motion to each other (~30 s per second of "
-                        "clip) — cheap, for judging motion and story — "
-                        "then finish_video makes the approved draft sharp and smooth. Saves an "
-                        "MP4 into the workspace. Describe motion and camera, not just a scene.",
+            description='Make a clip on the render box. Up to 8 s at full size (~25 s per second); 9-60 s makes a small anchored DRAFT for judging motion and story, then finish_video makes it sharp. Optional `image` becomes the first frame. Describe motion and camera.',
             parameters={
                 "type": "object",
                 "properties": {
                     "prompt": {"type": "string", "description": "What happens in the clip — subject, motion, camera"},
                     "image": {"type": "string", "description": "Optional workspace path of a still to animate (first frame)"},
-                    "seconds": {"type": "number", "description": "Clip length in seconds: 2-8 full size, 9-60 as a small draft (default 5)"},
+                    "seconds": {"type": "number", "description": "Seconds: 2-8 full size, 9-60 draft (default 5)"},
                     "filename": {"type": "string", "description": "Optional output name; defaults to a slug"},
                     "seed": {"type": "integer", "description": "Optional seed for a repeatable clip"},
                     "quality": {"type": "string", "enum": ["fast", "best"],
-                                "description": "fast (default, 8 distilled steps) or best (stock 20 steps, ~4x slower)"},
+                                "description": "fast (default) or best (~4x slower)"},
                 },
                 "required": ["prompt"],
             },
@@ -2708,15 +2688,10 @@ def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provi
         ),
         Tool(
             name="storyboard",
-            description="Plan a shot as stills before any video: from one hero picture (a workspace "
-                        "path, made with 'real'), make one keyframe per camera position you describe "
-                        "('wide from the quay', 'low from the bow', 'from above, following'). Same "
-                        "character, clothes and place in every frame — the hero is the identity. Small "
-                        "16:9 stills, ~2 min each. Show them; the user approves or changes them before "
-                        "story_video.",
+            description='Plan a shot as stills from one hero picture: one keyframe per camera position you describe, same character and place in every frame. Show them for approval before story_video.',
             parameters={"type": "object",
                         "properties": {"hero": {"type": "string", "description": "Workspace path of the hero picture"},
-                                       "shots": {"type": "array", "items": {"type": "string"}, "description": "2-8 shot/camera descriptions, in story order"},
+                                       "shots": {"type": "array", "items": {"type": "string"}, "description": "2-8 shots, in order"},
                                        "name": {"type": "string", "description": "Optional folder name for the keyframes"},
                                        "seed": {"type": "integer", "description": "Optional seed"}},
                         "required": ["hero", "shots"]},
@@ -2726,19 +2701,13 @@ def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provi
         ),
         Tool(
             name="story_video",
-            description="Turn approved keyframes into a small draft video: each pair of keyframes is "
-                        "filled with motion, pinned at both ends, with the hero picture holding the "
-                        "character's identity throughout (no drift across the joins). Optional `camera` "
-                        "notes per segment ('slow pan left', 'dolly in'). `upscale=true` (only after the user "
-                        "approves the draft) climbs it small-to-big in one go: two faithful refine doublings and "
-                        "frame doubling, to ~1800x1000. About 1.5 min per segment for the draft; the climb is "
-                        "roughly 10 min per 10 s.",
+            description='Fill approved keyframes into a small draft: each pair pinned at both ends, the hero holding identity across the joins. Optional `camera` note per segment. `upscale=true` only after the user approves: climbs it small-to-big (two refine doublings + frame doubling).',
             parameters={"type": "object",
-                        "properties": {"keyframes": {"type": "array", "items": {"type": "string"}, "description": "Workspace paths of the approved keyframes, in order"},
+                        "properties": {"keyframes": {"type": "array", "items": {"type": "string"}, "description": "Approved keyframes, in order"},
                                        "hero": {"type": "string", "description": "Workspace path of the hero picture"},
-                                       "prompt": {"type": "string", "description": "What happens across the shot: subject, motion, light"},
-                                       "camera": {"type": "array", "items": {"type": "string"}, "description": "Optional camera move per segment"},
-                                       "upscale": {"type": "boolean", "description": "Also run the guided 2x upscale (default false)"},
+                                       "prompt": {"type": "string", "description": "What happens across the shot"},
+                                       "camera": {"type": "array", "items": {"type": "string"}, "description": "Camera move per segment"},
+                                       "upscale": {"type": "boolean", "description": "Climb to full frame after approval"},
                                        "filename": {"type": "string", "description": "Optional output name"},
                                        "seed": {"type": "integer", "description": "Optional seed"}},
                         "required": ["keyframes", "hero", "prompt"]},
@@ -2749,14 +2718,10 @@ def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provi
         ),
         Tool(
             name="finish_video",
-            description="Finishing pass for a small draft video the user approved: doubles the "
-                        "resolution with a real refinement pass (the model puts detail back — a "
-                        "resize can't), adds a photographic realism pass, keeps the look constant "
-                        "across the whole clip, and doubles the frame rate with interpolation. Give "
-                        "the same `prompt` the draft was made with. About 1.5 min per 3 s of clip.",
+            description='Finishing pass for an approved small draft: refine 2x (real detail back, look kept constant) and frame doubling. Give the same `prompt` the draft used. ~1.5 min per 3 s.',
             parameters={"type": "object",
-                        "properties": {"video": {"type": "string", "description": "Workspace path of the draft (small) video"},
-                                       "prompt": {"type": "string", "description": "The prompt the draft was made with"},
+                        "properties": {"video": {"type": "string", "description": "The draft video"},
+                                       "prompt": {"type": "string", "description": "The draft's prompt"},
                                        "filename": {"type": "string", "description": "Optional output name"},
                                        "seed": {"type": "integer", "description": "Optional seed"}},
                         "required": ["video", "prompt"]},
@@ -2780,31 +2745,21 @@ def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provi
         ),
         Tool(
             name="restyle_video",
-            description="Change the look of an existing video (a workspace path). Two layers: a `prompt` "
-                        "re-paints CONTENT and era with the model while keeping motion and framing "
-                        "('the same shot at night', 'a 1975 living room', 'as a charcoal animation'), "
-                        "and a `stock` lays a film look over it deterministically in seconds "
-                        "(16mm, super8, vhs, noir). Use both for '1975 16mm'; use stock alone when only "
-                        "the finish should change. Optionally give a `reference_image` for the exact look. "
-                        "Structure is read from the source as "
-                        "depth (default), edges, or the people's poses. Needs a source with structure "
-                        "(people, rooms, streets); a mostly-sky or flat shot gives it nothing to hold and "
-                        "it invents a scene — use control='edges' for those. Runs on the render box, about "
-                        "2-5 min per 5 s of video at ~480p, 16 fps. Saves an MP4 into the workspace.",
+            description="Change the look of a workspace video: a `prompt` re-paints content and era while keeping motion and framing (needs a source with structure; use control='edges' for flat/sky shots), a `stock` (16mm, super8, vhs, noir) lays a film finish over it in seconds, alone or after. Optional `reference_image` pins the look.",
             parameters={
                 "type": "object",
                 "properties": {
                     "video": {"type": "string", "description": "Workspace path of the source video"},
-                    "prompt": {"type": "string", "description": "The new look — time of day, era, film stock, medium, weather"},
+                    "prompt": {"type": "string", "description": "The new look"},
                     "reference_image": {"type": "string", "description": "Optional workspace path of a still that shows the look"},
-                    "control": {"type": "string", "enum": ["depth", "edges", "pose"], "description": "What to keep from the source (default depth)"},
-                    "strength": {"type": "number", "description": "0-1, how strictly to follow the source structure (default 1.0)"},
+                    "control": {"type": "string", "enum": ["depth", "edges", "pose"], "description": "depth (default), edges, pose"},
+                    "strength": {"type": "number", "description": "0-1 (default 1)"},
                     "start": {"type": "number", "description": "Seconds into the source to begin (default 0)"},
-                    "seconds": {"type": "number", "description": "How many seconds to restyle (default: all, in 5 s passes)"},
+                    "seconds": {"type": "number", "description": "Seconds to restyle (default all)"},
                     "filename": {"type": "string", "description": "Optional output name"},
                     "seed": {"type": "integer", "description": "Optional seed"},
                     "stock": {"type": "string", "enum": ["16mm", "super8", "vhs", "noir"],
-                              "description": "Film-stock finish applied after (or instead of) the model pass"},
+                              "description": "Film finish"},
                 },
                 "required": ["video"],
             },
