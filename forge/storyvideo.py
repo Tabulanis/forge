@@ -196,6 +196,7 @@ def check_frame(hero: str, frame: str, shot: str) -> dict:
          f"clothes, vehicle/objects and place, from this camera position: \"{shot}\".\n"
          "Check continuity strictly. List only real problems, one per line, prefixed with '- ': things missing that "
          "should be visible, things added that weren't in the reference (a second lighthouse, extra people), the "
+         "the SAME character appearing twice (e.g. one on the boat and one on the quay), "
          "character facing the wrong way for the shot, impossible positions (walking through a wall, standing on "
          "water), a different vehicle or clothes, a different time of day. Do NOT flag differences the requested camera "
          "position itself causes — size in frame, angle, which side of the character is visible, what is cropped out. "
@@ -209,25 +210,42 @@ def check_frame(hero: str, frame: str, shot: str) -> dict:
     return {"ok": ok, "issues": issues, "raw": ans[:600]}
 
 
+RULES = ("The character appears EXACTLY ONCE in the frame. Exactly one of each landmark. "
+         "Anything the character has left behind (a boat, a chair) is empty. ")
+
+
 def storyboard_checked(hero: str, shots: list[str], out_dir: str, base: str = DEFAULT_URL,
                        width: int | None = None, height: int | None = None, seed: int | None = None,
-                       retries: int = 1) -> tuple[list[str], list[dict]]:
-    """Storyboard with a continuity check per frame and one corrective redo. Returns (frames, reports)."""
+                       retries: int = 1, place: str | None = None, chain: bool = True,
+                       scene: str = "") -> tuple[list[str], list[dict]]:
+    """Storyboard with a continuity check per frame and one corrective redo. Returns (frames, reports).
+    hero = the CHARACTER (alone). place = optional picture of the setting without them. chain = each
+    frame is made from the previous one + the character, so the world continues instead of restarting.
+    scene = a fixed scene map carried into every prompt (where things are, which way is which)."""
     out = Path(out_dir).expanduser(); out.mkdir(parents=True, exist_ok=True)
     w, h = width or STORY["board_w"], height or STORY["board_h"]
     seed = random.randrange(2 ** 31) if seed is None else int(seed)
     frames, reports = [], []
     for i, shot in enumerate(shots):
         p = out / f"key{i + 1:02d}.png"
-        prompt = f"{shot}. Keep the same character, clothes, boat and place as image 1. Exactly one of each landmark."
+        refs = [hero]
+        who = "the person in image 1"
+        if chain and frames:
+            refs = [frames[-1], hero]; who = "the person in image 2"
+            lead = f"Continue directly from image 1 (the previous shot): {shot}. The character is {who}."
+        elif place:
+            refs = [hero, place]; lead = f"{shot}. The character is {who}; the place is image 2."
+        else:
+            lead = f"{shot}. The character is {who}."
+        prompt = f"{lead} {scene} {RULES}Same clothes, same time of day."
         rep = {"shot": shot, "attempts": []}
         for attempt in range(retries + 1):
-            imagegen.render(prompt, str(p), preset="edit", references=[hero], seed=seed + i + 100 * attempt, width=w, height=h, base=base)
+            imagegen.render(prompt, str(p), preset="edit", references=refs, seed=seed + i + 100 * attempt, width=w, height=h, base=base)
             chk = check_frame(hero, str(p), shot)
             rep["attempts"].append(chk)
             if chk["ok"]:
                 break
-            prompt = f"{shot}. Keep the same character, clothes, boat and place as image 1. Fix these problems: " + "; ".join(chk["issues"][:4]) + "."
+            prompt = f"{lead} {scene} {RULES}Fix these problems: " + "; ".join(chk["issues"][:4]) + "."
         rep["final_ok"] = rep["attempts"][-1]["ok"]
         frames.append(str(p)); reports.append(rep)
     return frames, reports
@@ -243,8 +261,9 @@ def inbetweens(keyframes: list[str], hero: str, out_dir: str, base: str = DEFAUL
     expanded = [keyframes[0]]
     for i in range(len(keyframes) - 1):
         p = out / f"key{i + 1:02d}b.png"
-        imagegen.render("The exact halfway point of the camera move and the action from image 1 to image 2: same character, "
-                        "clothes and place as image 3, camera midway between the two positions, the action midway along.",
-                        str(p), preset="edit", references=[keyframes[i], keyframes[i + 1], hero], seed=seed + i, width=w, height=h, base=base)
+        imagegen.render("Image 1 is the shot before, image 2 the shot after. Make the exact halfway point between them: the "
+                        "camera midway between the two positions, the action midway along, the same single character and the "
+                        "same place. " + RULES,
+                        str(p), preset="edit", references=[keyframes[i], keyframes[i + 1]], seed=seed + i, width=w, height=h, base=base)
         expanded += [str(p), keyframes[i + 1]]
     return expanded
