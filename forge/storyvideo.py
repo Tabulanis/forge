@@ -167,3 +167,84 @@ def guided_up(draft: str, prompt: str, hero: str, out_path: str, factor: int = 2
     subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-f", "concat", "-safe", "0", "-i", str(lst),
                     "-vf", f"setpts=N/({fps}*TB)", "-r", str(fps), "-c:v", "libx264", "-crf", "14", "-pix_fmt", "yuv420p", "-an", str(out)], check=True, timeout=600)
     return str(out)
+
+
+# ---- continuity: look before you fill --------------------------------------------------------------
+def _look(images: list[str], question: str, max_tokens: int = 400) -> str:
+    """Ask the house vision model (media.vision_url — her own eyes) about one or more pictures."""
+    import base64, urllib.request
+    from .config import load_config
+    from .media import load_media_config
+    mc = load_media_config(load_config())
+    url = (getattr(mc, "vision_url", "") or "http://127.0.0.1:8087/v1").rstrip("/") + "/chat/completions"
+    content = []
+    for i, p in enumerate(images):
+        b = base64.b64encode(Path(p).read_bytes()).decode()
+        content.append({"type": "text", "text": f"Image {i + 1}:"})
+        content.append({"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b}"}})
+    content.append({"type": "text", "text": question})
+    body = {"model": getattr(mc, "vision_model", "") or "vision", "messages": [{"role": "user", "content": content}],
+            "max_tokens": max_tokens, "temperature": 0.1, "chat_template_kwargs": {"enable_thinking": False}}
+    req = urllib.request.Request(url, json.dumps(body).encode(), {"Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=180) as r:
+        return json.load(r)["choices"][0]["message"]["content"].strip()
+
+
+def check_frame(hero: str, frame: str, shot: str) -> dict:
+    """Continuity check: does the keyframe keep the hero's world and match the shot? Returns {ok, issues}."""
+    q = ("Image 1 is the reference (the hero). Image 2 is a new keyframe that should show the SAME character, "
+         f"clothes, vehicle/objects and place, from this camera position: \"{shot}\".\n"
+         "Check continuity strictly. List only real problems, one per line, prefixed with '- ': things missing that "
+         "should be visible, things added that weren't in the reference (a second lighthouse, extra people), the "
+         "character facing the wrong way for the shot, impossible positions (walking through a wall, standing on "
+         "water), a different vehicle or clothes, a different time of day. Do NOT flag differences the requested camera "
+         "position itself causes — size in frame, angle, which side of the character is visible, what is cropped out. "
+         "If the frame is consistent and matches the shot, reply exactly: OK")
+    try:
+        ans = _look([hero, frame], q)
+    except Exception as e:
+        return {"ok": True, "issues": [], "note": f"check skipped: {type(e).__name__}"}
+    issues = [ln[2:].strip() for ln in ans.splitlines() if ln.strip().startswith("- ")]
+    ok = ans.strip().upper().startswith("OK") or not issues
+    return {"ok": ok, "issues": issues, "raw": ans[:600]}
+
+
+def storyboard_checked(hero: str, shots: list[str], out_dir: str, base: str = DEFAULT_URL,
+                       width: int | None = None, height: int | None = None, seed: int | None = None,
+                       retries: int = 1) -> tuple[list[str], list[dict]]:
+    """Storyboard with a continuity check per frame and one corrective redo. Returns (frames, reports)."""
+    out = Path(out_dir).expanduser(); out.mkdir(parents=True, exist_ok=True)
+    w, h = width or STORY["board_w"], height or STORY["board_h"]
+    seed = random.randrange(2 ** 31) if seed is None else int(seed)
+    frames, reports = [], []
+    for i, shot in enumerate(shots):
+        p = out / f"key{i + 1:02d}.png"
+        prompt = f"{shot}. Keep the same character, clothes, boat and place as image 1. Exactly one of each landmark."
+        rep = {"shot": shot, "attempts": []}
+        for attempt in range(retries + 1):
+            imagegen.render(prompt, str(p), preset="edit", references=[hero], seed=seed + i + 100 * attempt, width=w, height=h, base=base)
+            chk = check_frame(hero, str(p), shot)
+            rep["attempts"].append(chk)
+            if chk["ok"]:
+                break
+            prompt = f"{shot}. Keep the same character, clothes, boat and place as image 1. Fix these problems: " + "; ".join(chk["issues"][:4]) + "."
+        rep["final_ok"] = rep["attempts"][-1]["ok"]
+        frames.append(str(p)); reports.append(rep)
+    return frames, reports
+
+
+def inbetweens(keyframes: list[str], hero: str, out_dir: str, base: str = DEFAULT_URL,
+               width: int | None = None, height: int | None = None, seed: int | None = None) -> list[str]:
+    """A midpoint keyframe between each pair (the deltas): made from BOTH neighbours plus the hero,
+    so the fill only bridges half the distance. Returns the expanded, ordered list."""
+    out = Path(out_dir).expanduser(); out.mkdir(parents=True, exist_ok=True)
+    w, h = width or STORY["board_w"], height or STORY["board_h"]
+    seed = random.randrange(2 ** 31) if seed is None else int(seed)
+    expanded = [keyframes[0]]
+    for i in range(len(keyframes) - 1):
+        p = out / f"key{i + 1:02d}b.png"
+        imagegen.render("The exact halfway point of the camera move and the action from image 1 to image 2: same character, "
+                        "clothes and place as image 3, camera midway between the two positions, the action midway along.",
+                        str(p), preset="edit", references=[keyframes[i], keyframes[i + 1], hero], seed=seed + i, width=w, height=h, base=base)
+        expanded += [str(p), keyframes[i + 1]]
+    return expanded
