@@ -601,3 +601,47 @@ def sheet(keyframes: list[str], beats: list[dict], out_path: str, reports: list[
             for line in textwrap.wrap("flag: " + (iss[0] if iss else ""), 58)[:2]:
                 d.text((x + 5, ty), line, fill=(170, 60, 40), font=f_r); ty += 15
     img.save(out_path); return out_path
+
+
+# ---- least resistance: keyframes on the peaks of change ---------------------------------------------
+def change_curve(video: str) -> list[float]:
+    """Per-frame change energy (mean absolute luma difference to the previous frame), via ffmpeg signalstats."""
+    import subprocess, re
+    r = subprocess.run(["ffmpeg", "-hide_banner", "-i", str(Path(video).expanduser()), "-vf", "signalstats,metadata=print:key=lavfi.signalstats.YDIF",
+                        "-f", "null", "-"], capture_output=True, text=True, timeout=600)
+    vals = [float(v) for v in re.findall(r"lavfi\.signalstats\.YDIF=([0-9.]+)", r.stderr)]
+    return vals
+
+
+def erode_peaks(curve: list[float], fps: float, min_gap_s: float = 1.0, max_frames: int = 12, smooth_s: float = 0.5) -> list[int]:
+    """Weather the curve (moving average over smooth_s), keep local maxima at least min_gap_s apart, strongest first,
+    up to max_frames including the first and last frame. Returns frame indices, sorted."""
+    n = len(curve)
+    if n == 0:
+        return [0]
+    k = max(1, int(smooth_s * fps))
+    sm = [sum(curve[max(0, i - k):i + k + 1]) / len(curve[max(0, i - k):i + k + 1]) for i in range(n)]
+    gap = max(1, int(min_gap_s * fps))
+    cands = [i for i in range(1, n - 1) if sm[i] >= sm[i - 1] and sm[i] >= sm[i + 1] and sm[i] > 0]
+    cands.sort(key=lambda i: -sm[i])
+    chosen: list[int] = [0, n - 1]
+    for i in cands:
+        if len(chosen) >= max_frames:
+            break
+        if all(abs(i - c) >= gap for c in chosen):
+            chosen.append(i)
+    return sorted(chosen)
+
+
+def decompose_peaks(video: str, out_dir: str, max_frames: int = 12, min_gap_s: float = 1.0) -> tuple[list[str], list[float]]:
+    """Keyframes on the peaks of change. Returns (png paths, times in seconds)."""
+    import subprocess
+    out = Path(out_dir).expanduser(); out.mkdir(parents=True, exist_ok=True)
+    src = str(Path(video).expanduser()); _, _, fps, _ = _probe(src)
+    idx = erode_peaks(change_curve(src), fps, min_gap_s=min_gap_s, max_frames=max_frames)
+    frames, times = [], []
+    for j, i in enumerate(idx):
+        p = out / f"src{j + 1:02d}.png"
+        subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", src, "-vf", f"select=eq(n\\,{i})", "-frames:v", "1", "-update", "1", str(p)], check=True, timeout=120)
+        frames.append(str(p)); times.append(round(i / fps, 2))
+    return frames, times
