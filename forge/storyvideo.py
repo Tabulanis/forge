@@ -300,13 +300,19 @@ def recast(src_frames: list[str], hero: str, out_dir: str, base: str = DEFAULT_U
     out = Path(out_dir).expanduser(); out.mkdir(parents=True, exist_ok=True)
     w, h = width or STORY["board_w"], height or STORY["board_h"]
     seed = random.randrange(2 ** 31) if seed is None else int(seed)
+    # a tight crop of the hero (centre 60% width, full height) so its setting can't take over the shot
+    import subprocess
+    hero_crop = str(out / "hero-figure.png")
+    subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", str(Path(hero).expanduser()),
+                    "-vf", "crop=iw*0.6:ih:iw*0.2:0", str(hero_crop)], check=True, timeout=60)
     frames = []
     for i, f in enumerate(src_frames):
         p = out / f"key{i + 1:02d}.png"
-        refs = [f, hero] + ([frames[-1]] if frames else [])
+        refs = [f, hero_crop] + ([frames[-1]] if frames else [])
         prev = " Image 3 is the previous recast shot: keep the character exactly as there." if frames else ""
-        prompt = (f"Replace the person in image 1 with the character from image 2, in the same pose and position, keeping {keep}."
-                  f"{prev} {RULES}")
+        prompt = (f"Image 1 is the shot: keep its room, camera, framing, lighting and the exact body pose of the person. "
+                  f"Change ONLY who the person is: give them the face, hair, beard and clothes of the character in image 2. "
+                  f"Do not use image 2's background or setting at all; keep {keep} from image 1.{prev} {RULES}")
         imagegen.render(prompt, str(p), preset="edit", references=refs, seed=seed + i, width=w, height=h, base=base)
         frames.append(str(p))
     return frames
