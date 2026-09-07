@@ -190,7 +190,8 @@ def _workflow(p: dict, prompt: str, seed: int, width: int, height: int,
         w["5"] = {"class_type": "TextEncodeQwenImageEditPlus", "inputs": {"clip": ["2", 0], "prompt": prompt, "vae": ["3", 0], **imgs}}
         w["6"] = {"class_type": "TextEncodeQwenImageEditPlus", "inputs": {"clip": ["2", 0], "prompt": "", "vae": ["3", 0], **imgs}}
         if ref_names:
-            w["es"] = {"class_type": "ImageScaleToTotalPixels", "inputs": {"image": ["e0", 0], "upscale_method": "lanczos", "megapixels": 1.0, "resolution_steps": 1}}
+            # the starting latent = the first reference at the REQUESTED size (16:9 storyboard stills stay 16:9)
+            w["es"] = {"class_type": "ImageScale", "inputs": {"image": ["e0", 0], "upscale_method": "lanczos", "width": width, "height": height, "crop": "center"}}
             w["7"] = {"class_type": "VAEEncode", "inputs": {"pixels": ["es", 0], "vae": ["3", 0]}}
         ref_names = []          # consumed here, not by the FLUX-style reference chain below
     if control and control.get("image"):
@@ -243,8 +244,8 @@ def render(prompt: str, out_path: str, preset: str = "sketch", references: list[
         if not r.is_file():
             raise FileNotFoundError(f"reference image not found: {r}")
     seed = random.randrange(2 ** 31) if seed is None else int(seed)
-    if p.get("size") and width == 1024 and height == 1024:
-        width = height = p["size"]           # the preset's native square
+    if p.get("size") and (width, height) == (1024, 1024):
+        width = height = p["size"]           # the preset's native square, unless the caller chose a size
     names = [_upload(base, r) for r in refs]
     control = None
     if control_image:

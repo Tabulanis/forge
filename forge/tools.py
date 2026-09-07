@@ -725,6 +725,75 @@ def _extract_pose(ws_root: str, image: str, filename: str = "", media=None) -> s
     return f"Pose skeleton saved to {path}. Use it as a reference for generate_image preset 'edit' (\"in the pose of image 1\")."
 
 
+def _ws_path(ws_root: str, rel: str) -> Path | None:
+    root = Path(ws_root).resolve()
+    q = (root / rel).resolve() if not str(rel).startswith("/") else Path(rel).resolve()
+    return q if (q == root or root in q.parents) else None
+
+
+def _storyboard(ws_root: str, hero: str, shots: list, name: str = "", seed=None, media=None) -> str:
+    """Keyframes from a hero picture, one per shot (forge.storyvideo.storyboard)."""
+    from . import storyvideo, imagegen
+    h = _ws_path(ws_root, hero)
+    if not h or not h.is_file():
+        return f"Error: hero picture not found in the workspace: {hero}"
+    if not shots or not isinstance(shots, list):
+        return "Error: give `shots` as a list of 2-8 camera/shot descriptions"
+    out_dir = _ws_path(ws_root, f"generated/{name or 'storyboard'}")
+    try:
+        from .config import load_config
+        from .media import load_media_config
+        base = getattr(load_media_config(load_config()), "imagegen_url", "") or imagegen.DEFAULT_URL
+    except Exception:
+        base = imagegen.DEFAULT_URL
+    try:
+        t0 = time.time()
+        frames = storyvideo.storyboard(str(h), [str(x) for x in shots][:8], str(out_dir), base=base, seed=seed)
+    except Exception as e:
+        return f"Error making the storyboard: {str(e)[:400]}"
+    return (f"Storyboard: {len(frames)} keyframes in {out_dir} ({time.time() - t0:.0f}s):\n" + "\n".join(frames) +
+            "\nShow them to the user and get approval before story_video.")
+
+
+def _story_video(ws_root: str, keyframes: list, hero: str, prompt: str, filename: str = "", camera: list | None = None,
+                 upscale: bool = False, seed=None, media=None) -> str:
+    """Tiny draft from approved keyframes (+ optional guided upscale) — forge.storyvideo."""
+    from . import storyvideo, videogen
+    h = _ws_path(ws_root, hero)
+    if not h or not h.is_file():
+        return f"Error: hero picture not found in the workspace: {hero}"
+    keys = []
+    for k in keyframes or []:
+        q = _ws_path(ws_root, str(k))
+        if not q or not q.is_file():
+            return f"Error: keyframe not found in the workspace: {k}"
+        keys.append(str(q))
+    if len(keys) < 2:
+        return "Error: story_video needs at least 2 keyframes"
+    name = filename if filename else f"generated/{Path(keys[0]).parent.name}-draft.mp4"
+    name = name if name.lower().endswith(".mp4") else name + ".mp4"
+    out = _ws_path(ws_root, name)
+    if not out:
+        return f"Error: output path is outside the workspace: {name}"
+    try:
+        from .config import load_config
+        from .media import load_media_config
+        base = getattr(load_media_config(load_config()), "videogen_url", "") or videogen.DEFAULT_URL
+    except Exception:
+        base = videogen.DEFAULT_URL
+    try:
+        t0 = time.time()
+        draft = storyvideo.fill(keys, prompt, str(h), str(out), base=base, seed=seed, camera=[str(c) for c in camera] if camera else None)
+        msg = f"Draft saved to {draft} ({time.time() - t0:.0f}s; small, {len(keys) - 1} segments pinned to your keyframes, hero as the identity anchor)."
+        if upscale:
+            up = str(out.with_name(out.stem + "-up.mp4"))
+            storyvideo.guided_up(draft, prompt, str(h), up, base=base, seed=seed)
+            msg += f" Guided 2x upscale saved to {up} ({time.time() - t0:.0f}s total)."
+    except Exception as e:
+        return f"Error making the story video: {str(e)[:500]}"
+    return msg + " Tell the user where it is; it's a draft to judge motion and continuity."
+
+
 def _generate_video(ws_root: str, prompt: str, image: str = "", seconds=5,
                     filename: str = "", seed=None, quality: str = "fast") -> str:
     """A clip via the render box's ComfyUI (forge.videogen). Same workspace
@@ -2632,6 +2701,45 @@ def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provi
                       _generate_video(str(ws.root), prompt, image, seconds, filename, seed, quality)),
             needs_permission=True,
             summarize=lambda a: f"generate video: {a.get('prompt', '')[:60]}",
+        ),
+        Tool(
+            name="storyboard",
+            description="Plan a shot as stills before any video: from one hero picture (a workspace "
+                        "path, made with 'real'), make one keyframe per camera position you describe "
+                        "('wide from the quay', 'low from the bow', 'from above, following'). Same "
+                        "character, clothes and place in every frame — the hero is the identity. Small "
+                        "16:9 stills, ~2 min each. Show them; the user approves or changes them before "
+                        "story_video.",
+            parameters={"type": "object",
+                        "properties": {"hero": {"type": "string", "description": "Workspace path of the hero picture"},
+                                       "shots": {"type": "array", "items": {"type": "string"}, "description": "2-8 shot/camera descriptions, in story order"},
+                                       "name": {"type": "string", "description": "Optional folder name for the keyframes"},
+                                       "seed": {"type": "integer", "description": "Optional seed"}},
+                        "required": ["hero", "shots"]},
+            run=guard(lambda hero, shots, name="", seed=None: _storyboard(str(ws.root), hero, shots, name, seed)),
+            needs_permission=True,
+            summarize=lambda a: f"storyboard: {len(a.get('shots') or [])} shots from {a.get('hero', '')}",
+        ),
+        Tool(
+            name="story_video",
+            description="Turn approved keyframes into a small draft video: each pair of keyframes is "
+                        "filled with motion, pinned at both ends, with the hero picture holding the "
+                        "character's identity throughout (no drift across the joins). Optional `camera` "
+                        "notes per segment ('slow pan left', 'dolly in'). `upscale=true` adds a guided 2x "
+                        "pass that keeps identity to the hero. About 1.5 min per segment for the draft.",
+            parameters={"type": "object",
+                        "properties": {"keyframes": {"type": "array", "items": {"type": "string"}, "description": "Workspace paths of the approved keyframes, in order"},
+                                       "hero": {"type": "string", "description": "Workspace path of the hero picture"},
+                                       "prompt": {"type": "string", "description": "What happens across the shot: subject, motion, light"},
+                                       "camera": {"type": "array", "items": {"type": "string"}, "description": "Optional camera move per segment"},
+                                       "upscale": {"type": "boolean", "description": "Also run the guided 2x upscale (default false)"},
+                                       "filename": {"type": "string", "description": "Optional output name"},
+                                       "seed": {"type": "integer", "description": "Optional seed"}},
+                        "required": ["keyframes", "hero", "prompt"]},
+            run=guard(lambda keyframes, hero, prompt, camera=None, upscale=False, filename="", seed=None:
+                      _story_video(str(ws.root), keyframes, hero, prompt, filename, camera, bool(upscale), seed)),
+            needs_permission=True,
+            summarize=lambda a: f"story video: {len(a.get('keyframes') or [])} keyframes",
         ),
         Tool(
             name="finish_video",
