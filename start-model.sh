@@ -89,7 +89,7 @@ case "${1:-big}" in
     # can address 188GB. Candidate for the deep/precise brain; unproven.
     MODEL=~/forge/models/qwen3.5-122b-a10b-abliterated/Q4_K-GGUF/Q4_K-GGUF-00001-of-00008.gguf
     MMPROJ=~/forge/models/qwen3.5-122b-a10b-abliterated/mmproj-model-f16.gguf
-    PORT=8087; CTX=32768; NGL=99
+    PORT=8087; CTX=65536; NGL=99
     # --reasoning-budget 4096, not 1024: at ~29 tok/s the 122B can afford
     # ~2 min of thought, and the 1024 cap (tuned for the 12 tok/s 27B) was
     # guillotining it mid-thought on hard problems — the server force-closes
