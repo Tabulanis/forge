@@ -467,14 +467,16 @@ def _crossfade_join(parts: list[Path], overlaps: list[int], out: Path, fps: int,
 
 def fill_bidir(keyframes: list[str], prompt: str, hero: str, out_path: str, base: str = DEFAULT_URL,
                width: int | None = None, height: int | None = None, half: int = 40, fps_declared: int | None = None,
-               seed: int | None = None, times: list[float] | None = None) -> str:
+               seed: int | None = None, times: list[float] | None = None, work_dir: str | None = None) -> str:
     """Bidirectional fill: every interior keyframe is the EVENT at the middle of its own pass
     [prev, event, next], so motion flows through it. Consecutive passes overlap by one interval, and
     the overlaps are crossfaded. With only two keyframes it is a single pinned pass."""
     w, h = width or STORY["draft_w"], height or STORY["draft_h"]
     fps_d = fps_declared or STORY["fps"]
     seed = random.randrange(2 ** 31) if seed is None else int(seed)
-    work = Path(tempfile.mkdtemp(prefix="storybidir-"))
+    # passes live next to the output (resumable): a pass file that already exists is reused
+    work = Path(work_dir).expanduser() if work_dir else Path(out_path).expanduser().with_suffix("") .with_name(Path(out_path).stem + "-passes")
+    work.mkdir(parents=True, exist_ok=True)
     hero_name = _upload(base, Path(hero).expanduser())
     names = [_upload(base, Path(k).expanduser()) for k in keyframes]
     # frames per interval: from the beat times when given (irregular), else `half` each
@@ -492,8 +494,10 @@ def fill_bidir(keyframes: list[str], prompt: str, hero: str, out_path: str, base
         for i in range(1, len(keyframes) - 1):
             a, b = ivals[i - 1], ivals[i]
             n = a + b + 1; n = (n // 4) * 4 + 1; b = n - 1 - a
-            wf = _pinned_workflow(prompt, seed + i, w, h, n, [(0, names[i - 1]), (a, names[i]), (n - 1, names[i + 1])], hero_name)
-            full = _run(base, wf, f"story: through event {i}/{len(keyframes) - 2}", work / f"p{i:02d}.mp4")
+            full = work / f"p{i:02d}.mp4"
+            if not full.is_file() or full.stat().st_size < 1000:
+                wf = _pinned_workflow(prompt, seed + i, w, h, n, [(0, names[i - 1]), (a, names[i]), (n - 1, names[i + 1])], hero_name)
+                full = _run(base, wf, f"story: through event {i}/{len(keyframes) - 2}", full)
             if i == 1:
                 parts.append(full)             # first pass: everything up to its end pin
             else:
