@@ -2633,7 +2633,7 @@ def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provi
         ),
         Tool(
             name="generate_image",
-            description='Make a picture on the render box and save it in the workspace. Presets: sketch (rough, 15 s), schnell (fast photographic people), real (photographic flagship, ~3 min), masterpiece (text/signs/layouts, ~4 min), edit (change or continue an existing picture from 1-3 references; keeps faces, ~5 min), reference (loose likeness, fast). For a specific pose: extract_pose, then edit with [skeleton, character]. Then look_at_image the result.',
+            description='Make a picture on the render box and save it in the workspace. Presets: reference (THE WORKHORSE: photographic, ~7 s, pass 1-3 pictures in references to keep a face/place/clothes or continue a picture), sketch (rough, 15 s), schnell (fast photographic people), real (slow Qwen flagship ~5 min, only when the best still is asked for), masterpiece (text/signs/layouts, ~5 min), edit (slow Qwen edit, ~5 min). For a specific pose: extract_pose, then reference with [skeleton, character]. Then look_at_image the result.',
             parameters={
                 "type": "object",
                 "properties": {
@@ -2642,7 +2642,7 @@ def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provi
                     "filename": {"type": "string",
                                  "description": "Optional output name; defaults to a slug"},
                     "preset": {"type": "string",
-                               "description": "sketch | schnell | reference | masterpiece | real | edit (default sketch)"},
+                               "description": "reference | sketch | schnell | masterpiece | real | edit (default sketch; reference for anything with a character)"},
                     "control_image": {"type": "string",
                                       "description": "Optional picture to follow (pose/depth/edges); experimental"},
                     "control_type": {"type": "string", "enum": ["pose", "depth", "edges"],

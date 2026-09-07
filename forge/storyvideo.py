@@ -39,7 +39,7 @@ def storyboard(hero: str, shots: list[str], out_dir: str, base: str = DEFAULT_UR
     frames = []
     for i, shot in enumerate(shots):
         p = out / f"key{i + 1:02d}.png"
-        imagegen.render(f"{shot}. Keep the same character, clothes, boat and place as image 1.", str(p), preset="edit",
+        imagegen.render(f"{shot}. Keep the same character, clothes, boat and place as image 1.", str(p), preset="reference",
                         references=[hero], seed=seed + i, width=w, height=h, base=base)
         frames.append(str(p))
     return frames
@@ -290,7 +290,7 @@ def storyboard_checked(hero: str, shots: list[str], out_dir: str, base: str = DE
         prompt = f"{lead} {scene} {RULES}Same clothes, same time of day."
         rep = {"shot": shot, "attempts": []}
         for attempt in range(retries + 1):
-            imagegen.render(prompt, str(p), preset="edit", references=refs, seed=seed + i + 100 * attempt, width=w, height=h, base=base)
+            imagegen.render(prompt, str(p), preset="reference", references=refs, seed=seed + i + 100 * attempt, width=w, height=h, base=base)
             chk = check_frame(hero, str(p), shot, person_only=bool(place))
             if chk["ok"] and place:
                 pc = check_place(place, str(p), shot)
@@ -322,7 +322,7 @@ def inbetweens(keyframes: list[str], hero: str, out_dir: str, base: str = DEFAUL
         imagegen.render("Image 1 is the shot before, image 2 the shot after. Make the exact halfway point between them: the "
                         "camera midway between the two positions, the action midway along, the same single character and the "
                         "same place. " + RULES,
-                        str(p), preset="edit", references=[keyframes[i], keyframes[i + 1]], seed=seed + i, width=w, height=h, base=base)
+                        str(p), preset="reference", references=[keyframes[i], keyframes[i + 1]], seed=seed + i, width=w, height=h, base=base)
         expanded += [str(p), keyframes[i + 1]]
     return expanded
 
@@ -371,7 +371,7 @@ def recast(src_frames: list[str], hero: str, out_dir: str, base: str = DEFAULT_U
         prompt = (f"Image 1 is the shot: keep its room, camera, framing, lighting and the exact body pose of the person. "
                   f"Change ONLY who the person is: give them the face, hair, beard and clothes of the character in image 2. "
                   f"Do not use image 2's background or setting at all; keep {keep} from image 1.{prev} {RULES}")
-        imagegen.render(prompt, str(p), preset="edit", references=refs, seed=seed + i, width=w, height=h, base=base)
+        imagegen.render(prompt, str(p), preset="reference", references=refs, seed=seed + i, width=w, height=h, base=base)
         frames.append(str(p))
     return frames
 
@@ -704,7 +704,7 @@ def make_place(prompt: str, out_path: str, scene_map: str, base: str = DEFAULT_U
     rep = {"attempts": []}
     for attempt in range(retries + 1):
         imagegen.render(prompt + (" " if attempt == 0 else " Fix these problems: " + "; ".join(rep["attempts"][-1]["issues"][:4]) + ". "),
-                        out_path, preset="real", seed=seed + 100 * attempt, width=width, height=height, base=base)
+                        out_path, preset="reference", seed=seed + 100 * attempt, width=width, height=height, base=base)
         q = (f"This picture must match this scene map exactly: \"{scene_map}\". No people at all. List only real problems, one per "
              "line prefixed with '- ': a landmark duplicated (two lighthouses) or missing, something on the wrong side, a person "
              "present, a building of the wrong kind. If it matches, reply exactly: OK")

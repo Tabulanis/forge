@@ -2,7 +2,7 @@
 
 Presets are the house's picture-making tiers (2026-09-05):
   sketch      Z-Image-Turbo — ~20 s, text only. The everyday one.
-  reference   FLUX.2-klein 9B — takes reference images: "make it look like this".
+  reference   FLUX.2-klein 4B (Apache) — the workhorse: hero, keyframes, edits; takes reference images. ~7 s warm.
   masterpiece Qwen-Image — the flagship (Apache 2.0).
   (Licensing rule, 2026-09-05: only permissively licensed models — Apache/MIT.
    FLUX.2-dev and klein-9B are non-commercial-licensed and were removed.)
