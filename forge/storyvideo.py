@@ -214,6 +214,22 @@ RULES = ("The character appears EXACTLY ONCE in the frame. Exactly one of each l
          "Anything the character has left behind (a boat, a chair) is empty. ")
 
 
+def check_transition(prev_frame: str, frame: str, prev_beat: str, beat: str, cause: str = "") -> dict:
+    """Causal check: does image 2 follow from image 1 as the beat says? Flags impossible consequences."""
+    q = ("Image 1 is the previous keyframe of a continuous shot; image 2 is the next one, a few seconds later.\n"
+         f"Previous keyframe: \"{prev_beat}\"\nThis keyframe: \"{beat}\"" + (f"\nStated cause: {cause}" if cause else "") + "\n"
+         "Judge only whether image 2 is a physically possible consequence of image 1 in that time: same place seen from a "
+         "plausible camera move, the character moved a plausible distance, nothing passed through a wall or door that was "
+         "closed, nothing that was left behind moved, no object appeared or vanished. List only real problems, one per line "
+         "prefixed with '- '. If it follows, reply exactly: OK")
+    try:
+        ans = _look([prev_frame, frame], q)
+    except Exception as e:
+        return {"ok": True, "issues": [], "note": f"check skipped: {type(e).__name__}"}
+    issues = [ln[2:].strip() for ln in ans.splitlines() if ln.strip().startswith("- ")]
+    return {"ok": ans.strip().upper().startswith("OK") or not issues, "issues": issues, "raw": ans[:600]}
+
+
 def storyboard_checked(hero: str, shots: list[str], out_dir: str, base: str = DEFAULT_URL,
                        width: int | None = None, height: int | None = None, seed: int | None = None,
                        retries: int = 1, place: str | None = None, chain: bool = True,
@@ -242,6 +258,10 @@ def storyboard_checked(hero: str, shots: list[str], out_dir: str, base: str = DE
         for attempt in range(retries + 1):
             imagegen.render(prompt, str(p), preset="edit", references=refs, seed=seed + i + 100 * attempt, width=w, height=h, base=base)
             chk = check_frame(hero, str(p), shot)
+            if chk["ok"] and frames:
+                tr = check_transition(frames[-1], str(p), shots[i - 1], shot)
+                if not tr["ok"]:
+                    chk = {"ok": False, "issues": ["transition: " + x for x in tr["issues"]], "raw": tr.get("raw", "")}
             rep["attempts"].append(chk)
             if chk["ok"]:
                 break
@@ -517,9 +537,12 @@ def beat_sheet(idea: str, seconds: float, beat_seconds: float = 2.5, character: 
          "(a few steps, a hand on a handle, a turn of the head), never a jump to a new place; the same place unless a beat "
          "explicitly says CUT; the character appears exactly once; what they leave behind stays where it was, empty; "
          "NO new props, clothing or objects that were not in the character or scene description (no sticks, gloves, bags, hats). "
-         "Describe what the camera sees, not the story. Give a short camera note per keyframe (e.g. 'static wide', "
-         "'slow pan left following', 'push in').\n"
-         "Answer as JSON only: a list of objects with keys t (seconds), beat (one or two sentences), camera (a few words).")
+         "Every keyframe after the first is CAUSED by the one before: state the cause. The time of a keyframe is the "
+         "time of the previous one plus how long that consequence physically takes (a step: ~1 s; twenty metres of walking: "
+         "~12 s; a door opening: ~2 s). Describe what the camera sees, not the story. Give a short camera note per keyframe "
+         "(e.g. 'static wide', 'slow pan left following', 'push in').\n"
+         "Answer as JSON only: a list of objects with keys t (seconds), beat (one or two sentences: what is true now), "
+         "cause (one short clause: because ...), camera (a few words).")
     raw = _ask(q)
     import re
     m = re.search(r"\[.*\]", raw, re.S)
@@ -528,7 +551,7 @@ def beat_sheet(idea: str, seconds: float, beat_seconds: float = 2.5, character: 
     if not beats:
         raise RuntimeError("the brain did not return a beat list: " + raw[:200])
     for i, b in enumerate(beats):
-        b.setdefault("t", round(i * beat_seconds, 1)); b.setdefault("camera", "")
+        b.setdefault("t", round(i * beat_seconds, 1)); b.setdefault("camera", ""); b.setdefault("cause", "" if i == 0 else "follows from the previous keyframe")
         b["t"] = float(b["t"])
     beats.sort(key=lambda b: b["t"])
     beats[0]["t"] = 0.0
@@ -545,3 +568,36 @@ def story_from_beats(beats: list[dict], hero: str, out_dir: str, prompt: str, ou
     draft = fill_bidir(keys, prompt, hero, out_path, base=base, width=draft_w, height=draft_h, fps_declared=fps_d, seed=seed,
                        times=[float(b["t"]) for b in beats])
     return {"keyframes": keys, "reports": reports, "draft": draft, "beats": beats}
+
+
+def sheet(keyframes: list[str], beats: list[dict], out_path: str, reports: list[dict] | None = None) -> str:
+    """A contact sheet that shows the chain: each frame with its time, beat, cause and the checker's verdict."""
+    from PIL import Image, ImageDraw, ImageFont
+    import textwrap
+    W, H, CAP = 400, 225, 150
+    cols = min(3, len(keyframes)); rows = (len(keyframes) + cols - 1) // cols
+    img = Image.new("RGB", (cols * W + 20, rows * (H + CAP) + 20), (243, 244, 242))
+    d = ImageDraw.Draw(img)
+    try:
+        f_b = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 14)
+        f_r = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 12)
+    except Exception:
+        f_b = f_r = ImageFont.load_default()
+    for i, k in enumerate(keyframes):
+        x = 10 + (i % cols) * W; y = 10 + (i // cols) * (H + CAP)
+        im = Image.open(k).convert("RGB"); im.thumbnail((W - 10, H - 10)); img.paste(im, (x + 5, y + 5))
+        b = beats[i] if i < len(beats) else {}
+        ok = (reports[i].get("final_ok") if reports and i < len(reports) else None)
+        head = f"{i + 1}.  t = {b.get('t', '?')} s   [{b.get('camera', '')}]" + ("" if ok is None else ("   ✓" if ok else "   ✗ flagged"))
+        d.text((x + 5, y + H), head, fill=(29, 33, 38), font=f_b)
+        ty = y + H + 20
+        for line in textwrap.wrap(str(b.get("beat", "")), 58)[:4]:
+            d.text((x + 5, ty), line, fill=(29, 33, 38), font=f_r); ty += 15
+        if b.get("cause"):
+            for line in textwrap.wrap("because " + str(b["cause"]).removeprefix("because ").strip(), 58)[:2]:
+                d.text((x + 5, ty), line, fill=(74, 100, 114), font=f_r); ty += 15
+        if reports and i < len(reports) and not reports[i].get("final_ok", True):
+            iss = reports[i]["attempts"][-1].get("issues", [])[:1]
+            for line in textwrap.wrap("flag: " + (iss[0] if iss else ""), 58)[:2]:
+                d.text((x + 5, ty), line, fill=(170, 60, 40), font=f_r); ty += 15
+    img.save(out_path); return out_path
