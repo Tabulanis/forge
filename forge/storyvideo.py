@@ -196,7 +196,8 @@ def check_frame(hero: str, frame: str, shot: str) -> dict:
          f"clothes, vehicle/objects and place, from this camera position: \"{shot}\".\n"
          "Check continuity strictly. List only real problems, one per line, prefixed with '- ': things missing that "
          "should be visible, things added that weren't in the reference (a second lighthouse, extra people), the "
-         "the SAME character appearing twice (e.g. one on the boat and one on the quay), "
+         "the SAME character appearing twice (e.g. one on the boat and one on the quay), objects or props that appeared "
+         "from nowhere (bags, boots, sticks), a vehicle or building that changed design (a different boat, a different café), "
          "character facing the wrong way for the shot, impossible positions (walking through a wall, standing on "
          "water), a different vehicle or clothes, a different time of day. Do NOT flag differences the requested camera "
          "position itself causes — size in frame, angle, which side of the character is visible, what is cropped out. "
@@ -247,8 +248,9 @@ def storyboard_checked(hero: str, shots: list[str], out_dir: str, base: str = DE
         refs = [hero]
         who = "the person in image 1"
         if chain and frames:
-            refs = [frames[-1], hero]; who = "the person in image 2"
-            lead = f"Continue directly from image 1 (the previous shot): {shot}. The character is {who}."
+            refs = [frames[-1], hero] + ([place] if place else []); who = "the person in image 2"
+            lead = (f"Continue directly from image 1 (the previous shot): {shot}. The character is {who}."
+                    + (" The place, its buildings and its boat are exactly those of image 3 — never redesign them." if place else ""))
         elif place:
             refs = [hero, place]; lead = f"{shot}. The character is {who}; the place is image 2."
         else:
