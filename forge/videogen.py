@@ -520,7 +520,11 @@ LONG2 = {"width": 512, "height": 288, "chunk_frames": 81, "overlap": 13, "fps": 
 
 
 def _vace_extend_workflow(prompt: str, seed: int, width: int, height: int, frames: int,
-                          tail_name: str | None, overlap: int, ref_name: str | None) -> dict:
+                          tail_name: str | None, overlap: int, ref_name: str | None,
+                          start_name: str | None = None, depth_name: str | None = None) -> dict:
+    """One VACE pass. Control video = pinned frames (the previous tail, or the start still on pass 1; mask 0 =
+    keep these pixels) followed by the new frames' guide (mask 1 = generate): the scene's depth map repeated,
+    which holds the camera and the room in place, or flat grey = no guidance. ref_name = identity reference."""
     p = RESTYLE
     w = {
         "1": {"class_type": "UnetLoaderGGUF", "inputs": {"unet_name": p["unet"]}},
@@ -540,22 +544,42 @@ def _vace_extend_workflow(prompt: str, seed: int, width: int, height: int, frame
         "10": {"class_type": "CreateVideo", "inputs": {"images": ["9", 0], "fps": 24}},
         "11": {"class_type": "SaveVideo", "inputs": {"video": ["10", 0], "filename_prefix": "merge/vace_ext", "format": "auto", "codec": "auto"}},
     }
+    n_pin = overlap if tail_name else (1 if start_name else 0)
+    n_new = max(1, frames - n_pin)
+    pin = None
     if tail_name:
-        # control video = the previous tail (overlap frames) padded with grey to `frames`; mask = 0 on the tail, 1 after
         w["t0"] = {"class_type": "LoadVideo", "inputs": {"file": tail_name}}
         w["t1"] = {"class_type": "GetVideoComponents", "inputs": {"video": ["t0", 0]}}
         w["t2"] = {"class_type": "ImageScale", "inputs": {"image": ["t1", 0], "upscale_method": "lanczos", "width": width, "height": height, "crop": "center"}}
-        w["g0"] = {"class_type": "EmptyImage", "inputs": {"width": width, "height": height, "batch_size": frames - overlap, "color": 8355711}}   # 0x7F7F7F grey
-        w["c0"] = {"class_type": "ImageBatch", "inputs": {"image1": ["t2", 0], "image2": ["g0", 0]}}
+        pin = ["t2", 0]
+    elif start_name:
+        w["s0"] = {"class_type": "LoadImage", "inputs": {"image": start_name}}
+        w["s1"] = {"class_type": "ImageScale", "inputs": {"image": ["s0", 0], "upscale_method": "lanczos", "width": width, "height": height, "crop": "center"}}
+        pin = ["s1", 0]
+    if depth_name:
+        # the scene's depth, one copy per new frame: the camera and the room are held, the model animates within
+        w["d0"] = {"class_type": "LoadImage", "inputs": {"image": depth_name}}
+        w["d1"] = {"class_type": "ImageScale", "inputs": {"image": ["d0", 0], "upscale_method": "lanczos", "width": width, "height": height, "crop": "center"}}
+        w["d2"] = {"class_type": "RepeatImageBatch", "inputs": {"image": ["d1", 0], "amount": n_new}}
+        filler = ["d2", 0]
+    else:
+        w["g0"] = {"class_type": "EmptyImage", "inputs": {"width": width, "height": height, "batch_size": n_new, "color": 8355711}}   # 0x7F7F7F grey = no guidance
+        filler = ["g0", 0]
+    if pin or depth_name:
         w["m0"] = {"class_type": "SolidMask", "inputs": {"value": 0.0, "width": width, "height": height}}
         w["m1"] = {"class_type": "SolidMask", "inputs": {"value": 1.0, "width": width, "height": height}}
-        w["mb0"] = {"class_type": "RepeatImageBatch", "inputs": {"image": ["mk0", 0], "amount": overlap}}
-        w["mb1"] = {"class_type": "RepeatImageBatch", "inputs": {"image": ["mk1", 0], "amount": frames - overlap}}
         w["mk0"] = {"class_type": "MaskToImage", "inputs": {"mask": ["m0", 0]}}
         w["mk1"] = {"class_type": "MaskToImage", "inputs": {"mask": ["m1", 0]}}
-        w["mc"] = {"class_type": "ImageBatch", "inputs": {"image1": ["mb0", 0], "image2": ["mb1", 0]}}
-        w["mm"] = {"class_type": "ImageToMask", "inputs": {"image": ["mc", 0], "channel": "red"}}
-        w["7"]["inputs"]["control_video"] = ["c0", 0]
+        w["mb1"] = {"class_type": "RepeatImageBatch", "inputs": {"image": ["mk1", 0], "amount": n_new}}
+        if pin:
+            w["c0"] = {"class_type": "ImageBatch", "inputs": {"image1": pin, "image2": filler}}
+            w["mb0"] = {"class_type": "RepeatImageBatch", "inputs": {"image": ["mk0", 0], "amount": n_pin}}
+            w["mc"] = {"class_type": "ImageBatch", "inputs": {"image1": ["mb0", 0], "image2": ["mb1", 0]}}
+            control, masks = ["c0", 0], ["mc", 0]
+        else:
+            control, masks = filler, ["mb1", 0]
+        w["mm"] = {"class_type": "ImageToMask", "inputs": {"image": masks, "channel": "red"}}
+        w["7"]["inputs"]["control_video"] = control
         w["7"]["inputs"]["control_masks"] = ["mm", 0]
     if ref_name:
         w["r0"] = {"class_type": "LoadImage", "inputs": {"image": ref_name}}
@@ -563,9 +587,66 @@ def _vace_extend_workflow(prompt: str, seed: int, width: int, height: int, frame
     return w
 
 
+def depth_map(image: str, out_path: str, base: str = DEFAULT_URL, free_person: bool = False,
+              width: int | None = None, height: int | None = None) -> str:
+    """Depth map of a still (DepthAnything V2 on the render box), saved to out_path.
+    free_person=True clean-plates the character: their box is filled from the depth around it, so a
+    depth lock holds the room and the camera but leaves the person free to move."""
+    import urllib.request, urllib.parse
+    from PIL import Image
+    name = _upload(base, Path(image).expanduser())
+    wf = {"1": {"class_type": "LoadImage", "inputs": {"image": name}},
+          "2": {"class_type": "DepthAnythingV2Preprocessor", "inputs": {"image": ["1", 0], "ckpt_name": "depth_anything_v2_vitb.pth", "resolution": 512}},
+          "3": {"class_type": "SaveImage", "inputs": {"images": ["2", 0], "filename_prefix": "merge/depth"}}}
+    pid = _post(base, "/prompt", {"prompt": wf}, 30)["prompt_id"]
+    t0 = time.time()
+    while True:
+        h = json.loads(_get(base, f"/history/{pid}")).get(pid)
+        st = (h or {}).get("status", {})
+        if st.get("completed"):
+            break
+        if st.get("status_str") == "error":
+            raise RuntimeError("depth failed: " + json.dumps(st)[:300])
+        if time.time() - t0 > 300:
+            raise TimeoutError("depth map took over 5 minutes")
+        time.sleep(1.0)
+    img = h["outputs"]["3"]["images"][0]
+    qs = urllib.parse.urlencode({"filename": img["filename"], "subfolder": img.get("subfolder", ""), "type": img.get("type", "output")})
+    raw = urllib.request.urlopen(f"{base}/view?{qs}", timeout=60).read()
+    out = Path(out_path).expanduser(); out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_bytes(raw)
+    im = Image.open(out).convert("L")
+    if width and height:
+        im = im.resize((int(width), int(height)), Image.LANCZOS)
+    if free_person:
+        try:
+            from .storyvideo import keypoints_of
+            rec, cw, ch = keypoints_of(image, base=base)
+            pts = []
+            for person in rec.get("people", []):
+                k = person.get("pose_keypoints_2d", [])
+                pts += [(k[i] / cw, k[i + 1] / ch) for i in range(0, len(k), 3) if k[i + 2] > 0.3]
+            if pts:
+                W, H = im.size
+                xs = [x * W for x, _ in pts]; ys = [y * H for _, y in pts]
+                mx, my = 0.15 * W, 0.10 * H
+                x0, x1 = max(0, int(min(xs) - mx)), min(W - 1, int(max(xs) + mx))
+                y0, y1 = max(0, int(min(ys) - my)), min(H - 1, int(max(ys) + 2 * my))   # legs run below the last joint
+                px = im.load()
+                for y in range(y0, y1 + 1):
+                    a, b = px[x0, y], px[x1, y]        # depth just outside the box on each side
+                    span = max(1, x1 - x0)
+                    for x in range(x0, x1 + 1):
+                        px[x, y] = int(a + (b - a) * (x - x0) / span)
+        except Exception:
+            pass                                       # no person found: a plain depth map is still a lock
+    im.save(out)
+    return str(out)
+
+
 def long_video2(prompt: str, out_path: str, seconds: float = 12.0, reference_image: str | None = None,
                 width: int | None = None, height: int | None = None, fps_declared: int | None = None,
-                seed: int | None = None, base: str = DEFAULT_URL) -> str:
+                seed: int | None = None, base: str = DEFAULT_URL, lock: str | None = "scene") -> str:
     """Long DRAFT with motion memory: VACE chunks, each continuing from the last `overlap` frames of
     the previous one. Output declared at fps_declared (default 16 — 1.5x slower than model motion;
     24 = true speed, 10 = long and slow). Returns out_path."""
@@ -576,23 +657,32 @@ def long_video2(prompt: str, out_path: str, seconds: float = 12.0, reference_ima
     seed = random.randrange(2 ** 31) if seed is None else int(seed)
     work = Path(tempfile.mkdtemp(prefix="longvid2-"))
     total = max(5, int(round(seconds * fps_d)))          # frames of output at the declared rate
-    ref = _upload(base, Path(reference_image).expanduser()) if reference_image else None
+    # The opening frame: the still we were given, or one klein makes from the prompt (seconds). It is pinned
+    # as frame 1, it is the identity reference for every pass, and its depth map is the lock that keeps the
+    # camera and the room from creeping pass to pass (measured 2026-09-07: a 30 s café take zoomed itself
+    # from a wide shot to a close-up and swapped the background twice without it).
+    if reference_image:
+        still = Path(reference_image).expanduser()
+    else:
+        from . import imagegen
+        still = work / "start.png"
+        sw, sh = imagegen.fit_size(None, None, None, 1024, default=(w, h)) if max(w, h) < 1024 else (w, h)
+        imagegen.render(prompt, str(still), preset="reference", seed=seed, width=sw, height=sh, base=base)
+    ref = _upload(base, still)
+    depth_name = None
+    if lock in ("frame", "scene"):
+        depth_name = _upload(base, Path(depth_map(str(still), str(work / "depth.png"), base=base, free_person=(lock == "scene"), width=w, height=h)))
     chunks: list[Path] = []; tail: Path | None = None; got = 0; k = 0
     while got < total:
-        if ref is None and k == 1:
-            # no hero given: the first pass's opening frame becomes the anchor for every later pass
-            # (measured 2026-09-07: without an anchor the boat, the light and the landmarks drift pass to pass)
-            anchor = work / "anchor.png"
-            subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", str(chunks[0]), "-frames:v", "1", "-update", "1", str(anchor)], check=True, timeout=120)
-            ref = _upload(base, anchor)
-        n = min(L["chunk_frames"], total - got + (L["overlap"] if tail else 0))
+        n = min(L["chunk_frames"], total - got + (L["overlap"] if tail else 1))
         n = (n // 4) * 4 + 1 if n >= 5 else 5
         tail_name = _upload(base, tail) if tail else None
-        wf = _vace_extend_workflow(prompt, seed + k, w, h, n, tail_name, L["overlap"], ref)
+        wf = _vace_extend_workflow(prompt, seed + k, w, h, n, tail_name, L["overlap"], ref,
+                                   start_name=(None if tail else ref), depth_name=depth_name)
         part = _run(base, wf, f"long clip: pass {k + 1}", work / f"chunk{k:02d}.mp4")
         # new frames only (drop the overlap that repeats the previous tail)
         keep = work / f"keep{k:02d}.mp4"
-        skip = L["overlap"] if tail else 0
+        skip = L["overlap"] if tail else 0          # pass 1 keeps its pinned opening frame
         subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", str(part), "-vf", f"select=gte(n\\,{skip}),setpts=N/FRAME_RATE/TB",
                         "-c:v", "libx264", "-crf", "14", "-pix_fmt", "yuv420p", "-an", str(keep)], check=True, timeout=600)
         chunks.append(keep); got += n - skip

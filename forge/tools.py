@@ -808,7 +808,7 @@ def _story_video(ws_root: str, keyframes: list, hero: str, prompt: str, filename
 
 def _generate_video(ws_root: str, prompt: str, image: str = "", seconds=5,
                     filename: str = "", seed=None, quality: str = "fast",
-                    width=None, height=None, aspect: str = "") -> str:
+                    width=None, height=None, aspect: str = "", lock: str = "scene") -> str:
     """A clip via the render box's ComfyUI (forge.videogen). Same workspace
     rules as images: everything in, everything out, stays inside the workspace."""
     from . import videogen
@@ -846,7 +846,8 @@ def _generate_video(ws_root: str, prompt: str, image: str = "", seconds=5,
             # judge motion and story; finish_video refines and smooths the one the user approves.
             from . import imagegen
             w, h = imagegen.fit_size(width, height, aspect, None, like=img, default=(videogen.LONG2["width"], videogen.LONG2["height"]))
-            path = videogen.long_video2(prompt, str(out), seconds=secs, reference_image=img, seed=seed, base=base, width=w, height=h)
+            lk = str(lock or "scene").lower(); lk = None if lk in ("none", "off", "free") else ("frame" if lk == "frame" else "scene")
+            path = videogen.long_video2(prompt, str(out), seconds=secs, reference_image=img, seed=seed, base=base, width=w, height=h, lock=lk)
             return (f"Draft saved to {path} ({secs:.0f}s, small {w}x{h} preview at "
                     f"{videogen.LONG2['fps']} fps, motion carried across passes; took {time.time() - t0:.0f}s). "
                     f"Tell the user where it is and that it's a draft for judging motion — finish_video makes it sharp and smooth.")
@@ -2696,6 +2697,8 @@ def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provi
                     "filename": {"type": "string", "description": "Optional output name; defaults to a slug"},
                     "seed": {"type": "integer", "description": "Optional seed for a repeatable clip"},
                     "aspect": {"type": "string", "description": "Shape: '16:9', '9:16', '1:1'... (default: the start image's shape, else 16:9)"},
+                    "lock": {"type": "string", "enum": ["scene", "frame", "none"],
+                             "description": "Long takes only. scene (default) = camera and room held by the opening frame's depth, the character free; frame = everything held, for a seated/still character; none = free-running (drifts)"},
                     "width": {"type": "integer", "description": "Exact width in pixels (snapped to 16)"},
                     "height": {"type": "integer", "description": "Exact height in pixels"},
                     "quality": {"type": "string", "enum": ["fast", "best"],
@@ -2703,8 +2706,8 @@ def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provi
                 },
                 "required": ["prompt"],
             },
-            run=guard(lambda prompt, image="", seconds=5, filename="", seed=None, quality="fast", width=None, height=None, aspect="":
-                      _generate_video(str(ws.root), prompt, image, seconds, filename, seed, quality, width=width, height=height, aspect=aspect)),
+            run=guard(lambda prompt, image="", seconds=5, filename="", seed=None, quality="fast", width=None, height=None, aspect="", lock="scene":
+                      _generate_video(str(ws.root), prompt, image, seconds, filename, seed, quality, width=width, height=height, aspect=aspect, lock=lock)),
             needs_permission=True,
             summarize=lambda a: f"generate video: {a.get('prompt', '')[:60]}",
         ),
