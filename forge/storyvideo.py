@@ -195,10 +195,12 @@ def check_frame(hero: str, frame: str, shot: str, person_only: bool = False) -> 
     if person_only:
         q = ("Image 1 shows the CHARACTER (only the person matters here — ignore image 1's background entirely). Image 2 is a "
              f"new keyframe that should show the SAME person — face, hair, beard, build, clothes — from this camera position: \"{shot}\".\n"
-             "List only real problems, one per line, prefixed with '- ': a different face or beard, different clothes or colours, "
-             "a new garment or prop, the same person appearing twice, the person facing the wrong way for the shot, the described "
-             "action not happening, the requested camera position not followed. Do NOT mention the setting, boats, buildings or "
-             "objects around them. If the person is consistent and the shot is followed, reply exactly: OK")
+             "First, in one sentence, describe the person in image 2 in your own words: where they are in the frame, which way they "
+             "face, what their hands do, what they wear. Then compare with image 1 and with the shot. List only real, specific problems, "
+             "one per line prefixed with '- ', each stating the EVIDENCE you see (for example: '- he faces the camera, but the shot says "
+             "he faces the door on the right'; '- his jacket is orange, image 1's is yellow'). Never write generic category names. "
+             "Do NOT mention the setting, boats, buildings or objects around them. When in doubt, it is fine. If the person is "
+             "consistent and the shot is followed, end your reply with the single word: OK")
     else:
         q = ("Image 1 is the reference (the hero). Image 2 is a new keyframe that should show the SAME character, "
          f"clothes, vehicle/objects and place, from this camera position: \"{shot}\".\n"
@@ -217,7 +219,7 @@ def check_frame(hero: str, frame: str, shot: str, person_only: bool = False) -> 
     except Exception as e:
         return {"ok": True, "issues": [], "note": f"check skipped: {type(e).__name__}"}
     issues = [ln[2:].strip() for ln in ans.splitlines() if ln.strip().startswith("- ")]
-    ok = ans.strip().upper().startswith("OK") or not issues
+    ok = ans.strip().upper().startswith("OK") or ans.strip().upper().endswith("OK") or not issues
     return {"ok": ok, "issues": issues, "raw": ans[:600]}
 
 
