@@ -493,15 +493,20 @@ def fill_bidir(keyframes: list[str], prompt: str, hero: str, out_path: str, base
             a, b = ivals[i - 1], ivals[i]
             n = a + b + 1; n = (n // 4) * 4 + 1; b = n - 1 - a
             wf = _pinned_workflow(prompt, seed + i, w, h, n, [(0, names[i - 1]), (a, names[i]), (n - 1, names[i + 1])], hero_name)
-            parts.append(_run(base, wf, f"story: through event {i}/{len(keyframes) - 2}", work / f"p{i:02d}.mp4"))
-            if i > 1:
-                overlaps.append(a + 1)         # the shared interval prev->event
+            full = _run(base, wf, f"story: through event {i}/{len(keyframes) - 2}", work / f"p{i:02d}.mp4")
+            if i == 1:
+                parts.append(full)             # first pass: everything up to its end pin
+            else:
+                # later passes: only from their middle pin (which is the previous pass's end pin) onward —
+                # the pin frame is identical in both, so the cut lands on it and motion flows through
+                cut = work / f"c{i:02d}.mp4"
+                subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", str(full), "-vf", f"select=gte(n\,{a + 1}),setpts=N/FRAME_RATE/TB",
+                                "-c:v", "libx264", "-crf", "14", "-pix_fmt", "yuv420p", "-an", str(cut)], check=True, timeout=600)
+                parts.append(cut)
     out = Path(out_path).expanduser(); out.parent.mkdir(parents=True, exist_ok=True)
-    if len(parts) == 1:
-        subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", str(parts[0]), "-vf", f"setpts=N/({fps_d}*TB)", "-r", str(fps_d),
-                        "-c:v", "libx264", "-crf", "14", "-pix_fmt", "yuv420p", "-an", str(out)], check=True, timeout=900)
-    else:
-        _crossfade_join(parts, overlaps, out, fps_d, work)
+    lst = work / "list.txt"; lst.write_text("".join(f"file '{x}'\n" for x in parts))
+    subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-f", "concat", "-safe", "0", "-i", str(lst),
+                    "-vf", f"setpts=N/({fps_d}*TB)", "-r", str(fps_d), "-c:v", "libx264", "-crf", "14", "-pix_fmt", "yuv420p", "-an", str(out)], check=True, timeout=900)
     return str(out)
 
 
