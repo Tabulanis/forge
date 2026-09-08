@@ -295,6 +295,16 @@ def _snap(v: float) -> int:
     return int(max(MIN_SIDE, min(MAX_SIDE, round(v / GRID) * GRID)))
 
 
+def image_size(path) -> tuple[int, int] | None:
+    """(width, height) of a picture on disk, or None."""
+    try:
+        from PIL import Image
+        with Image.open(str(Path(path).expanduser())) as im:
+            return im.size
+    except Exception:
+        return None
+
+
 def image_aspect(path) -> float | None:
     """width/height of a picture on disk, or None."""
     try:
@@ -317,6 +327,13 @@ def fit_size(width=None, height=None, aspect=None, size=None, like=None,
         return _snap(w), _snap(h)
     ratio = parse_aspect(aspect)
     if ratio is None and like:
+        # Nothing asked for at all: match the reference exactly, size and shape.
+        # Inheriting only the shape quietly upsized a 768-wide hero's keyframe to
+        # 1024 (caught 2026-09-08), which is surprising and costs render time.
+        if not (w or h or size):
+            wh = image_size(like)
+            if wh:
+                return _snap(wh[0]), _snap(wh[1])
         ratio = image_aspect(like)
     if ratio is None and not (w or h) and not size:
         return _snap(default[0]), _snap(default[1])
