@@ -410,24 +410,31 @@ function md(t) {
 // Tool results say "Image saved to /…/foo.png" / "Screenshot saved to …";
 // her own replies may mention the path too. Dedup so it appears once.
 const shownImages = new Set();
-function imagePaths(text) {
-  const re = /(\/[^\s"'()]+\.(?:png|jpe?g|webp|gif))/gi;
-  const out = []; let m;
-  while ((m = re.exec(text || ''))) out.push(m[1]);
-  return [...new Set(out)];
+// Full paths first, then BARE filenames — she usually writes "**clip_final.mp4**" with no folder,
+// which used to show nothing at all. The server resolves a bare name inside the session workspace,
+// and a wrong guess removes its own card in onerror, so loose matching is safe.
+function filePaths(text, exts) {
+  const out = [], seen = new Set();
+  const push = s => { const b = s.split('/').pop().toLowerCase(); if (!seen.has(b)) { seen.add(b); out.push(s); } };
+  let m;
+  const full = new RegExp('((?:~|\\/)[^\\s"\'()]+\\.(?:' + exts + '))', 'gi');
+  while ((m = full.exec(text || ''))) push(m[1]);
+  const bare = new RegExp('(?:^|[\\s"\'(*`\\[~])([A-Za-z0-9][A-Za-z0-9._-]*\\.(?:' + exts + '))', 'gi');
+  while ((m = bare.exec(text || ''))) push(m[1]);
+  return out;
 }
-function videoPaths(text) {
-  const re = /(\/[^\s"'()]+\.(?:mp4|webm|mov|m4v))/gi;
-  const out = []; let m;
-  while ((m = re.exec(text || ''))) out.push(m[1]);
-  return [...new Set(out)];
+function imagePaths(text) { return filePaths(text, 'png|jpe?g|webp|gif'); }
+function videoPaths(text) { return filePaths(text, 'mp4|webm|mov|m4v'); }
+function fileUrl(path) {
+  return q('/api/file?path=' + encodeURIComponent(path) + '&session=' + encodeURIComponent(SESSION || ''));
 }
 function showVideo(path) {
-  if (shownImages.has(path)) return;
-  shownImages.add(path);
+  const key = path.split('/').pop().toLowerCase();
+  if (shownImages.has(key)) return;
+  shownImages.add(key);
   const card = el('imgcard');
   const v = document.createElement('video');
-  v.src = q('/api/file?path=' + encodeURIComponent(path));
+  v.src = fileUrl(path);
   v.controls = true; v.playsInline = true; v.setAttribute('playsinline', ''); v.preload = 'metadata';
   v.muted = false; v.loop = true;
   v.onerror = () => card.remove();     // not servable / not really a video
@@ -439,11 +446,12 @@ function showVideo(path) {
   log.scrollTop = log.scrollHeight;
 }
 function showImage(path) {
-  if (shownImages.has(path)) return;
-  shownImages.add(path);
+  const key = path.split('/').pop().toLowerCase();
+  if (shownImages.has(key)) return;
+  shownImages.add(key);
   const card = el('imgcard');
   const img = document.createElement('img');
-  img.src = q('/api/file?path=' + encodeURIComponent(path));
+  img.src = fileUrl(path);
   img.alt = path.split('/').pop();
   img.onclick = () => window.open(img.src, '_blank');
   img.onerror = () => card.remove();     // not servable / not really an image

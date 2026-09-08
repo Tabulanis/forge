@@ -19,6 +19,9 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
+import contextlib
+import contextvars
+
 from .imagegen import _post, _get, _upload, add_loras, using_loras, extra_loras   # same ComfyUI plumbing + LoRA context
 
 DEFAULT_URL = "http://10.42.0.1:8189"
@@ -154,6 +157,26 @@ if __name__ == "__main__":
 # shot at night", "1975 handheld 16mm" — optionally steered by a reference still for the look.
 # The owner's 2025 recipe, rebuilt: 4-step lightx2v distill, cfg 1, uni_pc, shift 8, 16 fps,
 # up to 81 frames (5 s) per pass at ~480p. Longer inputs are cut into passes and joined.
+# How many sampling steps the VACE draft passes take, for the render happening right now. The distill
+# LoRA makes 4 steps usable; more steps buy detail and motion coherence at a near-linear time cost.
+# None = the preset's own number. Set by the tool layer (see using_steps).
+draft_steps: contextvars.ContextVar = contextvars.ContextVar("draft_steps", default=None)
+
+
+@contextlib.contextmanager
+def using_steps(steps):
+    tok = draft_steps.set(int(steps) if steps else None)
+    try:
+        yield
+    finally:
+        draft_steps.reset(tok)
+
+
+def _steps(p: dict) -> int:
+    """The step count this pass should use: the render-time override, else the preset's."""
+    return int(draft_steps.get() or p["steps"])
+
+
 RESTYLE = {
     "unet": "Wan2.1_14B_VACE-Q6_K.gguf", "clip": "umt5_xxl_fp8_e4m3fn_scaled.safetensors", "vae": "wan_2.1_vae.safetensors",
     "lora": "Wan21_T2V_14B_lightx2v_cfg_step_distill_lora_rank64.safetensors",
@@ -188,7 +211,7 @@ def _restyle_workflow(src_name: str, prompt: str, seed: int, width: int, height:
         "7": {"class_type": "WanVaceToVideo", "inputs": {"positive": ["5", 0], "negative": ["6", 0], "vae": ["3", 0],
               "width": width, "height": height, "length": frames, "batch_size": 1, "strength": float(strength),
               "control_video": ["v3", 0]}},
-        "8": {"class_type": "KSampler", "inputs": {"model": ["4", 0], "seed": seed, "steps": p["steps"], "cfg": p["cfg"],
+        "8": {"class_type": "KSampler", "inputs": {"model": ["4", 0], "seed": seed, "steps": _steps(p), "cfg": p["cfg"],
               "sampler_name": p["sampler"], "scheduler": p["scheduler"], "denoise": 1.0,
               "positive": ["7", 0], "negative": ["7", 1], "latent_image": ["7", 2]}},
         "9t": {"class_type": "TrimVideoLatent", "inputs": {"samples": ["8", 0], "trim_amount": ["7", 3]}},
@@ -603,7 +626,7 @@ def _vace_extend_workflow(prompt: str, seed: int, width: int, height: int, frame
         "6": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["2", 0], "text": "static, frozen, still image, subtitles, text, watermark, logo, extra fingers, deformed hands, duplicated person"}},
         "7": {"class_type": "WanVaceToVideo", "inputs": {"positive": ["5", 0], "negative": ["6", 0], "vae": ["3", 0],
               "width": width, "height": height, "length": frames, "batch_size": 1, "strength": 1.0}},
-        "8": {"class_type": "KSampler", "inputs": {"model": ["4", 0], "seed": seed, "steps": p["steps"], "cfg": p["cfg"],
+        "8": {"class_type": "KSampler", "inputs": {"model": ["4", 0], "seed": seed, "steps": _steps(p), "cfg": p["cfg"],
               "sampler_name": p["sampler"], "scheduler": p["scheduler"], "denoise": 1.0,
               "positive": ["7", 0], "negative": ["7", 1], "latent_image": ["7", 2]}},
         "9t": {"class_type": "TrimVideoLatent", "inputs": {"samples": ["8", 0], "trim_amount": ["7", 3]}},

@@ -602,6 +602,13 @@ def _physics_sim(scenario: str, params: dict | None = None) -> str:
 _LORA_FAMILY_OF_PRESET = {"reference": "klein", "real": "qwen", "edit": "qwen", "masterpiece": "qwen"}
 
 
+def _detail_ctx(detail: str):
+    """draft = the distill LoRA's 4 steps (fast, for judging motion); fine = 8 steps (more detail and
+    steadier motion, roughly twice the time). The climb adds no detail the draft never had."""
+    from . import videogen
+    return videogen.using_steps(8 if str(detail or "").lower() in ("fine", "best", "high") else None)
+
+
 def _lora_ctx(specs, family: str):
     """The render-time LoRA context for a tool call: resolves ['name:0.7', ...] against the manifest."""
     from . import loras, imagegen
@@ -816,7 +823,7 @@ def _storyboard(ws_root: str, hero: str, shots: list, name: str = "", seed=None,
 
 
 def _story_video(ws_root: str, keyframes: list, hero: str, prompt: str, filename: str = "", camera: list | None = None,
-                 upscale: bool = False, seed=None, media=None, loras=None) -> str:
+                 upscale: bool = False, seed=None, media=None, loras=None, detail: str = "draft") -> str:
     """Tiny draft from approved keyframes (+ optional guided upscale) — forge.storyvideo."""
     from . import storyvideo, videogen
     h = _ws_path(ws_root, hero)
@@ -845,7 +852,7 @@ def _story_video(ws_root: str, keyframes: list, hero: str, prompt: str, filename
         t0 = time.time()
         from . import imagegen
         dw, dh = imagegen.fit_size(None, None, None, 512, like=keys[0], default=(512, 288))   # the keyframes' shape, tiny
-        with _lora_ctx(loras, "wan14b"):
+        with _lora_ctx(loras, "wan14b"), _detail_ctx(detail):
             draft = storyvideo.fill(keys, prompt, str(h), str(out), base=base, seed=seed, width=dw, height=dh,
                                     camera=[str(c) for c in camera] if camera else None)
         msg = f"Draft saved to {draft} ({time.time() - t0:.0f}s; small {dw}x{dh}, {len(keys) - 1} segments pinned to your keyframes, hero as the identity anchor)."
@@ -862,7 +869,8 @@ def _story_video(ws_root: str, keyframes: list, hero: str, prompt: str, filename
 
 def _generate_video(ws_root: str, prompt: str, image: str = "", seconds=5,
                     filename: str = "", seed=None, quality: str = "fast",
-                    width=None, height=None, aspect: str = "", lock: str = "scene", loras=None) -> str:
+                    width=None, height=None, aspect: str = "", lock: str = "scene", loras=None,
+                    detail: str = "draft") -> str:
     """A clip via the render box's ComfyUI (forge.videogen). Same workspace
     rules as images: everything in, everything out, stays inside the workspace."""
     from . import videogen
@@ -899,7 +907,7 @@ def _generate_video(ws_root: str, prompt: str, image: str = "", seconds=5,
     except Exception as e:
         return f"Error: {e}"
     try:
-      with ctx:
+      with ctx, _detail_ctx(detail):
         if secs > 8 or loras:
             # LoRAs live on the 14B draft model, so a short clip WITH LoRAs takes the draft path too
             # long form = a small DRAFT in chained chunks (continuity from frame to frame). Cheap to
@@ -2759,6 +2767,7 @@ def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provi
                     "seed": {"type": "integer", "description": "Optional seed for a repeatable clip"},
                     "aspect": {"type": "string", "description": "Shape: '16:9', '9:16', '1:1'... (default: the start image's shape, else 16:9)"},
                     "loras": {"type": "array", "items": {"type": "string"}, "description": "Installed wan14b LoRAs to add, 'name' or 'name:strength' (lora_list). With LoRAs a clip always takes the draft path"},
+                    "detail": {"type": "string", "enum": ["draft", "fine"], "description": "draft (default) = 4 sampling steps, fast, for judging motion; fine = 8 steps, more detail and steadier motion, about twice the time"},
                     "lock": {"type": "string", "enum": ["scene", "frame", "none"],
                              "description": "Long takes only. scene (default) = camera and room held by the opening frame's depth, the character free; frame = everything held, for a seated/still character; none = free-running (drifts)"},
                     "width": {"type": "integer", "description": "Exact width in pixels (snapped to 16)"},
@@ -2768,8 +2777,8 @@ def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provi
                 },
                 "required": ["prompt"],
             },
-            run=guard(lambda prompt, image="", seconds=5, filename="", seed=None, quality="fast", width=None, height=None, aspect="", lock="scene", loras=None:
-                      _generate_video(str(ws.root), prompt, image, seconds, filename, seed, quality, width=width, height=height, aspect=aspect, lock=lock, loras=loras)),
+            run=guard(lambda prompt, image="", seconds=5, filename="", seed=None, quality="fast", width=None, height=None, aspect="", lock="scene", loras=None, detail="draft":
+                      _generate_video(str(ws.root), prompt, image, seconds, filename, seed, quality, width=width, height=height, aspect=aspect, lock=lock, loras=loras, detail=detail)),
             needs_permission=True,
             summarize=lambda a: f"generate video: {a.get('prompt', '')[:60]}",
         ),
@@ -2799,11 +2808,12 @@ def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provi
                                        "camera": {"type": "array", "items": {"type": "string"}, "description": "Camera move per segment"},
                                        "upscale": {"type": "boolean", "description": "Climb to full frame after approval"},
                                        "loras": {"type": "array", "items": {"type": "string"}, "description": "Installed wan14b LoRAs for the draft, 'name' or 'name:strength'"},
+                                       "detail": {"type": "string", "enum": ["draft", "fine"], "description": "draft (default) = 4 steps, fast; fine = 8 steps, more detail, about twice the time"},
                                        "filename": {"type": "string", "description": "Optional output name"},
                                        "seed": {"type": "integer", "description": "Optional seed"}},
                         "required": ["keyframes", "hero", "prompt"]},
-            run=guard(lambda keyframes, hero, prompt, camera=None, upscale=False, filename="", seed=None, loras=None:
-                      _story_video(str(ws.root), keyframes, hero, prompt, filename, camera, bool(upscale), seed, loras=loras)),
+            run=guard(lambda keyframes, hero, prompt, camera=None, upscale=False, filename="", seed=None, loras=None, detail="draft":
+                      _story_video(str(ws.root), keyframes, hero, prompt, filename, camera, bool(upscale), seed, loras=loras, detail=detail)),
             needs_permission=True,
             summarize=lambda a: f"story video: {len(a.get('keyframes') or [])} keyframes",
         ),

@@ -22,7 +22,7 @@ import time
 from pathlib import Path
 
 from . import imagegen, videogen
-from .videogen import DEFAULT_URL, RESTYLE, _run, _upload, _probe, _post, _get
+from .videogen import DEFAULT_URL, RESTYLE, _run, _upload, _probe, _post, _get, _steps
 from .imagegen import add_loras
 
 STORY = {"board_w": 768, "board_h": 432,          # storyboard stills (16:9, small)
@@ -77,7 +77,7 @@ def _fill_workflow(prompt: str, seed: int, w: int, h: int, n: int, first_name: s
         "7": {"class_type": "WanVaceToVideo", "inputs": {"positive": ["5", 0], "negative": ["6", 0], "vae": ["3", 0],
               "width": w, "height": h, "length": n, "batch_size": 1, "strength": 1.0,
               "control_video": ["c1", 0], "control_masks": ["mm", 0], "reference_image": ["r0", 0]}},
-        "8": {"class_type": "KSampler", "inputs": {"model": ["4", 0], "seed": seed, "steps": p["steps"], "cfg": p["cfg"],
+        "8": {"class_type": "KSampler", "inputs": {"model": ["4", 0], "seed": seed, "steps": _steps(p), "cfg": p["cfg"],
               "sampler_name": p["sampler"], "scheduler": p["scheduler"], "denoise": 1.0,
               "positive": ["7", 0], "negative": ["7", 1], "latent_image": ["7", 2]}},
         "9t": {"class_type": "TrimVideoLatent", "inputs": {"samples": ["8", 0], "trim_amount": ["7", 3]}},
@@ -135,7 +135,7 @@ def _guided_workflow(src_name: str, prompt: str, seed: int, w: int, h: int, n: i
         "7": {"class_type": "WanVaceToVideo", "inputs": {"positive": ["5", 0], "negative": ["6", 0], "vae": ["3", 0],
               "width": w, "height": h, "length": n, "batch_size": 1, "strength": float(strength),
               "control_video": ["v2", 0], "reference_image": ["r0", 0]}},
-        "8": {"class_type": "KSampler", "inputs": {"model": ["4", 0], "seed": seed, "steps": p["steps"], "cfg": p["cfg"],
+        "8": {"class_type": "KSampler", "inputs": {"model": ["4", 0], "seed": seed, "steps": _steps(p), "cfg": p["cfg"],
               "sampler_name": p["sampler"], "scheduler": p["scheduler"], "denoise": 1.0,
               "positive": ["7", 0], "negative": ["7", 1], "latent_image": ["7", 2]}},
         "9t": {"class_type": "TrimVideoLatent", "inputs": {"samples": ["8", 0], "trim_amount": ["7", 3]}},
@@ -450,7 +450,7 @@ def _pinned_workflow(prompt: str, seed: int, w: int, h: int, n: int, pins: list[
         wf["r0"] = {"class_type": "LoadImage", "inputs": {"image": hero_name}}
         vace["reference_image"] = ["r0", 0]
     wf["7"] = {"class_type": "WanVaceToVideo", "inputs": vace}
-    wf["8"] = {"class_type": "KSampler", "inputs": {"model": ["4", 0], "seed": seed, "steps": p["steps"], "cfg": p["cfg"],
+    wf["8"] = {"class_type": "KSampler", "inputs": {"model": ["4", 0], "seed": seed, "steps": _steps(p), "cfg": p["cfg"],
                "sampler_name": p["sampler"], "scheduler": p["scheduler"], "denoise": 1.0,
                "positive": ["7", 0], "negative": ["7", 1], "latent_image": ["7", 2]}}
     wf["9t"] = {"class_type": "TrimVideoLatent", "inputs": {"samples": ["8", 0], "trim_amount": ["7", 3]}}

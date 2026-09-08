@@ -439,9 +439,31 @@ _VID_EXT = {".mp4", ".webm", ".mov", ".m4v"}
 _VID_MIME = {".mp4": "video/mp4", ".m4v": "video/mp4", ".webm": "video/webm", ".mov": "video/quicktime"}
 
 
+def _find_in_workspace(name: str, session: str) -> Path | None:
+    """A bare filename ('cafe-draft.mp4') resolved inside that session's workspace. She names files
+    without their folder all the time — that used to mean the dash showed nothing at all."""
+    if not session or "/" in name or "\\" in name:
+        return None
+    sess = STORE.get(session)
+    if not sess:
+        STORE.rescan()
+        sess = STORE.get(session)
+    if not sess:
+        return None
+    root = Path(sess.workspace).expanduser()
+    hits = [c for c in (root / name, root / "generated" / name) if c.is_file()]
+    if not hits:
+        try:                                   # a folder deeper (storyboards, story runs)
+            hits = sorted((c for c in root.glob(f"*/{name}") if c.is_file()), key=lambda c: c.stat().st_mtime, reverse=True)
+            hits += sorted((c for c in root.glob(f"*/*/{name}") if c.is_file()), key=lambda c: c.stat().st_mtime, reverse=True)
+        except OSError:
+            hits = []
+    return hits[0].resolve() if hits else None
+
+
 @app.get("/api/file", dependencies=[Depends(require_token)])
-def serve_file(path: str):
-    p = Path(path).expanduser().resolve()
+def serve_file(path: str, session: str = ""):
+    p = _find_in_workspace(path, session) or Path(path).expanduser().resolve()
     home = Path.home().resolve()
     if p != home and home not in p.parents:
         raise HTTPException(403, "Outside the home directory")
