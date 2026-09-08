@@ -2936,13 +2936,16 @@ def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provi
     # Everything outside the mode's core set stays reachable through the
     # index rather than riding along on every request. Registered here so
     # find_tools/load_tools can resolve a name to a real tool.
-    from .modes import _CORE
     _INDEX_REGISTRY.clear()
     # The index must not contain the tools that OPERATE it: find_tools' own
     # description carries example phrases ("search my email", "design a
     # bracket"), so it matched those queries and returned itself instead of the
     # tool being asked for.
     _META = {"find_tools", "load_tools"}
-    _INDEX_REGISTRY.update({t.name: t for t in _built
-                            if t.name not in _CORE and t.name not in _META})
+    # Every tool is on her belt now, so the index is no longer a hiding place —
+    # it is a searchable catalogue of what she already carries. Registering all
+    # of them also fixes a stale exclusion: it filtered by _CORE (27) while the
+    # belt was _ALL (35), so eight tools were simultaneously always-loaded AND
+    # offered by find_tools as if they had to be fetched.
+    _INDEX_REGISTRY.update({t.name: t for t in _built if t.name not in _META})
     return _built

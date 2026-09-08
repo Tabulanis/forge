@@ -56,7 +56,16 @@ _CORE = {
     "storyboard", "story_video",                                    # plan as stills, fill as motion
 }
 
-# 2026-09-06: every mode advertises the SAME tool set (_ALL). The model's chat template puts
+# 2026-09-08: every mode now advertises EVERY tool she has ("tools": None means
+# no restriction — see Agent.tool_schemas). The curation this replaces was right
+# when it was written and wrong now: hiding 51 of her 84 tools behind a search
+# step saved ~9.6k tokens, which was 62% of the old 24k window and is 11.6% of
+# the 131k window she has today. The cost of that saving was that she could not
+# see what she owned — the 2026-09-08 browser incident, where she inspected a
+# page she had no tool to open, is exactly that failure. Privacy modes still
+# remove tools via their deny list; that is a different mechanism and untouched.
+#
+# 2026-09-06: every mode advertises the SAME tool set. The model's chat template puts
 # tool schemas at the very top of the prompt, so a per-mode list changed the first bytes and
 # threw away the whole cached prompt on every mode switch (measured: 40 full re-reads in a
 # day, 24 min). Mode-specific restraint now lives in the nudge, not the schema list.
@@ -96,7 +105,7 @@ _ALL = _CORE | _WRITING | _LIGHT
 MODES = {
     "flash": {
         "label": "⚡ Flash", "thinking": False, "temperature": 0.7,
-        "tools": _ALL, "superego": False, "max_steps": 14, "wall_seconds": 300,
+        "tools": None, "superego": False, "max_steps": 14, "wall_seconds": 300,
         "nudge": "Move fast and keep it conversational. Don't reach for heavy "
                  "tooling unless it's genuinely needed — this is for quick chat "
                  "and planning. No shell commands, no file edits, no renders "
@@ -104,7 +113,7 @@ MODES = {
     },
     "muse": {
         "label": "\U0001f3a8 Muse", "thinking": False, "temperature": 1.05,
-        "tools": _ALL, "superego": False, "max_steps": 14, "wall_seconds": 300,
+        "tools": None, "superego": False, "max_steps": 14, "wall_seconds": 300,
         "nudge": "Be imaginative and generative — riff, explore, follow wild "
                  "ideas, don't hedge or self-censor. This is for fiction and "
                  "brainstorming, not fact-checking; surprise beats caution here. "
@@ -115,25 +124,25 @@ MODES = {
         # quick), full tools + honesty check. Reach for Precise/Deep when a
         # problem actually needs her to sit and think.
         "label": "⚖️ Balanced", "thinking": False, "temperature": 0.7,
-        "tools": _ALL, "superego": False, "max_steps": 40, "wall_seconds": 600,   # 2026-09-06: reviewer pass = a full extra prompt read per tool turn; kept for precise/deep/teach/bughunt
+        "tools": None, "superego": False, "max_steps": 40, "wall_seconds": 600,   # 2026-09-06: reviewer pass = a full extra prompt read per tool turn; kept for precise/deep/teach/bughunt
         "nudge": "",
     },
     "precise": {
         "label": "\U0001f3af Precise", "thinking": True, "temperature": 0.2,
-        "tools": _ALL, "superego": True, "max_steps": 40, "wall_seconds": 1200,
+        "tools": None, "superego": True, "max_steps": 40, "wall_seconds": 1200,
         "nudge": "Accuracy above all. Verify with tools — compute for any number, "
                  "web_search for any fact — cite what you find, and say plainly "
                  "when you're unsure instead of guessing.",
     },
     "deep": {
         "label": "\U0001f9e0 Deep", "thinking": True, "temperature": 0.45,
-        "tools": _ALL, "superego": True, "max_steps": 80, "wall_seconds": 1800,
+        "tools": None, "superego": True, "max_steps": 80, "wall_seconds": 1800,
         "nudge": "Take your time and be thorough. Work through edge cases, check "
                  "your own work, and don't stop until it's genuinely solid.",
     },
     "teach": {
         "label": "\U0001f393 Teach", "thinking": True, "temperature": 0.6,
-        "tools": _ALL, "superego": True, "max_steps": 40, "wall_seconds": 1200,
+        "tools": None, "superego": True, "max_steps": 40, "wall_seconds": 1200,
         "nudge": "Teach — don't just answer. The goal is that they UNDERSTAND, "
                  "not that they walk away with a result. Start from first "
                  "principles at their level, and build on what they already know: "
@@ -150,7 +159,7 @@ MODES = {
         # Same capability as Deep, plus the flight recorder. For when something
         # is going wrong and someone will need to reconstruct it afterwards.
         "label": "\U0001f41e Bug Hunt", "thinking": True, "temperature": 0.3,
-        "tools": _ALL, "superego": True, "max_steps": 60,
+        "tools": None, "superego": True, "max_steps": 60,
         # Same leash as Deep. Without this it inherited the 600s default and
         # the first thinking-on bug-hunt run (2026-09-05) died at 637s with
         # findings written and no answer — the ceiling, not the reasoning.
