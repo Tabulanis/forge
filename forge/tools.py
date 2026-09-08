@@ -2120,11 +2120,12 @@ def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provi
         ),
         Tool(
             name="fetch_url",
-            description="Fetch a web page and read its text (scripts/menus stripped). "
-                        "Use after web_search to read a result in full, or on a URL the "
-                        "user gives you. Returns the page's readable text. Pass 'contains' "
-                        "to get ONLY the matching lines (with context) — grep-not-dump for "
-                        "big pages.",
+            description="Download a web page and read its text (scripts/menus stripped). "
+                        "TEXT ONLY — it does NOT open the browser and does NOT run the "
+                        "page's JavaScript, so a web app will look empty. To actually LOAD "
+                        "something (an app, a game, anything you built), use `browse` "
+                        "instead. Use this after web_search to read an article. Pass "
+                        "'contains' to get ONLY the matching lines (with context).",
             parameters={
                 "type": "object",
                 "properties": {
@@ -2166,7 +2167,9 @@ def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provi
         ),
         Tool(
             name="browser_js",
-            description="Run JavaScript in the current browser page and get the result. "
+            description="Run JavaScript in the page `browse` opened, and get the result. "
+                        "Call `browse` FIRST — with no page open this runs against a blank "
+                        "one and everything comes back undefined. "
                         "Use it to click things, fill inputs, or inspect state — e.g. "
                         "\"document.querySelector('#go').click()\" or "
                         "\"document.title\". Runs in the live page from browse.",

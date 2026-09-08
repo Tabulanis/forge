@@ -35,11 +35,12 @@ _CORE = {
     "read_file", "write_file", "edit_file", "list_dir", "search",   # files
     "run_command",                                                  # shell
     "web_search", "fetch_url",                                      # the world
-    # 2026-09-08: fetch_url already drives a REAL browser and leaves the page
-    # open, but the three tools for seeing and touching that page were built
-    # and never put on her belt — so she could open a page and then do nothing
-    # with it. Needed to play-test a running app (Penpal, GET).
-    "browser_view", "browser_js", "browser_console",
+    # 2026-09-08: the whole browser set was built and never put on her belt.
+    # `browse` is the one that POINTS the browser at a URL; fetch_url only
+    # downloads text over http and never touches the browser. Without `browse`
+    # she opened nothing, so browser_js ran against about:blank and every
+    # screenshot came back white — she reported a working game as broken.
+    "browse", "browser_view", "browser_js", "browser_console",
     "recall", "save_note",                                          # memory
     "compute",                                                      # exact math
     "look_at_image",                                                # her eyes
