@@ -32,7 +32,52 @@ the morning of 2026-09-08, before any of this.
 - **2026-09-08** — This file.
 
 ### Phase 1 — the strip
-_(entries land here as each cut is made)_
+- **2026-09-08** — **All six flows were dead for a month.** Every step named
+  `qwen30b` or `tiny`; neither has existed in config since the cutover, so every
+  flow raised an error on its first step. Repointed at `big122` / `little`.
+  Verified: all six resolve.
+- **2026-09-08** — **`start-model.sh` with no argument launched the retired 30B.**
+  The obvious command started a dead model. Default is `big122`.
+- **2026-09-08** — **Killed the vision ghost at its source.** The live config was
+  always right, but the code default still named `qwen3.6-27b`, and that default
+  fires on any config regeneration. Nobody kept re-adding the dead model; the
+  fallback path kept restoring it. That is why it survived two rebuilds.
+- **2026-09-08** — **The health check was hunting retired models and could never
+  pass.** It scanned five ports that serve nothing, told the owner to start a
+  retired vision service, and demanded two disabled units be enabled.
+- **2026-09-08** — **The help text was teaching the retired architecture to
+  humans.** It described vision as a separate model competing for the graphics
+  card, and offered three retired models as things you could start. Documentation
+  that lies is worse than code that lies: it misleads everyone who reads it.
+- **2026-09-08** — **Gave her back all 84 tools.** She owned 84 and could see 33.
+  Hiding the rest saved ~9.6k tokens, which was 62% of the old 24k window and is
+  11.6% of the 131k window today. The cost of that saving was a model that could
+  not see what she owned. Privacy deny lists untouched and still bite.
+- **2026-09-08** — **Finished the morning's browser fix.** It exempted the three
+  tools that *look* at a page and missed `browse`, the one that *opens* a page.
+- **2026-09-08** — **The notebook cap ate its own founding rules.** 8,000 chars
+  sized for a 16k window, trimming the tail so the OLDEST rules died first.
+  Raised to 32,000 and the trim now keeps both ends.
+
+> **Not done, deliberately — 2026-09-08:** `AUTO_SCOUT_ENABLED` stays `False`.
+> Its comment says "flip on with a fast brain", and there is one now, but the
+> code tells a different story: the digest runs on `summarizer or provider`,
+> which is the little 3B — and "hallucinates on the 3B" is exactly why it was
+> shelved. The stated condition is not actually met. Enabling it would need the
+> digest pointed at the big brain first, which is a behaviour change, not a lift.
+
+> **Not done, deferred — 2026-09-08:** `SUMMARY_INPUT_TOKENS` stays 7,000. It is
+> held down by the 3B fallback's real 8k window, not by old hardware. Raising it
+> needs the budget to follow whichever model is actually summarizing.
+
+> **Left alone — 2026-09-08:** `power.py`'s exclusive-model logic still knows the
+> retired units. They exist but are disabled, and the power switch needs to be
+> able to report on them. Intentional, not drift.
+
+> **Found, not fixed — 2026-09-08:** `forge doctor` reports three false warnings
+> ("Config truth") by comparing a short model name in config against the full
+> file path the server reports. Same model, naive string compare. Pre-existing
+> and unrelated to this rebuild. Noise that trains you to ignore warnings.
 
 ---
 
