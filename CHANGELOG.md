@@ -80,6 +80,40 @@ the morning of 2026-09-08, before any of this.
   back as a map and three hints and now read whole, while `agent.py` and
   `tools.py` are still mapped, correctly — they are genuinely huge.
 
+- **2026-09-08** — **Maker Studio was never given a way to start itself.** Her
+  3D tools pointed at a service with no systemd unit, so every call failed with
+  connection refused. Now a managed service on 8840, enabled at boot, with the
+  same memory-priority rule as her models. Verified: `list_parts` returns eight
+  saved parts.
+- **2026-09-08** — **The superego was reviewing itself, and blind where it
+  mattered most.** Three faults. `superego_model` was blank, which means fall
+  back to the answering brain, so the 122B judged its own work. The gate ran
+  only when tools had run, so a turn with no tool calls — the exact shape of a
+  fabrication — was never reviewed. And it was switched off in `balanced`, the
+  everyday default, for a latency cost that no longer applies now the reviewer
+  is a separate model on a separate port.
+  Caught live while testing: asked what port her dashboard uses, she named a
+  port and a dotfile that do not exist. Real answer 8770. Nothing reviewed it.
+  Now: a `judge` model (Qwen3.8-27B, :8088, no vision, 8k window) scoring 10/10
+  on a 10-case battery at ~3s a judgement, where the 3B managed 3/6 and bounced
+  even answers it had described as correct. Re-run after the fix: bounced in
+  3.3s and she went and used four tools.
+
+> **Known limit — 2026-09-08:** the reviewer checks the claim against the
+> EVIDENCE, not against the truth. In the test above her second answer was still
+> wrong, but it matched a file she had actually read, so it passed. The gate
+> stops unsupported confidence. It cannot stop reading the wrong file carefully.
+
+> **Blocked on you — 2026-09-08:** the life archive holds nine FAKE records from
+> an August demo (a package tracking number, a flight, an appointment with a
+> "Dr. Reyes"). There is no Takeout export on this machine, so it has never held
+> anything real, and she would answer questions about your life from invented
+> data. Needs either your export or a wipe. Not touched.
+
+> **Watch this — 2026-09-08:** with the judge resident, VRAM sits at 92.8 of
+> 96GB. Your system RAM is untouched (13GB free) and nothing else uses the card
+> since renders moved to the other box, but the margin is ~3GB.
+
 > **Found, not fixed — 2026-09-08:** `forge doctor` reports three false warnings
 > ("Config truth") by comparing a short model name in config against the full
 > file path the server reports. Same model, naive string compare. Pre-existing
