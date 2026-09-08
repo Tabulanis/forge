@@ -37,9 +37,24 @@ from .tools import Tool
 # Final answers that claim work in the past tense. Used by the harness to
 # catch "I created the file" when no tool ever ran — the most common way a
 # small model fails, and the one lie the system prompt forbids hardest.
+_ACTED = (r"created|wrote|saved|edited|updated|added|deleted|renamed|fixed|ran|installed|made|"
+          r"committed|pushed|noted|recorded")
 _CLAIMS_ACTION = re.compile(
-    r"\bI(?:'ve| have)? (?:just )?"
-    r"(created|wrote|saved|edited|updated|added|deleted|renamed|fixed|ran|installed|made)\b"
+    r"\bI(?:'ve| have)? (?:just )?(?:" + _ACTED + r")\b"
+)
+
+# The same failure in the future tense, which is how it actually shows up:
+# "I'll save the key lesson to the notebook now" — stated as if it counted,
+# with no tool call behind it (seen live 2026-09-08). A promise to act in the
+# very reply that ends the turn is a claim, not a plan: there is no later.
+_PROMISES_ACTION = re.compile(
+    r"\b(?:I(?:'ll| will| am going to| ?'m going to)|[Ll]et me|I(?:'ll| will) go ahead and)\s+"
+    r"(?:just |now |quickly )?(?:" + _ACTED.replace("wrote", "write").replace("saved", "save")
+    .replace("created", "create").replace("edited", "edit").replace("updated", "update")
+    .replace("added", "add").replace("deleted", "delete").replace("renamed", "rename")
+    .replace("fixed", "fix").replace("ran", "run").replace("installed", "install")
+    .replace("made", "make").replace("committed", "commit").replace("pushed", "push")
+    .replace("noted", "note").replace("recorded", "record") + r")\b"
 )
 
 # Files that look like they DEFINE success rather than implement it. A model
@@ -1104,19 +1119,52 @@ class Agent:
                         continue
                 _claims_work = (_CLAIMS_ACTION.search(_txt) and
                                 (_FILE_MENTION.search(_txt) or re.search(
-                                    r"\b(the |a |your )?(command|script|test|tests|"
+                                    r"\b(the |a |your |my )?(command|script|test|tests|"
                                     r"directory|folder|function|module|class|the code|"
-                                    r"the file|the files)\b", _txt, re.I)))
-                if (not self._tools_ran and not nudged and _claims_work):
+                                    r"the file|the files|note|notes|notebook|lesson|"
+                                    r"lessons|memory|finding|findings|branch|commit)\b",
+                                    _txt, re.I)))
+                _promises_work = (_PROMISES_ACTION.search(_txt) and
+                                  (_FILE_MENTION.search(_txt) or re.search(
+                                      r"\b(note|notes|notebook|lesson|lessons|memory|file|"
+                                      r"files|branch|commit|findings?)\b", _txt, re.I)))
+                # A claim about a SPECIFIC thing is checked against the tool that
+                # would have done it, even when other tools ran — "I saved it to
+                # the notebook" is false if save_note never fired, however busy
+                # the turn was otherwise.
+                _ran = getattr(self, "_tool_attempts", {}) or {}
+                _unbacked = None
+                for _pat, _tools, _what in (
+                    (r"\b(notebook|save[d]? (?:a |the )?note|lesson|lessons)\b",
+                     ("save_note",), "save a note"),
+                    (r"\b(finding|findings)\b", ("save_finding",), "save a finding"),
+                ):
+                    if re.search(_pat, _txt, re.I) and (_claims_work or _promises_work) \
+                            and not any(t in _ran for t in _tools):
+                        _unbacked = _what
+                        break
+                if _unbacked and not nudged:
                     nudged = True
                     self.history.append({
                         "role": "user", "synthetic": True,
-                        "content": "Automatic harness check: that reply describes "
-                                   "actions, but no tools ran while handling this "
-                                   "message. If that work was supposed to happen "
-                                   "now, do it now with tool calls. If you were "
-                                   "only describing earlier work, say so briefly "
-                                   "and finish." + BOUNCE_TAIL,
+                        "content": f"Automatic harness check: you said you would {_unbacked}, "
+                                   f"and no such tool call was made while handling this message. "
+                                   f"Saying it is not doing it, and this reply ends the turn. "
+                                   f"Make the call now." + BOUNCE_TAIL,
+                    })
+                    continue
+                if (not self._tools_ran and not nudged and (_claims_work or _promises_work)):
+                    nudged = True
+                    self.history.append({
+                        "role": "user", "synthetic": True,
+                        "content": "Automatic harness check: that reply describes or "
+                                   "promises actions, but no tools ran while handling "
+                                   "this message. There is no later — this reply ends "
+                                   "the turn, so anything you said you would do now has "
+                                   "to happen now, with tool calls. Do it. If you were "
+                                   "only describing earlier work, or the work genuinely "
+                                   "belongs to a future message, say so plainly in one "
+                                   "line and finish." + BOUNCE_TAIL,
                     })
                     continue
                 # Changed files but never checked the result? One bounce:
