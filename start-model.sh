@@ -11,7 +11,7 @@
 set -e
 LLAMA=~/llama.cpp/build/bin/llama-server
 
-case "${1:-big}" in
+case "${1:-big122}" in
   big)
     MODEL=~/llama-agent/Huihui-Qwen3-30B-A3B-Instruct-2507-abliterated-Q4_K_M.gguf
     # 32k context in the same VRAM as the old 16k: the KV cache (her
