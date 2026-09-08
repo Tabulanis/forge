@@ -48,12 +48,18 @@ CARDS_ARCHIVE = Path.home() / ".forge" / "memory-cards-archive.jsonl"
 VECS_PATH = Path.home() / ".forge" / "card-vectors.f32"   # raw float32, DIM per card, row-aligned to CARDS_PATH
 QUEUE_DIR = Path.home() / ".forge" / "card-queue"
 
-# Short prompt on purpose: the 3B reads ~24 tokens/sec on the CPU, so the
-# card job must stay a few hundred tokens or the librarian falls behind.
-CARD_PROMPT = ("One line, 25 words max: what happened in this exchange? "
-               "Name the concrete things — names, files, decisions, numbers. "
+# 2026-09-08: this was one line of 25 words, read from 1200 chars, because the
+# 3B ran on the CPU at ~24 tokens/sec and anything larger meant the librarian
+# fell behind the conversation. It moved to the GPU on 2026-09-05 and is
+# effectively instant, so the card can carry what actually happened instead of
+# a headline. A card too thin to be recognised later is a card that never gets
+# recalled — the cost of the old limit was silent.
+CARD_PROMPT = ("Two or three sentences: what happened in this exchange, and what "
+               "was decided or learned? Name the concrete things — people, files, "
+               "numbers, decisions, and anything that would matter weeks from now. "
+               "Write it so it still makes sense with no other context. "
                "No preamble, no quotes.")
-EXCHANGE_LIMIT = 1200      # chars of (user + answer) the librarian reads
+EXCHANGE_LIMIT = 6000      # chars of (user + answer) the librarian reads
 
 # --- pile-up guards (all tunable, single numbers) ---
 CARD_HOT_CAP = 6000        # newest cards kept in the fast, searched file
@@ -311,8 +317,11 @@ def _distill(entry: dict) -> str | None:
             json={"model": little.get("model", "little"),
                   "messages": [{"role": "system", "content": CARD_PROMPT},
                                {"role": "user", "content": exchange}],
-                  "max_tokens": 60, "temperature": 0.2},
-            timeout=120.0)
+                  # 60 tokens forced a headline no matter what the prompt asked
+                  # for; raised with CARD_PROMPT on 2026-09-08.
+                  "max_tokens": 220, "temperature": 0.2,
+                  "chat_template_kwargs": {"enable_thinking": False}},
+            timeout=60.0)
         return r.json()["choices"][0]["message"]["content"].strip()
     except httpx.HTTPError:
         return None

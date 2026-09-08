@@ -63,7 +63,15 @@ SCOUT_PROMPT = (
     "your process, do NOT paste file contents, do NOT ask questions back. If you truly "
     "cannot determine it, say so in one line. Your answer is the ONLY thing that returns "
     "to whoever sent you — make it tight and trustworthy.")
-MAX_OUTPUT_CHARS = 30_000    # same, for command output
+# 2026-09-08: was 30_000, inherited from MAX_READ_BYTES's "a huge file would
+# blow the context window" when the window was 16-32k. 30k chars is ~7.5k
+# tokens — 6% of the 131k window — so it was truncating build logs and test
+# output she needed while protecting space that is no longer scarce.
+MAX_OUTPUT_CHARS = 120_000    # same, for command output
+# Most a single read_file call may return. Separate from MAX_READ_BYTES (the
+# hard file-size ceiling): this is the per-call window, sized against the
+# CONTEXT rather than the disk.
+READ_WINDOW_CHARS = 90_000
 DEFAULT_TIMEOUT = 120
 
 
@@ -129,12 +137,24 @@ def _write_atomic(path: Path, text: str) -> None:
 
 
 def _librarian_compact(notes: list[str], cap: int) -> list[str] | None:
-    """Ask the little model to fold the notebook down to `cap` lessons — merging
-    overlaps, dropping only true redundancy, keeping every distinct useful one.
-    Returns the new list, or None if it can't (caller keeps a safe fallback)."""
-    m = (load_config().get("models") or {}).get("little") or {}
-    base = (m.get("base_url") or "").rstrip("/")
-    if not base:
+    """Fold the notebook down to `cap` lessons — merging overlaps, dropping only
+    true redundancy, keeping every distinct useful one. Returns the new list, or
+    None if it can't (caller keeps a safe fallback).
+
+    2026-09-08: this ran on the LITTLE model. That is the same mistake that got
+    the auto-scout digest shelved for hallucinating — the 3B was the problem,
+    not the hardware — and this one was never given the matching fix. It is a
+    worse place for it: these are the lessons about how to work with this user,
+    the rules she will follow for months, and a fold that quietly drops a
+    distinct one degrades behaviour with nothing to point at. The main brain
+    does it now; the little model is only the fallback if the brain is down.
+    """
+    models = (load_config().get("models") or {})
+    active = (load_config().get("active_model") or "")
+    order = [models.get(active) or {}, models.get("little") or {}]
+    bases = [str((m.get("base_url") or "")).rstrip("/") for m in order]
+    bases = [b for b in bases if b]
+    if not bases:
         return None
     numbered = "\n".join(f"{i + 1}. {n}" for i, n in enumerate(notes))
     prompt = (
@@ -145,13 +165,24 @@ def _librarian_compact(notes: list[str], cap: int) -> list[str] | None:
         f"you can. One short line each.\n\nNotebook:\n{numbered}\n\n"
         f"Reply with ONLY the final lessons, one per line, each starting with '- ', "
         f"no numbers and no commentary.")
+    out = None
+    for base in bases:
+        try:
+            r = httpx.post(f"{base}/chat/completions",
+                           json={"messages": [{"role": "user", "content": prompt}],
+                                 "max_tokens": 1500, "temperature": 0.2,
+                                 "chat_template_kwargs": {"enable_thinking": False}},
+                           timeout=180)
+            if r.status_code != 200:
+                continue
+            out = _parse_notes(r.json()["choices"][0]["message"].get("content") or "")
+            if out:
+                break
+        except Exception:
+            continue
     try:
-        r = httpx.post(f"{base}/chat/completions",
-                       json={"messages": [{"role": "user", "content": prompt}],
-                             "max_tokens": 1500, "temperature": 0.2}, timeout=90)
-        if r.status_code != 200:
+        if not out:
             return None
-        out = _parse_notes(r.json()["choices"][0]["message"].get("content") or "")
         # Guardrails: sane count, and it didn't nuke the content wholesale.
         if out and len(out) <= cap and len("".join(out)) >= 0.4 * len("".join(notes)):
             return out
@@ -1125,15 +1156,18 @@ def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provi
         window = lines[offset:offset + limit]
         if not window:
             return f"(no lines in range; file has {len(lines)} lines)"
-        # Line numbers help the model target edits precisely. The BYTE cap
-        # on the returned window exists because the line default (2000) is
-        # sized for code: 1000 lines of a novel is ~25k tokens, which
-        # detonates a 32k context in one call — seen live: two emergency
-        # compactions and a dead turn. Cap loudly, never silently.
+        # Line numbers help the model target edits precisely. The BYTE cap on
+        # the returned window stops one call swallowing the whole context.
+        # 2026-09-08: was 20_000, and its own comment named the reason — "1000
+        # lines of a novel is ~25k tokens, which detonates a 32k context". The
+        # window is 131,072 now, so 20KB was ~4% of it: prose files came back
+        # in slivers and she paged the same document over and over. 90KB is
+        # ~22k tokens, a sixth of the window, still far from detonating it.
+        # Cap loudly, never silently — that part was always right.
         body_lines, used = [], 0
         for i, ln in enumerate(window):
             entry = f"{i + offset + 1:6d}\t{ln}"
-            if used + len(entry) > 20_000:
+            if used + len(entry) > READ_WINDOW_CHARS:
                 next_off = offset + i
                 body_lines.append(
                     f"... (output capped at 20KB to protect your working "

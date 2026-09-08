@@ -3,8 +3,12 @@
 read a page, nothing more."""
 from __future__ import annotations
 
-MAX_RESULTS = 8
-MAX_PAGE_CHARS = 6000
+MAX_RESULTS = 20        # was 8 — a search that hides half the page is a slower search
+# 2026-09-08: was 6000 (~1.5k tokens). No rationale was ever written down, but
+# it is small-box sizing: a fetched page came back in a sliver and she paid
+# extra round-trips with contains= to see the rest. 40k chars is ~10k tokens,
+# under 8% of the 131k window.
+MAX_PAGE_CHARS = 40_000
 
 
 def grep_text(text: str, pattern: str, ctx: int = 2, cap: int = 18000):

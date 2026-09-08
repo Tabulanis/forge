@@ -157,7 +157,7 @@ def list_datasets() -> str:
     return "\n".join(lines)
 
 
-SHELF_MAX = 14   # most she carries in her always-on prompt; the rest via list_datasets
+SHELF_MAX = 32        # 2026-09-08: was 14, sized when the whole prompt had to fit 16-32k
 
 
 def shelf_line() -> str:

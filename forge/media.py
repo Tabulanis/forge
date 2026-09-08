@@ -72,7 +72,9 @@ def load_media_config(cfg: dict) -> MediaConfig:
 # ---------------------------------------------------------------- vision
 
 def _endpoints(mc: MediaConfig) -> list[tuple[str, str]]:
-    """Vision endpoints in priority order: Merge's own eyes, then the 7B."""
+    """Vision endpoints in priority order: her own eyes first, then any
+    configured fallback. The separate 7B vision model was retired 2026-09-05;
+    this list is normally one entry long."""
     eps = [(mc.vision_url, mc.vision_model)]
     if getattr(mc, "vision_fallback_url", ""):
         eps.append((mc.vision_fallback_url, mc.vision_fallback_model))
@@ -94,7 +96,11 @@ def vision_available(mc: MediaConfig) -> tuple[bool, str]:
 
 
 def see(image_path: str, question: str, mc: MediaConfig,
-        max_tokens: int = 700) -> str:
+        max_tokens: int = 2000) -> str:
+    # 2026-09-08: the default was 700 tokens, set when vision was a small
+    # separate model whose long answers were unreliable anyway. Her eyes are
+    # the 122B now: capping the description at 700 tokens throws away detail
+    # she genuinely saw, and the caller could not ask for more.
     """
     Ask a local vision model about an image.
 
@@ -117,7 +123,7 @@ def see(image_path: str, question: str, mc: MediaConfig,
             "webp": "webp", "gif": "gif"}.get(suffix, "png")
     b64 = base64.b64encode(p.read_bytes()).decode()
 
-    def ask(url: str, model: str) -> str:
+    def ask(url: str, model: str, primary: bool = True) -> str:
         body = {
             "model": model,
             "max_tokens": max_tokens,
@@ -135,18 +141,23 @@ def see(image_path: str, question: str, mc: MediaConfig,
                 ],
             }],
         }
-        # CPU vision (the 7B) is minutes, not seconds; a short timeout just
-        # turns "slow" into "broken". Merge's own GPU eyes answer in seconds.
+        # 2026-09-08: this was a flat 900s for every endpoint, written when
+        # vision meant a 7B on the CPU taking minutes. That model was retired on
+        # 2026-09-05 and her eyes are the resident 122B, which answers in
+        # seconds. A fifteen-minute cap on the PRIMARY endpoint no longer buys
+        # patience — it turns a stalled server into a fifteen-minute silence.
+        # The long allowance stays for a genuinely slow fallback, if one is ever
+        # configured; by default there isn't one.
         r = httpx.post(f"{url.rstrip('/')}/chat/completions",
-                       json=body, timeout=900.0)
+                       json=body, timeout=(120.0 if primary else 900.0))
         r.raise_for_status()
         return r.json()["choices"][0]["message"]["content"].strip()
 
-    # Try Merge's own eyes first, fall back to the 7B if she isn't serving.
+    # Her own eyes first; anything after that is a configured fallback.
     last = None
-    for url, model in _endpoints(mc):
+    for n, (url, model) in enumerate(_endpoints(mc)):
         try:
-            return ask(url, model)
+            return ask(url, model, primary=(n == 0))
         except Exception as e:              # unreachable, timeout, HTTP error
             last = e
             continue
