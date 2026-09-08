@@ -1,14 +1,15 @@
-"""The tool index — everything she can reach, without carrying it all.
+"""The tool index — a way to FIND the right tool among 84.
 
-Every tool definition rides along on every single request. Measured on the
-running 24,576-token server, all 70 schemas came to ~11,800 tokens: two-thirds
-of the window spent before she read a word, which is what kept ending long jobs
-with a bare 400. Cutting to a core set fixes the arithmetic but takes away
-tools she genuinely uses.
+It used to be a way to HIDE them. All the schemas came to ~11,800 tokens, which
+on the 24,576-token server was two thirds of the window spent before she read a
+word, so only a core set rode along and the rest were fetched on demand. That
+arithmetic ended on 2026-09-05: the same schemas are 11.6% of a 131k window, and
+on 2026-09-08 every tool went back onto the belt.
 
-So the rest stay reachable through a one-line index she can search. She finds
-what she needs by describing the job, loads it, and it's there for the rest of
-the turn. The index costs a fraction of the schemas it replaces.
+What survives is the useful half. Searching 84 tools by describing the job is
+worth having even when you already carry all of them — this is a catalogue now,
+not a storeroom. load_tools still works and is harmless; it just has nothing
+left to fetch.
 
 Two rules that come from how a local model actually runs:
 
@@ -108,8 +109,10 @@ def _semantic_scores(query: str, registry: dict) -> dict:
 
 
 def find_tools(query: str, registry: dict, limit: int = 8) -> str:
-    """Search the index by what you're trying to DO, in plain words. Returns
-    matching tool names with one-line summaries; load_tools makes them usable."""
+    """Search her toolbox by what she's trying to DO, in plain words. Returns
+    matching tool names with one-line summaries. Since 2026-09-08 every tool is
+    already on the belt, so this is a way to FIND the right one among 84, not a
+    way to fetch a missing one."""
     q = str(query or "").strip().lower()
     if not q:
         return ("Say what you're trying to do — 'search my email', 'design a "
@@ -165,7 +168,8 @@ def find_tools(query: str, registry: dict, limit: int = 8) -> str:
                 "datasets, markets, law, medicine, CAD, audio, animal calls, "
                 "your life-archive, credentials, personality.")
     scored.sort(key=lambda x: (-x[0], x[1]))
-    out = [f"Tools matching '{query}' — load_tools to use them:"]
+    out = [f"Tools matching '{query}' — all of these are already on your belt, "
+           f"just call one:"]
     for _, name, tool in scored[:limit]:
         out.append(f"  {name} — {_summarize(tool.description, 100)}")
     return "\n".join(out)
