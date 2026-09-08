@@ -20,14 +20,15 @@ TARBALL="$DEST/forge-$STAMP.tar.gz"
 # Also grab her sim shelf (forge/sims) — those are hers, worth keeping even the
 # ones she builds between git commits. `forge/sims` is added only if it exists.
 EXTRA=""
-[ -d "$HOME/forge/sims" ] && EXTRA="$EXTRA forge/sims"
-[ -d "$HOME/forge/datasets" ] && EXTRA="$EXTRA forge/datasets"
+# Her shelf moved out of the source tree on 2026-09-08 — it is accumulated
+# work, not code, and building a tool should never mean editing her.
+[ -d "$HOME/.forge/shelf" ] && EXTRA="$EXTRA .forge/shelf"
 tar -czf "$TARBALL" -C "$HOME" \
   --exclude='.forge/card-queue' \
   --exclude='.forge/*.tmp' \
   --exclude='.forge/.*.tmp' \
   --exclude='.forge/sessions/.*.tmp' \
-  --exclude='forge/sims/*.tmp' \
+  --exclude='.forge/shelf/sims/*.tmp' \
   --exclude='forge/datasets/*.tmp' \
   .forge $EXTRA
 

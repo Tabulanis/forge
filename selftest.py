@@ -202,6 +202,28 @@ def t_card_vectors_stay_row_aligned():
     n = sum(1 for _ in open(c))
     return v.stat().st_size == n * DIM * 4
 
+
+def t_shelf_is_not_in_her_source():
+    """Her sims and datasets lived inside her own package until 2026-09-08,
+    which meant adding a calculator to her shelf wrote into her source tree,
+    and the builder could not be told apart from the thing being built."""
+    from forge.paths import SIMS_DIR, DATASETS_DIR
+    src = Path.home() / "forge" / "forge"
+    repo = Path.home() / "forge"
+    for d in (SIMS_DIR, DATASETS_DIR):
+        if src in d.parents or d == repo or repo == d.parent:
+            return False
+    return True
+
+
+def t_shelf_survived_the_move():
+    """The move must not have cost her anything she had built."""
+    from forge.paths import SIMS_DIR, DATASETS_DIR
+    sims = len(list(SIMS_DIR.glob("*.py"))) if SIMS_DIR.exists() else 0
+    cat = DATASETS_DIR / "_catalog.json"
+    dsets = len(json.loads(cat.read_text())) if cat.exists() else 0
+    return sims >= 17 and dsets >= 4
+
 # ---------------------------------------------------------------- context
 def t_overhead_counted():
     """The bare 400: schemas + system prompt were invisible, so a turn read 19%
@@ -383,7 +405,11 @@ def t_circular_selftests_stay_demoted():
     """Four wing sims carried ✓ while testing the code against its own output,
     and verify_shelf kept re-promoting them because re-running is exactly what
     a circular test survives."""
-    cat = json.loads(Path("sims/_catalog.json").read_text())
+    # 2026-09-08: was Path("sims/_catalog.json") — a relative path into her
+    # source tree, which broke when the shelf moved out of it. Read the
+    # constant so the shelf can move again without breaking its own test.
+    from forge.paths import SIMS_DIR
+    cat = json.loads((SIMS_DIR / "_catalog.json").read_text())
     flagged = [n for n, m in cat.items() if m.get("selftest_circular")]
     return bool(flagged) and all(not cat[n].get("validated") for n in flagged)
 
@@ -514,6 +540,8 @@ CHECKS = [
     ("data: cortex records carry provenance", t_cortex_records_carry_provenance, False),
     ("data: no invented life-facts in memory", t_no_invented_life_facts_in_memory, False),
     ("data: card vectors stay row-aligned", t_card_vectors_stay_row_aligned, False),
+    ("separation: shelf is not inside her source", t_shelf_is_not_in_her_source, False),
+    ("separation: the shelf survived the move", t_shelf_survived_the_move, False),
     ("toolindex: cannot bypass privacy", t_load_cannot_bypass_privacy, False),
     ("toolindex: retrieval quality + junk refused", t_tool_search_quality, True),
     ("embedder: batches large inputs", t_embedder_batches, True),

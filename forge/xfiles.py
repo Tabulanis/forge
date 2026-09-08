@@ -28,7 +28,8 @@ import numpy as np
 UA = {"User-Agent": "Mozilla/5.0 (research)"}
 FRED = "https://fred.stlouisfed.org/graph/fredgraph.csv"
 KRAKEN = "https://api.kraken.com/0/public/OHLC"
-CASES = Path.home() / "forge" / "datasets" / "xfiles"
+from .paths import DATASETS_DIR
+CASES = DATASETS_DIR / "xfiles"
 
 # Friendly name -> (source, code). Crypto is Kraken; the rest are FRED series.
 TICKERS = {

@@ -22,3 +22,7 @@ model-tests/results/
 # regenerable visual outputs + runtime logs (spectrograms, collector logs)
 datasets/bioacoustics/
 datasets/**/*.log
+
+# Her shelf moved to ~/.forge/shelf on 2026-09-08 — accumulated work, not source.
+sims/
+datasets/

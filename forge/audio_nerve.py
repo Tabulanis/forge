@@ -26,10 +26,11 @@ from PIL import Image, ImageDraw
 from scipy.fft import dct
 from scipy.signal import stft
 
-VEC_STORE = Path.home() / "forge" / "datasets" / "audio-nerve" / "vectors.jsonl"
+from .paths import DATASETS_DIR
+VEC_STORE = DATASETS_DIR / "audio-nerve" / "vectors.jsonl"
 
 SR = 22050
-RENDERS = Path.home() / "forge" / "datasets" / "audio-nerve"
+RENDERS = DATASETS_DIR / "audio-nerve"
 BG = (13, 16, 23)
 INK = (230, 236, 245)
 CYAN = (59, 214, 228)

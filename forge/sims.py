@@ -22,7 +22,7 @@ import sys
 import time
 from pathlib import Path
 
-SIMS_DIR = Path.home() / "forge" / "sims"
+from .paths import SIMS_DIR                     # ~/.forge/shelf/sims
 _CATALOG = SIMS_DIR / "_catalog.json"
 _RUNNER = Path(__file__).parent / "_sim_runner.py"
 

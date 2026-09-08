@@ -16,7 +16,8 @@ def _dataset(name):
     """Injected into every sim so its run() can pull cited real-world data —
     e.g. mats = dataset("rocket_materials"). Returns {} if the dataset is missing."""
     n = re.sub(r"[^a-z0-9_]+", "_", (name or "").lower()).strip("_")
-    p = Path.home() / "forge" / "datasets" / f"{n}.json"
+    from forge.paths import DATASETS_DIR
+    p = DATASETS_DIR / f"{n}.json"
     try:
         return json.loads(p.read_text(encoding="utf-8")).get("data", {})
     except Exception:

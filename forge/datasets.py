@@ -22,7 +22,7 @@ import re
 import time
 from pathlib import Path
 
-DATASETS_DIR = Path.home() / "forge" / "datasets"
+from .paths import DATASETS_DIR             # ~/.forge/shelf/datasets
 _CATALOG = DATASETS_DIR / "_catalog.json"
 
 

@@ -3,7 +3,7 @@
 Merge's flow-signal ideas (narrative drift, sentiment-lag, FOMO-without-flow,
 dev/price decoupling) all need TIME-SERIES that don't exist yet on our disk.
 This module takes one snapshot per run of every free source and appends it to
-JSONL files under ~/forge/datasets/pulse/ — run on a schedule, it builds the
+JSONL files under ~/.forge/shelf/datasets/pulse/ — run on a schedule, it builds the
 dataset that makes those tests possible in weeks, honestly, once each.
 
 Collection only. No trading, no keys, no interpretation — just receipts piling
@@ -17,7 +17,8 @@ from pathlib import Path
 
 import httpx
 
-PULSE_DIR = Path.home() / "forge" / "datasets" / "pulse"
+from .paths import DATASETS_DIR
+PULSE_DIR = DATASETS_DIR / "pulse"
 
 
 def _append(name: str, rec: dict) -> None:

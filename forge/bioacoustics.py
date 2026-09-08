@@ -28,7 +28,8 @@ from scipy.signal import stft
 
 from . import audio_nerve as AN
 
-RENDERS = Path.home() / "forge" / "datasets" / "bioacoustics"
+from .paths import DATASETS_DIR
+RENDERS = DATASETS_DIR / "bioacoustics"
 BG = (13, 16, 23)
 INK = (230, 236, 245)
 CYAN = (59, 214, 228)

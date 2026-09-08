@@ -31,7 +31,8 @@ from pathlib import Path
 import numpy as np
 from PIL import Image, ImageDraw
 
-RENDERS = Path.home() / "forge" / "datasets" / "doolittle"
+from .paths import DATASETS_DIR
+RENDERS = DATASETS_DIR / "doolittle"
 BG = (13, 16, 23); INK = (230, 236, 245); SOFT = (150, 162, 178)
 CYAN = (59, 214, 228); GOLD = (245, 174, 61); GREEN = (111, 208, 140); RED = (200, 90, 74)
 
