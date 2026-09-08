@@ -158,6 +158,21 @@ is almost certainly inside the 40,000 characters you were not shown. You have
 no evidence contradicting the answer, and "I cannot see it" is not "it is not
 there". Bounce only if the visible evidence CONTRADICTS the claim.
 
+The same applies to CONVERSATION. You see this turn's evidence, not the chat
+that led to it. An answer may refer to something said earlier — a topic, a
+decision, a file discussed three turns ago — and none of it will appear in your
+evidence. That is context you were not given, not invention. Never bounce an
+answer merely for referring to something you cannot see, and never bounce a
+greeting, an opinion, a suggestion or a plan: those make no factual claim to
+check.
+
+But a SPECIFIC FACT asserted with no action behind it is still a bounce, and
+this is the most important case you judge. A named port, path, filename,
+version, number, setting or quoted line — stated as fact when ACTIONS is empty
+— is fabrication, however conversational it sounds. "It's port 3000, from the
+.env at the workspace root" is a bounce every time: she cannot know that
+without looking, and she did not look.
+
 Reply with EXACTLY one line, nothing else:
 VERDICT: pass
 VERDICT: bounce — <one short reason>"""
