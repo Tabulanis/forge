@@ -70,7 +70,16 @@ _W_KW = 1.0               # weight per keyword hit
 # is how an unrelated card ends up quoted as context. Short card text makes
 # cosine cluster tightly, so the bar has to sit above that noise ceiling.
 _SEM_FLOOR = 0.62
-_WS_BOOST = 0.5            # same-workspace nudge
+# 2026-09-08: this used to be _WS_BOOST = 0.5, a nudge. A nudge is not a
+# boundary. A demo run inside the MoneyLab workspace on 2026-08-19 wrote cards
+# claiming a flight and a $4,200 roof quote, and those surfaced later from any
+# project, because a half-point nudge does not stop a strong keyword match from
+# another job. Merge is the builder; MoneyLab, Storyweave and the rest are what
+# she builds. Work done inside a project stays inside that project.
+#
+# The current project answers first. Other projects are a clearly-LABELLED
+# fallback, shown only when home has nothing, and never mixed in above it.
+_WS_BOOST = 0.5            # kept for ranking WITHIN the current project
 
 
 # Words so common that matching on them is noise: nearly every card contains
@@ -178,7 +187,8 @@ def search(query: str, workspace: str = "", limit: int = 8) -> str:
     if not words and qvec is None:
         return "Give recall a few concrete words to look for."
 
-    hits: list[tuple[float, float, str]] = []   # (score, when, line)
+    home: list[tuple[float, float, str]] = []    # this project
+    away: list[tuple[float, float, str]] = []    # every other project
 
     # -- index cards: meaning (cosine) blended with keyword --
     cards = _load_cards()
@@ -200,7 +210,9 @@ def search(query: str, workspace: str = "", limit: int = 8) -> str:
         day = time.strftime("%b %d", time.localtime(when))
         folder = Path(c.get("workspace", "")).name or "?"
         why = "≈" if (kw == 0 and cos >= _SEM_FLOOR) else "·"   # ≈ = found by meaning alone
-        hits.append((score, when, f"[{day} {why} {folder} · card] {gist}"))
+        mine = c.get("workspace") == workspace
+        (home if mine else away).append(
+            (score, when, f"[{day} {why} {folder} · card] {gist}"))
 
     # -- verbatim transcripts: keyword only, bounded to recent conversations --
     if words:
@@ -224,15 +236,36 @@ def search(query: str, workspace: str = "", limit: int = 8) -> str:
                 who = "user" if e["kind"] == "user" else "Merge"
                 when = e.get("t", 0)
                 day = time.strftime("%b %d", time.localtime(when))
-                hits.append((score + boost, when,
-                             f"[{day} · {folder} · {who}] {_snippet(text, words)}"))
+                mine = d.get("workspace") == workspace
+                (home if mine else away).append(
+                    (score + boost, when,
+                     f"[{day} · {folder} · {who}] {_snippet(text, words)}"))
 
-    if not hits:
-        return (f"Nothing in past conversations matches {query!r}. "
-                "It may never have been said — or said in words too different "
-                "even to feel related.")
-    hits.sort(key=lambda h: (-h[0], -h[1]))
-    return "\n".join(line for _, _, line in hits[:limit])
+    def _fmt(rows):
+        rows.sort(key=lambda h: (-h[0], -h[1]))
+        return [line for _, _, line in rows[:limit]]
+
+    if home:
+        out = _fmt(home)
+        # Other projects are offered only as a clearly-marked extra, and only
+        # when this project has little to say. They never outrank home.
+        if len(out) < limit and away:
+            spare = _fmt(away)[:limit - len(out)]
+            if spare:
+                out.append("")
+                out.append("— from OTHER projects, not this one; treat as background, "
+                           "not as fact about the work in front of you —")
+                out.extend(spare)
+        return "\n".join(out)
+
+    if away:
+        return ("Nothing from THIS project matches that. The closest below are "
+                "from other projects — background only, not facts about the work "
+                "in front of you:\n\n" + "\n".join(_fmt(away)))
+
+    return (f"Nothing in past conversations matches {query!r}. "
+            "It may never have been said — or said in words too different "
+            "even to feel related.")
 
 
 # ---------------------------------------------------------------- librarian
