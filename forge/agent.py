@@ -159,11 +159,16 @@ COMPACT_AT = 0.70          # start compacting at 70% full
 COMPACT_KEEP = 0.25        # after compacting, recent turns may fill 25%
 # The summariser reads the whole compaction transcript in ONE pass. It was
 # 2500 tokens while the CPU 3B did the job (a ~6k chunk froze it ~3 min); the
-# main brain on the GPU summarises first now, so it can read far more of what
-# it is about to forget. Still fits the 3B fallback's 8k window if it has to.
-# (2026-09-07: on the 128k window a compaction drops ~60k tokens — writing the
-# summary from the last 2.5k of them threw most of the day away.)
-SUMMARY_INPUT_TOKENS = 7000
+# How much of the conversation the summariser is allowed to READ before it
+# writes the briefing. This is now per-model, because the two candidates are
+# nothing alike: the main brain has a 131k window, the 3B fallback has 8k.
+#
+# The old single figure was sized for the fallback and applied to both, so the
+# common case was crippled to protect the rare one: a compaction on the 131k
+# window drops ~60k tokens, and the summary was being written from the last 7k
+# of them. Most of the day, thrown away, every time memory filled.
+SUMMARY_INPUT_TOKENS = 7000          # the 3B fallback's budget — its window is 8k
+SUMMARY_INPUT_FRACTION = 0.45        # the main brain's budget, as a share of its own window
 # Don't compact unless the part being summarized is at least this many
 # tokens. When one long tool-heavy turn fills the window by itself, the
 # compactable prefix shrinks to almost nothing — squeezing it again every
@@ -1744,14 +1749,18 @@ class Agent:
             elif role == "tool_result":
                 lines.append(f"  -> {str(m.get('content',''))[:400]}")
         transcript = "\n".join(lines)
-        # Cap the transcript to a small FIXED budget — always inside a small
-        # model's window with room to spare, and fast to prompt-process (a big
-        # chunk on the CPU 3B froze compaction for minutes). Keep the most
-        # recent slice; older detail is dropped rather than stalling on it.
-        max_transcript = SUMMARY_INPUT_TOKENS * _CHARS_PER_TOKEN
-        if len(transcript) > max_transcript:
-            transcript = ("(earliest part omitted)\n"
-                          + transcript[-max_transcript:])
+        def _budget_for(prov) -> int:
+            """Chars of transcript this particular model may read. The main
+            brain reads a share of its own window; anything else (the 3B
+            fallback) keeps the small fixed budget its 8k window demands."""
+            if prov is self.provider:
+                try:
+                    win = int(prov.context_limit())
+                    if win > 0:
+                        return int(win * SUMMARY_INPUT_FRACTION) * _CHARS_PER_TOKEN
+                except Exception:
+                    pass
+            return SUMMARY_INPUT_TOKENS * _CHARS_PER_TOKEN
 
         summary = ""
         # The GPU main model prompt-processes ~10x faster than the CPU 3B and
@@ -1762,9 +1771,15 @@ class Agent:
             if prov is None:
                 continue
             try:
+                budget = _budget_for(prov)
+                sized = transcript
+                if len(sized) > budget:
+                    # Keep the most recent slice; older detail is dropped
+                    # rather than stalling on it.
+                    sized = "(earliest part omitted)\n" + sized[-budget:]
                 reply = prov.complete(
                     SUMMARY_PROMPT,
-                    [{"role": "user", "content": transcript}],
+                    [{"role": "user", "content": sized}],
                     [],   # no tools — this is a straight writing task
                     extra_body={"chat_template_kwargs": {"enable_thinking": False}},
                 )
