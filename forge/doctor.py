@@ -143,19 +143,20 @@ def _extras(cfg: dict) -> list[Check]:
 
     # -- other local models that happen to be up -----------------------
     running = []
-    for port, label in ((8080, "mote 3B"), (8081, "tiny"),
-                        (8082, "coder14"), (8083, "little 3B"),
-                        (8084, "big / coding"), (8090, "vision")):
+    for port, label in ((8083, "little 3B"), (8086, "embeddings"),
+                        (8087, "big122 — brain and eyes")):
         if _port_open(port):
             running.append(f"{label} (:{port})")
     out.append(Check("Local models running", OK if running else WARN,
                      ", ".join(running) if running else "None are running.",
-                     "" if running else "~/forge/start-model.sh big"))
+                     "" if running else "~/forge/start-model.sh big122"))
 
     # -- eyes and ears -------------------------------------------------
     caps = capabilities(load_media_config(cfg))
     for key, label, fix in (
-        ("vision", "Seeing (images)", "~/forge/start-model.sh vision"),
+        # Her eyes ARE the brain (122B, multimodal, :8087). There is no
+        # separate vision service to start — retired 2026-09-05.
+        ("vision", "Seeing (images)", "~/forge/start-model.sh big122"),
         ("speech_in", "Hearing (voice → text)",
          "build whisper.cpp in ~/whisper.cpp — see: forge help media"),
         ("screenshot", "Screenshots", ""),
@@ -228,17 +229,17 @@ def _extras(cfg: dict) -> list[Check]:
         try:
             r = subprocess.run(
                 ["systemctl", "--user", "is-enabled",
-                 "forge-model-big", "forge-model-vision", "forge-dash"],
+                 "forge-model-big122", "forge-model-embed", "forge-dash"],
                 capture_output=True, text=True, timeout=5)
             states = (r.stdout or "").split()
             if states.count("enabled") == 3:
                 out.append(Check("Start at boot", OK,
-                                 "Model, vision and dashboard all start themselves"))
+                                 "Brain, embeddings and dashboard all start themselves"))
             else:
                 out.append(Check("Start at boot", WARN,
                                  f"Some services not enabled: {' '.join(states)}",
-                                 "systemctl --user enable forge-model-big "
-                                 "forge-model-vision forge-dash"))
+                                 "systemctl --user enable forge-model-big122 "
+                                 "forge-model-embed forge-dash"))
         except Exception:
             pass
 
