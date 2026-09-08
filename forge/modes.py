@@ -124,7 +124,14 @@ MODES = {
         # quick), full tools + honesty check. Reach for Precise/Deep when a
         # problem actually needs her to sit and think.
         "label": "⚖️ Balanced", "thinking": False, "temperature": 0.7,
-        "tools": None, "superego": False, "max_steps": 40, "wall_seconds": 600,   # 2026-09-06: reviewer pass = a full extra prompt read per tool turn; kept for precise/deep/teach/bughunt
+        # 2026-09-08: the reviewer is back on. It was switched off here on
+        # 2026-09-06 because a review meant a second full read of HER prompt —
+        # same weights, same cache, real latency. The superego now runs on its
+        # own model on its own port (judge, :8088), so it never touches her
+        # cached prefix. Measured cost: ~3s, in parallel with nothing she needs.
+        # Balanced is the everyday default; leaving the honesty check off in the
+        # one mode he actually uses meant most answers were never checked.
+        "tools": None, "superego": True, "max_steps": 40, "wall_seconds": 600,
         "nudge": "",
     },
     "precise": {

@@ -151,6 +151,13 @@ the answer claims success), not on absence. If a specific figure or quote
 sits in a region marked as not shown, assume it may be there and pass.
 Judge the answer as given; do not treat its length or ending as a defect.
 
+Worked example of the abridgement rule, because this is the one that gets
+misjudged: EVIDENCE "read_file('big.log') -> line1 ...[+40000 chars not shown]",
+ANSWER "the log records a retry at 14:03". The verdict is PASS. The retry line
+is almost certainly inside the 40,000 characters you were not shown. You have
+no evidence contradicting the answer, and "I cannot see it" is not "it is not
+there". Bounce only if the visible evidence CONTRADICTS the claim.
+
 Reply with EXACTLY one line, nothing else:
 VERDICT: pass
 VERDICT: bounce — <one short reason>"""
@@ -1279,10 +1286,24 @@ class Agent:
                                    + BOUNCE_TAIL,
                     })
                     continue
-                # The superego gate: last check before "done", only when
-                # real work happened this turn. Sealed judge, one bounce,
-                # every verdict logged.
-                if self.superego and self._tools_ran and get_mode(self.active_mode)["superego"]:
+                # The superego gate: last check before "done". Sealed judge,
+                # one bounce, every verdict logged.
+                #
+                # 2026-09-08: the `self._tools_ran` condition is GONE, and it
+                # was the hole in the middle of this gate. It meant a turn with
+                # no tool calls was never reviewed — which is exactly the shape
+                # of a pure fabrication. Caught live today: asked what port her
+                # dashboard runs on, she answered "port 3000, from the PORT
+                # variable in the .env file at the workspace root". No such
+                # file, no such value; the real answer is 8770. She invented a
+                # source and a number, and the reviewer never saw it, because
+                # inventing an answer means running no tools.
+                #
+                # The worst failure was the one case the gate was blind to. The
+                # mode already says whether this is a working turn; that is the
+                # right condition. Cost is ~3s on a separate model that never
+                # touches her prompt cache.
+                if self.superego and get_mode(self.active_mode)["superego"]:
                     t0 = time.time()
                     verdict, reason = self._superego_review(turn_start,
                                                             reply.text or "")

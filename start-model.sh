@@ -70,6 +70,20 @@ case "${1:-big122}" in
     # budgets aren't possible — llama takes this globally at startup. Lower it
     # if Precise/Deep feel too slow; -1 = unlimited, 0 = no thinking.
     EXTRA="-fa on -ctk q8_0 -ctv q8_0 --reasoning-budget 1024"; CACHE=4096 ;;
+  judge)
+    # The SUPEREGO's own weights — a genuine second opinion, not the answering
+    # brain marking its own homework. Qwen3.8 27B, independent of the 122B.
+    # Deliberately stripped for the job: NO vision (it never sees pictures, and
+    # dropping the mmproj saves ~0.9GB) and a SMALL window, because all it ever
+    # reads is one short evidence digest and it answers in one line.
+    # VRAM: ~15.7GB weights + a small q8 KV ≈ 16GB, inside the ~18.9GB that the
+    # 122B leaves free in the 96GB carve-out. Nothing else uses this card —
+    # every render moved to the other box on 2026-09-06.
+    # Thinking OFF (budget 0): judging is a comparison, not a reasoning job,
+    # and every thinking token is latency on the answer the owner is waiting for.
+    MODEL=~/forge/models/Qwen3.8-27B-ABLITERATED-Q4_K_M.gguf
+    PORT=8088; CTX=8192; NGL=99
+    EXTRA="-fa on -ctk q8_0 -ctv q8_0 --reasoning-budget 0"; CACHE=1024 ;;
   merge38)
     # CANDIDATE brain: Qwen3.8 27B abliterated (Blackfrost) WITH native vision
     # (mmproj ships in the same repo — the hard rule held). Same port as merge:
