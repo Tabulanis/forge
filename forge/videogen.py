@@ -473,15 +473,82 @@ def long_video(prompt: str, out_path: str, seconds: float = 12.0, image: str | N
     return str(out)
 
 
+SEEDVR2 = {"unet": "seedvr2_3b_fp16.safetensors", "vae": "seedvr2_ema_vae_fp16.safetensors",
+           "tile": 512, "tile_overlap": 128, "temporal_size": 64, "temporal_overlap_vae": 8,
+           "chunk_overlap": 4, "color": "lab"}
+
+
+def _seedvr2_workflow(video_name: str, seed: int, multiplier: float, chunk_overlap: int, color: str,
+                      frames_per_chunk: int | None = None) -> dict:
+    """Comfy's own 'Video Upscale: SeedVR2' template, chunked mode on, as an API graph. One sampling step:
+    the model is a one-step restorer, so steps=1, cfg=1, denoise=1 is the whole recipe."""
+    S = SEEDVR2
+    w = {
+        "1": {"class_type": "UNETLoader", "inputs": {"unet_name": S["unet"], "weight_dtype": "default"}},
+        "2": {"class_type": "VAELoader", "inputs": {"vae_name": S["vae"]}},
+        "3": {"class_type": "LoadVideo", "inputs": {"file": video_name}},
+        "4": {"class_type": "GetVideoComponents", "inputs": {"video": ["3", 0]}},
+        "5": {"class_type": "ResizeImageMaskNode", "inputs": {"input": ["4", 0], "resize_type": "scale by multiplier",
+              "resize_type.multiplier": float(multiplier), "scale_method": "lanczos"}},
+        "6": {"class_type": "SeedVR2Preprocess", "inputs": {"resized_images": ["5", 0]}},
+        "7": {"class_type": "VAEEncodeTiled", "inputs": {"pixels": ["6", 0], "vae": ["2", 0], "tile_size": S["tile"], "overlap": S["tile_overlap"],
+              "temporal_size": S["temporal_size"], "temporal_overlap": S["temporal_overlap_vae"]}},
+        "8": {"class_type": "SeedVR2TemporalChunk", "inputs": {"latent": ["7", 0], "temporal_overlap": int(chunk_overlap), "chunking_mode": "auto"}},
+        "9": {"class_type": "SeedVR2Conditioning", "inputs": {"model": ["1", 0], "vae_conditioning": ["8", 0]}},
+        "10": {"class_type": "KSampler", "inputs": {"model": ["1", 0], "positive": ["9", 0], "negative": ["9", 1], "latent_image": ["8", 0],
+               "seed": seed, "steps": 1, "cfg": 1.0, "sampler_name": "euler", "scheduler": "simple", "denoise": 1.0}},
+        "11": {"class_type": "SeedVR2TemporalMerge", "inputs": {"latents": ["10", 0], "temporal_overlap": ["8", 1]}},
+        "12": {"class_type": "VAEDecodeTiled", "inputs": {"samples": ["11", 0], "vae": ["2", 0], "tile_size": S["tile"], "overlap": S["tile_overlap"],
+               "temporal_size": S["temporal_size"], "temporal_overlap": S["temporal_overlap_vae"]}},
+        "13": {"class_type": "SeedVR2PostProcessing", "inputs": {"images": ["12", 0], "original_resized_images": ["5", 0], "color_correction_method": color}},
+        "14": {"class_type": "CreateVideo", "inputs": {"images": ["13", 0], "fps": ["4", 2]}},
+        "15": {"class_type": "SaveVideo", "inputs": {"video": ["14", 0], "filename_prefix": "merge/seedvr2", "format": "auto", "codec": "auto"}},
+    }
+    if frames_per_chunk:
+        w["8"]["inputs"]["chunking_mode"] = "manual"
+        w["8"]["inputs"]["chunking_mode.frames_per_chunk"] = int(frames_per_chunk)
+    return w
+
+
+def seedvr2_upscale(video: str, out_path: str, longer_size: int | None = None, multiplier: float | None = None,
+                    seed: int | None = None, base: str = DEFAULT_URL, chunk_overlap: int | None = None,
+                    color: str | None = None, frames_per_chunk: int | None = None) -> str:
+    """Real video super-resolution (SeedVR2 3B, Apache) on a draft: adds detail with temporal consistency,
+    keeps what the draft shows. Give longer_size (pixels for the long edge) or a multiplier. Returns out_path."""
+    seed = random.randrange(2 ** 31) if seed is None else int(seed)
+    sw, sh, fps, dur = _probe(str(Path(video).expanduser()))
+    if multiplier is None:
+        target = int(longer_size or max(sw, sh) * 2)
+        multiplier = target / max(sw, sh)
+    wf = _seedvr2_workflow(_upload(base, Path(video).expanduser()), seed, multiplier,
+                           SEEDVR2["chunk_overlap"] if chunk_overlap is None else chunk_overlap,
+                           color or SEEDVR2["color"], frames_per_chunk)
+    out = Path(out_path).expanduser(); out.parent.mkdir(parents=True, exist_ok=True)
+    _run(base, wf, f"seedvr2 x{multiplier:.2f}", out, node="15")   # SaveVideo is node 15 here
+    return str(out)
+
+
 def finish_video(video: str, prompt: str, out_path: str, interpolate: int = 2, fps_out: float | None = None,
-                 seed: int | None = None, base: str = DEFAULT_URL, denoise: float | None = None) -> str:
-    """The finishing pass for an approved draft: 2x refine (the model as a latent upscaler, low noise,
-    realism prompt) in <=81-frame pieces, join, RIFE-smooth. Returns out_path."""
+                 seed: int | None = None, base: str = DEFAULT_URL, denoise: float | None = None,
+                 upscaler: str = "seedvr2", longer_size: int | None = None) -> str:
+    """The finishing pass for an approved draft. upscaler="seedvr2" (default): real video super-resolution
+    straight to the full frame (long edge = longer_size, default FINISH_MAX_SIDE) — keeps the face and the
+    motion, adds detail (measured 2026-09-07: 12 s draft 512x288 -> 1792 in 612 s; the VACE refine changed
+    her face, SeedVR2 did not). upscaler="vace": the old 2x latent refine in <=81-frame pieces. Then RIFE
+    frame doubling. Returns out_path."""
     import subprocess, tempfile
     p = PRESETS["fast"]; L = LONG
     seed = random.randrange(2 ** 31) if seed is None else int(seed)
     work = Path(tempfile.mkdtemp(prefix="finish-"))
     sw, sh, fps, dur = _probe(str(Path(video).expanduser()))
+    out = Path(out_path).expanduser(); out.parent.mkdir(parents=True, exist_ok=True)
+    if upscaler == "seedvr2":
+        joined = Path(seedvr2_upscale(video, str(work / "up.mp4"), longer_size=longer_size or FINISH_MAX_SIDE, seed=seed, base=base))
+        if interpolate and interpolate > 1:
+            _run(base, _rife_workflow(_upload(base, joined), int(interpolate), float(fps_out or fps * interpolate)), "finish: smoothing", out)
+        else:
+            out.write_bytes(joined.read_bytes())
+        return str(out)
     n_total = int(dur * fps + 0.5)
     # cut into pieces of <=81 frames (each piece overlaps nothing; the seams are refined with the same seed)
     pieces: list[Path] = []; i = 0
@@ -503,7 +570,6 @@ def finish_video(video: str, prompt: str, out_path: str, interpolate: int = 2, f
     else:
         lst = work / "list.txt"; lst.write_text("".join(f"file '{x}'\n" for x in refined))
         subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-f", "concat", "-safe", "0", "-i", str(lst), "-c:v", "libx264", "-crf", "14", "-pix_fmt", "yuv420p", "-an", str(joined)], check=True, timeout=600)
-    out = Path(out_path).expanduser(); out.parent.mkdir(parents=True, exist_ok=True)
     if interpolate and interpolate > 1:
         _run(base, _rife_workflow(_upload(base, joined), int(interpolate), float(fps_out or fps * interpolate)), "finish: smoothing", out)
     else:

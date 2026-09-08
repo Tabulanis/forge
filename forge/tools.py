@@ -794,13 +794,11 @@ def _story_video(ws_root: str, keyframes: list, hero: str, prompt: str, filename
                                 camera=[str(c) for c in camera] if camera else None)
         msg = f"Draft saved to {draft} ({time.time() - t0:.0f}s; small {dw}x{dh}, {len(keys) - 1} segments pinned to your keyframes, hero as the identity anchor)."
         if upscale:
-            # small to big, one smooth climb: the model's refine pass twice (faithful — it keeps slabs as slabs),
-            # frame doubling at the end. The identity repaint (guided_up) is a rescue, not a step every shot takes.
-            mid = str(out.with_name(out.stem + "-2x.mp4"))
-            videogen.finish_video(draft, prompt, mid, seed=seed, base=base, denoise=0.28, interpolate=1)
+            # small to big in one climb: SeedVR2 video super-resolution straight to the full frame (keeps the
+            # face and the motion, adds real detail), then frame doubling. ~1 min per second of draft.
             fin = str(out.with_name(out.stem + "-finished.mp4"))
-            videogen.finish_video(mid, prompt, fin, seed=seed, base=base, denoise=0.22, interpolate=2)
-            msg += f" Climbed to full frame: {fin} (refine 2x twice + frame doubling; {time.time() - t0:.0f}s total)."
+            videogen.finish_video(draft, prompt, fin, seed=seed, base=base, interpolate=2)
+            msg += f" Climbed to full frame: {fin} (SeedVR2 super-resolution + frame doubling; {time.time() - t0:.0f}s total)."
     except Exception as e:
         return f"Error making the story video: {str(e)[:500]}"
     return msg + " Tell the user where it is; it's a draft to judge motion and continuity."
@@ -2745,7 +2743,7 @@ def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provi
         ),
         Tool(
             name="finish_video",
-            description='Finishing pass for an approved small draft: refine 2x (real detail back, look kept constant) and frame doubling. Give the same `prompt` the draft used. ~1.5 min per 3 s.',
+            description='Finishing pass for an approved small draft: SeedVR2 video super-resolution straight to the full frame (same face, same motion, real detail) then frame doubling. Give the same `prompt` the draft used. About 1 min per second of draft.',
             parameters={"type": "object",
                         "properties": {"video": {"type": "string", "description": "The draft video"},
                                        "prompt": {"type": "string", "description": "The draft's prompt"},
