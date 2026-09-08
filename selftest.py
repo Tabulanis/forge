@@ -151,6 +151,57 @@ def t_everyday_mode_is_reviewed():
     from forge.modes import get_mode
     return all(get_mode(m)["superego"] for m in ("balanced", "precise", "deep"))
 
+
+# --------------------------------------------- invented data (2026-09-08)
+def t_cortex_refuses_a_fixture_corpus():
+    """A nine-record fixture set was ingested on 2026-08-19 to exercise the
+    categoriser and sat in the live archive for three weeks. Asked when his
+    doctor's appointment was, she answered "Thursday 2pm with Dr. Reyes, bring
+    your insurance card". Asked about a roof quote: "$4,200". Both invented,
+    both stated as his life, with nothing marking them as test data."""
+    import time
+    from forge import cortex
+    d = Path(tempfile.mkdtemp()); fx = d / "fixtures.mbox"
+    fx.write_text("\n".join(
+        f"From a@clinic.example.com {time.ctime()}\nFrom: a@clinic.example.com\n"
+        f"To: me@example.com\nSubject: Fixture {i}\n"
+        f"Date: Wed, 20 Aug 2026 10:0{i}:00 +0000\n\nBody {i}.\n" for i in range(3)))
+    return "refusing to ingest" in str(cortex.ingest(str(fx))).lower()
+
+
+def t_cortex_records_carry_provenance():
+    """A record that cannot say where it came from can never be told apart from
+    a fixture at answer time. Provenance is what makes the difference visible."""
+    import inspect
+    from forge import cortex
+    src = inspect.getsource(cortex.ingest)
+    return '"provenance"' in src or "'provenance'" in src
+
+
+def t_no_invented_life_facts_in_memory():
+    """Worse than the archive: she wrote what she found there into her long-term
+    memory, so wiping the archive alone would have left her still 'remembering'
+    a flight to San Francisco and a $4,200 roof quote as fact."""
+    import re
+    p = Path.home() / ".forge" / "memory-cards.jsonl"
+    if not p.exists():
+        return True
+    bad = re.compile(r"Dr\.?\s*Reyes|roofingco|1Z999|DEN\s*[-\u2192>]+\s*SFO", re.I)
+    return not any(bad.search(l) for l in p.read_text(errors="ignore").splitlines())
+
+
+def t_card_vectors_stay_row_aligned():
+    """The vector file is row-aligned to the card file. Dropping a card without
+    dropping its vector shifts every later memory onto the wrong text — which
+    would silently mis-attribute her whole history."""
+    from forge.embed import DIM
+    c = Path.home() / ".forge" / "memory-cards.jsonl"
+    v = Path.home() / ".forge" / "card-vectors.f32"
+    if not (c.exists() and v.exists()):
+        return True
+    n = sum(1 for _ in open(c))
+    return v.stat().st_size == n * DIM * 4
+
 # ---------------------------------------------------------------- context
 def t_overhead_counted():
     """The bare 400: schemas + system prompt were invisible, so a turn read 19%
@@ -459,6 +510,10 @@ CHECKS = [
     ("superego: is a SECOND model", t_superego_is_a_second_model, False),
     ("superego: reviews a turn with no tools", t_superego_reviews_a_toolless_turn, False),
     ("superego: the everyday mode is reviewed", t_everyday_mode_is_reviewed, False),
+    ("data: cortex refuses a fixture corpus", t_cortex_refuses_a_fixture_corpus, False),
+    ("data: cortex records carry provenance", t_cortex_records_carry_provenance, False),
+    ("data: no invented life-facts in memory", t_no_invented_life_facts_in_memory, False),
+    ("data: card vectors stay row-aligned", t_card_vectors_stay_row_aligned, False),
     ("toolindex: cannot bypass privacy", t_load_cannot_bypass_privacy, False),
     ("toolindex: retrieval quality + junk refused", t_tool_search_quality, True),
     ("embedder: batches large inputs", t_embedder_batches, True),

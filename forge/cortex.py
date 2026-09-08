@@ -62,6 +62,14 @@ _RULES = [
 
 
 # ---- helpers ------------------------------------------------------------
+# Reserved domains (RFC 2606) — these can never be a real correspondent, so
+# their presence in EVERY message means the corpus is a fixture.
+# Match the reserved domain at the end of an address, and as a subdomain
+# (clinic.example.com), which is how fixture generators usually write them.
+_EXAMPLE_DOMAIN = re.compile(
+    r"[@.](example\.(com|org|net)|invalid|localhost)(?![a-z0-9-])", re.I)
+
+
 def _clean(s) -> str:
     """Decode MIME header junk (=?UTF-8?B?...?=) into plain text, safely."""
     if not s:
@@ -177,6 +185,29 @@ def ingest(source: str, limit: int = 0) -> str:
                 "'All mail Including Spam and Trash.mbox' — point me at the "
                 "unzipped Takeout folder.")
 
+    # Refuse an obviously synthetic corpus. On 2026-08-19 a nine-record fixture
+    # set was ingested to exercise the categoriser, and it sat here for three
+    # weeks answering questions about the owner's health and money with invented
+    # facts — a doctor's appointment and a $4,200 quote, stated plainly, with
+    # nothing marking them as test data. Test corpora address example.com, which
+    # is reserved and can never be a real recipient.
+    probe, fake_to = [], 0
+    for box in boxes[:1]:
+        for rec in _iter_mbox(box):
+            probe.append(rec)
+            # Checked with a separator: joining two addresses directly removes
+            # the word boundary at the seam and the match silently fails.
+            if _EXAMPLE_DOMAIN.search(f'{rec.get("to", "")} {rec.get("from", "")}'):
+                fake_to += 1
+            if len(probe) >= 25:
+                break
+    if probe and fake_to == len(probe):
+        return ("Refusing to ingest: every message in that archive is addressed to "
+                "or from a reserved example domain, so it is test data, not mail. "
+                "Ingesting it would put invented facts in the archive and they "
+                "would be answered as if they were yours.")
+
+    stamp = {"source": str(p), "ingested_at": time.time()}
     DIR.mkdir(parents=True, exist_ok=True)
     seen = set()
     if RECORDS.exists():
@@ -197,6 +228,9 @@ def ingest(source: str, limit: int = 0) -> str:
                     skipped += 1
                     continue
                 seen.add(rec["id"])
+                # Provenance: a record that cannot say where it came from can
+                # never be told apart from a fixture at answer time.
+                rec["provenance"] = stamp
                 out.write(json.dumps(rec, ensure_ascii=False) + "\n")
                 by_cat[rec["category"]] = by_cat.get(rec["category"], 0) + 1
                 new += 1
