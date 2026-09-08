@@ -22,7 +22,7 @@ from pathlib import Path
 
 import httpx
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
-from fastapi.responses import FileResponse, Response, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -695,13 +695,36 @@ def get_doctor():
 
 
 
+def _build_id(name: str = "chat.html") -> str:
+    """A fingerprint of the page files. An open tab keeps running the JS it loaded, so after a dash
+    restart with new code the user sees the OLD behaviour and reports it as still broken (2026-09-07:
+    exactly that, twice). The page compares this on every reconnect and reloads itself when it moves."""
+    import hashlib
+    h = hashlib.md5()
+    for f in sorted(WEB_DIR.glob("*.html")):
+        try:
+            h.update(f.read_bytes())
+        except OSError:
+            pass
+    return h.hexdigest()[:12]
+
+
+@app.get("/api/build")
+def build_id():
+    return {"build": _build_id()}
+
+
 def _page(name: str) -> FileResponse:
     """Serve an HTML page with caching off. These pages are a few KB and
     change when Forge updates — a browser showing last week's cached copy
     of the chat page is how 'I fixed it' and 'it's still broken' happen
     at the same time."""
-    return FileResponse(WEB_DIR / name,
-                        headers={"Cache-Control": "no-store"})
+    p = WEB_DIR / name
+    try:
+        html = p.read_text(encoding="utf-8").replace("__BUILD_ID__", _build_id(), 1)
+        return HTMLResponse(html, headers={"Cache-Control": "no-store"})
+    except OSError:
+        return FileResponse(p, headers={"Cache-Control": "no-store"})
 
 @app.get("/help")
 def help_page():

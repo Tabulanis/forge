@@ -298,6 +298,18 @@
 const $ = id => document.getElementById(id);
 const log = $('log');
 let SESSION = localStorage.getItem('forge-session') || null;
+// The build this page was served as. After a dash restart with new code an open tab keeps running
+// the old JS — checked on every reconnect below, and the page reloads itself when it has gone stale.
+const BUILD = '__BUILD_ID__';
+let reloading = false;
+async function checkBuild() {
+  if (reloading || BUILD === '__BUILD' + '_ID__') return;      // unstamped (file opened directly): skip
+  try {
+    const r = await fetch(q('/api/build'), { cache: 'no-store' });
+    const d = await r.json();
+    if (d.build && d.build !== BUILD) { reloading = true; location.reload(); }
+  } catch (_) {}
+}
 let TOKEN = new URLSearchParams(location.search).get('token')
             || localStorage.getItem('forge-token') || '';
 if (new URLSearchParams(location.search).get('token')) {
@@ -669,6 +681,7 @@ let reconnectTimer = null;
 function connect() {
   if (es) es.close();
   es = new EventSource(q('/api/stream/' + SESSION + '?since=' + cursor));
+  es.onopen = () => checkBuild();          // a fresh connection is also when the dash may have just restarted
   es.onmessage = m => { try { render(JSON.parse(m.data)); } catch (_) {} };
   // Reconnect ourselves with the CURRENT cursor rather than letting the
   // browser retry the original URL forever — a page that slept through
