@@ -98,11 +98,11 @@ DEFAULT_CONFIG: dict[str, Any] = {
     # Eyes and ears. Every one of these is optional — Forge runs fine
     # without any of them, and tools only appear when they actually work.
     "media": {
-        # Primary vision is Merge's own sighted brain (8085); the shared CPU 7B
-        # (8090) is the fallback when she's not the active model. Keep these in
-        # step with the MediaConfig defaults in media.py.
+        # She has one set of eyes: the 122B's own, on 8087. There is no separate
+        # vision model and no fallback — the 27B, the 30B and the 7B vision model
+        # were all retired 2026-09-05. Keep in step with MediaConfig in media.py.
         "vision_url": "http://127.0.0.1:8087/v1",   # her brain's own eyes (big122)
-        "vision_model": "qwen3.6-27b",
+        "vision_model": "qwen3.5-122b",
         # image engine: ComfyUI on the render box (the TITAN, over the wire);
         # "sketch" = Z-Image-Turbo, "reference" = FLUX.2-klein 4B, "masterpiece" = Qwen-Image
         "imagegen_url": "http://10.42.0.1:8189",
