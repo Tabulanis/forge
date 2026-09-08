@@ -853,6 +853,15 @@ def serve() -> None:
     else:
         print(f"  Merge → {scheme}://{host}:{port}/chat")
         print("  (machine-only. To reach it from a phone: forge-dash --network)")
+    # Half a tool set on a belt is a bug that costs an afternoon (2026-09-08:
+    # browser_js without `browse`). A pure set comparison, so it runs every start.
+    try:
+        from .modes import check_belts
+        for _complaint in check_belts():
+            print(f"  ⚠ TOOL BELT: {_complaint}")
+    except Exception:
+        pass
+
     # Her human voice (piper) is found next to THIS interpreter. If we were
     # launched under a bare python instead of the venv, piper is missing and she
     # silently drops to the robot TTS — warn loudly rather than fail quietly.

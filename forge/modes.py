@@ -60,6 +60,37 @@ _CORE = {
 # tool schemas at the very top of the prompt, so a per-mode list changed the first bytes and
 # threw away the whole cached prompt on every mode switch (measured: 40 full re-reads in a
 # day, 24 min). Mode-specific restraint now lives in the nudge, not the schema list.
+# Tools that are only useful together. On 2026-09-08 she had browser_js,
+# browser_view and browser_console on her belt but not `browse` — the only
+# tool that points the browser at a URL — so she could inspect a page she
+# could never open, ran her JavaScript against about:blank, and reported a
+# working game as broken. Twice. A belt holding part of a set is a bug, and
+# check_belts() below makes it say so at startup instead of costing an hour.
+TOOL_SETS = {
+    "browser": {"browse", "browser_js", "browser_view", "browser_console"},
+    "pictures": {"generate_image", "look_at_image"},
+    "video": {"generate_video", "finish_video"},
+    "loras": {"lora_search", "lora_install", "lora_list"},
+}
+
+
+def check_belts() -> list[str]:
+    """Complaints about the belts, or an empty list. Cheap, no I/O, no model."""
+    out = []
+    for mode in MODES:
+        try:
+            belt = set(get_mode(mode).get("tools") or ())
+        except Exception:
+            continue
+        for group, members in TOOL_SETS.items():
+            have = belt & members
+            if have and have != members:
+                out.append(f"mode {mode!r} has part of the {group} set "
+                           f"({', '.join(sorted(have))}) but is missing "
+                           f"{', '.join(sorted(members - have))} — half a set is a bug")
+    return out
+
+
 _ALL = _CORE | _WRITING | _LIGHT
 
 MODES = {

@@ -433,6 +433,12 @@ Pictures and video (they render on the second machine; every call is a minute or
 - LoRAs are how the look grows: small add-ons for a base model (realism, film grain, a camera move, a style, adult content). lora_list shows the shelf; lora_search finds more on Civitai; lora_install puts one on the render box and records its license; then loras=['name:0.7'] on generate_video / story_video (wan14b family) or generate_image / storyboard (klein, qwen). Start at 0.6-0.8, use the trigger words the entry lists, one or two LoRAs at a time. The climb (SeedVR2) takes none, so the look must be in the draft. Adult work is allowed here with two limits that never move: no real people, no minors. If a shot keeps wanting a look we don't have, go find it — that shelf is yours to build.
 - restyle_video: the prompt changes content/era keeping motion (needs a source with structure; edges for flat shots); `stock` is the film finish. finish_video sharpens an approved draft.
 
+Once you have the job, do it. Do not stop half way to ask whether to carry on — the
+answer is yes, and a turn that ends with "shall I continue?" has spent his time and
+delivered nothing. Ask only when the answer would change WHAT you build, or when the
+next step is destructive or irreversible. "I have done A, now doing B" is a status
+line, not a question, and it does not need an answer.
+
 How to talk:
 - The user is not a programmer by trade. Explain in plain language, skip the
   jargon, and never dump raw code or long output at them unless they ask.
@@ -850,7 +856,11 @@ class Agent:
                                f"{int(_elapsed)} seconds and will be CUT OFF at "
                                f"{int(_mode_wall)}s. Stop exploring NOW — consolidate "
                                "what you already have into your answer, note anything "
-                               "unverified as unverified, and finish. If real work "
+                               "unverified as unverified, and finish. FIRST: anything "
+                               "you are holding that must survive — a transcript, a "
+                               "list, a finding, notes — write it to a file or "
+                               "save_note NOW, before you answer. When this turn is "
+                               "cut, everything not on disk is gone. If real work "
                                "remains, say exactly what's left so it can be a fresh "
                                "message." + BOUNCE_TAIL,
                 })
