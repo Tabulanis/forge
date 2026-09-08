@@ -204,18 +204,19 @@ offers a tool when the thing behind it actually works.
 
     /media     shows what's live right now
 
-SEEING     Start the vision model: `~/forge/start-model.sh vision`
-           Then it can look at screenshots and images and tell you what's
-           wrong with them. Slow — a couple of minutes per picture — so it's
-           for "look at this bug", not conversation.
+SEEING     Nothing to start — she sees with her own eyes. The 122B is
+           multimodal, so looking at a picture is the same model that
+           does everything else, already loaded. Show her a screenshot
+           and ask what's wrong with it.
 
 HEARING    Point it at a voice recording and it types it out. Fast, about
            two seconds.
 
 SPEAKING   It can say short things out loud, handy when you've walked away.
 
-The vision model wants the graphics card that the big coding model is
-already using, so in practice you stop one to run the other.""",
+Nothing competes for the graphics card any more. Seeing is built into
+the brain that's already resident, and every picture or video she makes
+is rendered on the other box.""",
     },
 
     # -------------------------------------------------------------- trouble
@@ -257,11 +258,12 @@ It's being slow
         "title": "Turning her off and on",
         "blurb": "Get your graphics card back when you're done.",
         "body": """The local models hold the graphics card the whole time they run —
-the big one alone keeps ~23GB of it. When you're done for now:
+her brain alone keeps about 80GB of the 96GB set aside for it. When
+you're done for now:
 
     forge off        stop every local model, free the card
-    forge on         start the big one again (takes about a minute to load)
-    forge on vision  start a specific one: big, vision, little, tiny
+    forge on         start her brain again (takes about a minute to load)
+    forge on little  start a specific one: big122, little, embed
 
 Inside a chat, /off does the same and says goodbye.
 
