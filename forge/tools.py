@@ -598,11 +598,61 @@ def _physics_sim(scenario: str, params: dict | None = None) -> str:
             "doppler, photon_clock. Quantum: photon, double_slit, uncertainty.")
 
 
+
+_LORA_FAMILY_OF_PRESET = {"reference": "klein", "real": "qwen", "edit": "qwen", "masterpiece": "qwen"}
+
+
+def _lora_ctx(specs, family: str):
+    """The render-time LoRA context for a tool call: resolves ['name:0.7', ...] against the manifest."""
+    from . import loras, imagegen
+    return imagegen.using_loras(loras.resolve(specs, family) if specs else [])
+
+
+def _lora_search(query: str, family: str = "wan14b", nsfw=None, limit: int = 10) -> str:
+    from . import loras
+    try:
+        hits = loras.search(query, family=family or "wan14b", nsfw=(None if nsfw in (None, "", "any") else bool(nsfw)), limit=int(limit or 10))
+    except Exception as e:
+        return f"Error searching Civitai: {str(e)[:300]}"
+    if not hits:
+        return f"Nothing on Civitai for {query!r} in family {family}." + ("" if loras._token() else " (No Civitai key set: adult models are hidden — media.civitai_token in config.yaml.)")
+    lines = []
+    for h in hits:
+        lic = h["license"]; com = ", ".join(lic.get("commercial") or []) or "no"
+        lines.append(f"- {h['name']} (version_id {h['version_id']}, {h['family']}, {h['size_mb']} MB, {h['downloads']} downloads"
+                     f"{', ADULT' if h['nsfw'] else ''}) commercial: {com}; credit {'required' if lic['credit_required'] else 'not required'}"
+                     + (f"; triggers: {', '.join(h['triggers'][:3])}" if h["triggers"] else "") + (f"\n    {h['about']}" if h["about"] else ""))
+    return "Civitai LoRAs (install with lora_install version_id):\n" + "\n".join(lines)
+
+
+def _lora_install(version_id, family: str = "", name: str = "", strength=None, progress=None) -> str:
+    from . import loras
+    try:
+        e = loras.install(int(version_id), family=family or None, name=name or None, strength=strength, progress=progress)
+    except Exception as ex:
+        return f"Error installing LoRA: {str(ex)[:400]}"
+    return ("Installed and recorded: " + loras.describe(e) + f" ({e.get('size_mb', '?')} MB, {e.get('seconds', '?')} s). "
+            f"Use it with loras=[\"{e['name']}\"] or loras=[\"{e['name']}:0.6\"] on the matching tool.")
+
+
+def _lora_list(family: str = "") -> str:
+    from . import loras
+    items = loras.installed(family or None)
+    if not items:
+        return "No LoRAs installed" + (f" for {family}" if family else "") + ". lora_search finds them."
+    fams = ", ".join(f"{k}: {v['use']}" for k, v in loras.FAMILIES.items())
+    return "Installed LoRAs (name [family] file — strength; license):\n" + "\n".join("- " + loras.describe(e) for e in items) + f"\nFamilies — {fams}"
+
+
+def _lora_remove(name: str) -> str:
+    from . import loras
+    return loras.remove(name)
+
 def _generate_image(ws_root: str, prompt: str, filename: str = "",
                     preset: str = "", references: list | None = None,
                     seed=None, steps=None, media=None,
                     control_image: str = "", control_type: str = "pose", control_strength: float = 0.8,
-                    width=None, height=None, aspect: str = "", size=None) -> str:
+                    width=None, height=None, aspect: str = "", size=None, loras=None) -> str:
     """Make an image on the GPU through ComfyUI (forge.imagegen). The picture
     lands in the workspace; references (paths in the workspace) are what
     "make it look like this" means."""
@@ -649,10 +699,14 @@ def _generate_image(ws_root: str, prompt: str, filename: str = "",
             cimg = str(cp)
         # Shape: as asked; else a picture made FROM references keeps the first reference's shape.
         w, h = imagegen.fit_size(width, height, aspect, size, like=(refs[0] if refs else None))
-        path = imagegen.render(prompt, str(out), preset=preset, references=refs,
-                               seed=seed, steps=steps, base=base, width=w, height=h,
-                               control_image=cimg, control_type=control_type or "pose",
-                               control_strength=float(control_strength or 0.8))
+        fam = _LORA_FAMILY_OF_PRESET.get(preset or "")
+        if loras and not fam:
+            return f"Error: preset {preset or 'sketch'} takes no LoRAs — use reference (klein) or real/edit/masterpiece (qwen)"
+        with _lora_ctx(loras, fam or "klein"):
+            path = imagegen.render(prompt, str(out), preset=preset, references=refs,
+                                   seed=seed, steps=steps, base=base, width=w, height=h,
+                                   control_image=cimg, control_type=control_type or "pose",
+                                   control_strength=float(control_strength or 0.8))
     except Exception as e:
         return f"Error generating image ({preset}): {str(e)[:500]}"
     return (f"Image saved to {path} ({preset}, {time.time() - t0:.0f}s). "
@@ -735,7 +789,7 @@ def _ws_path(ws_root: str, rel: str) -> Path | None:
 
 
 def _storyboard(ws_root: str, hero: str, shots: list, name: str = "", seed=None, media=None,
-                aspect: str = "", size=None) -> str:
+                aspect: str = "", size=None, loras=None) -> str:
     """Keyframes from a hero picture, one per shot (forge.storyvideo.storyboard)."""
     from . import storyvideo, imagegen
     h = _ws_path(ws_root, hero)
@@ -753,7 +807,8 @@ def _storyboard(ws_root: str, hero: str, shots: list, name: str = "", seed=None,
     try:
         t0 = time.time()
         bw, bh = imagegen.fit_size(None, None, aspect, size or 768, like=str(h), default=(768, 432))   # the hero's shape, small
-        frames = storyvideo.storyboard(str(h), [str(x) for x in shots][:8], str(out_dir), base=base, seed=seed, width=bw, height=bh)
+        with _lora_ctx(loras, "klein"):
+            frames = storyvideo.storyboard(str(h), [str(x) for x in shots][:8], str(out_dir), base=base, seed=seed, width=bw, height=bh)
     except Exception as e:
         return f"Error making the storyboard: {str(e)[:400]}"
     return (f"Storyboard: {len(frames)} keyframes in {out_dir} ({time.time() - t0:.0f}s):\n" + "\n".join(frames) +
@@ -761,7 +816,7 @@ def _storyboard(ws_root: str, hero: str, shots: list, name: str = "", seed=None,
 
 
 def _story_video(ws_root: str, keyframes: list, hero: str, prompt: str, filename: str = "", camera: list | None = None,
-                 upscale: bool = False, seed=None, media=None) -> str:
+                 upscale: bool = False, seed=None, media=None, loras=None) -> str:
     """Tiny draft from approved keyframes (+ optional guided upscale) — forge.storyvideo."""
     from . import storyvideo, videogen
     h = _ws_path(ws_root, hero)
@@ -790,8 +845,9 @@ def _story_video(ws_root: str, keyframes: list, hero: str, prompt: str, filename
         t0 = time.time()
         from . import imagegen
         dw, dh = imagegen.fit_size(None, None, None, 512, like=keys[0], default=(512, 288))   # the keyframes' shape, tiny
-        draft = storyvideo.fill(keys, prompt, str(h), str(out), base=base, seed=seed, width=dw, height=dh,
-                                camera=[str(c) for c in camera] if camera else None)
+        with _lora_ctx(loras, "wan14b"):
+            draft = storyvideo.fill(keys, prompt, str(h), str(out), base=base, seed=seed, width=dw, height=dh,
+                                    camera=[str(c) for c in camera] if camera else None)
         msg = f"Draft saved to {draft} ({time.time() - t0:.0f}s; small {dw}x{dh}, {len(keys) - 1} segments pinned to your keyframes, hero as the identity anchor)."
         if upscale:
             # small to big in one climb: SeedVR2 video super-resolution straight to the full frame (keeps the
@@ -806,7 +862,7 @@ def _story_video(ws_root: str, keyframes: list, hero: str, prompt: str, filename
 
 def _generate_video(ws_root: str, prompt: str, image: str = "", seconds=5,
                     filename: str = "", seed=None, quality: str = "fast",
-                    width=None, height=None, aspect: str = "", lock: str = "scene") -> str:
+                    width=None, height=None, aspect: str = "", lock: str = "scene", loras=None) -> str:
     """A clip via the render box's ComfyUI (forge.videogen). Same workspace
     rules as images: everything in, everything out, stays inside the workspace."""
     from . import videogen
@@ -839,7 +895,13 @@ def _generate_video(ws_root: str, prompt: str, image: str = "", seconds=5,
     secs = max(2.0, min(float(seconds or 5), 60.0))
     try:
         t0 = time.time()
-        if secs > 8:
+        ctx = _lora_ctx(loras, "wan14b")
+    except Exception as e:
+        return f"Error: {e}"
+    try:
+      with ctx:
+        if secs > 8 or loras:
+            # LoRAs live on the 14B draft model, so a short clip WITH LoRAs takes the draft path too
             # long form = a small DRAFT in chained chunks (continuity from frame to frame). Cheap to
             # judge motion and story; finish_video refines and smooths the one the user approves.
             from . import imagegen
@@ -2670,16 +2732,17 @@ def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provi
                     "height": {"type": "integer", "description": "Exact height in pixels"},
                     "aspect": {"type": "string", "description": "Shape instead of exact pixels: '16:9', '9:16', '1:1', '2.39:1', 'phone'... (default: the first reference's shape, else square)"},
                     "size": {"type": "integer", "description": "Long edge in pixels when using aspect (default 1024)"},
+                    "loras": {"type": "array", "items": {"type": "string"}, "description": "Installed LoRAs to add, 'name' or 'name:strength' (lora_list shows them; reference takes klein LoRAs, real/edit/masterpiece take qwen ones)"},
                 },
                 "required": ["prompt"],
             },
             run=guard(lambda prompt, filename="", preset="", references=None, seed=None, steps=None,
                              control_image="", control_type="pose", control_strength=0.8,
-                             width=None, height=None, aspect="", size=None:
+                             width=None, height=None, aspect="", size=None, loras=None:
                       _generate_image(str(ws.root), prompt, filename, preset, references,
                                       seed, steps, control_image=control_image,
                                       control_type=control_type, control_strength=control_strength,
-                                      width=width, height=height, aspect=aspect, size=size)),
+                                      width=width, height=height, aspect=aspect, size=size, loras=loras)),
             needs_permission=True,
             summarize=lambda a: f"generate image: {a.get('prompt', '')[:60]}",
         ),
@@ -2695,6 +2758,7 @@ def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provi
                     "filename": {"type": "string", "description": "Optional output name; defaults to a slug"},
                     "seed": {"type": "integer", "description": "Optional seed for a repeatable clip"},
                     "aspect": {"type": "string", "description": "Shape: '16:9', '9:16', '1:1'... (default: the start image's shape, else 16:9)"},
+                    "loras": {"type": "array", "items": {"type": "string"}, "description": "Installed wan14b LoRAs to add, 'name' or 'name:strength' (lora_list). With LoRAs a clip always takes the draft path"},
                     "lock": {"type": "string", "enum": ["scene", "frame", "none"],
                              "description": "Long takes only. scene (default) = camera and room held by the opening frame's depth, the character free; frame = everything held, for a seated/still character; none = free-running (drifts)"},
                     "width": {"type": "integer", "description": "Exact width in pixels (snapped to 16)"},
@@ -2704,8 +2768,8 @@ def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provi
                 },
                 "required": ["prompt"],
             },
-            run=guard(lambda prompt, image="", seconds=5, filename="", seed=None, quality="fast", width=None, height=None, aspect="", lock="scene":
-                      _generate_video(str(ws.root), prompt, image, seconds, filename, seed, quality, width=width, height=height, aspect=aspect, lock=lock)),
+            run=guard(lambda prompt, image="", seconds=5, filename="", seed=None, quality="fast", width=None, height=None, aspect="", lock="scene", loras=None:
+                      _generate_video(str(ws.root), prompt, image, seconds, filename, seed, quality, width=width, height=height, aspect=aspect, lock=lock, loras=loras)),
             needs_permission=True,
             summarize=lambda a: f"generate video: {a.get('prompt', '')[:60]}",
         ),
@@ -2718,9 +2782,10 @@ def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provi
                                        "name": {"type": "string", "description": "Optional folder name for the keyframes"},
                                        "aspect": {"type": "string", "description": "Shape of the keyframes (default: the hero's shape)"},
                                        "size": {"type": "integer", "description": "Long edge of the keyframes (default 768)"},
+                                       "loras": {"type": "array", "items": {"type": "string"}, "description": "Installed klein LoRAs to add, 'name' or 'name:strength'"},
                                        "seed": {"type": "integer", "description": "Optional seed"}},
                         "required": ["hero", "shots"]},
-            run=guard(lambda hero, shots, name="", seed=None, aspect="", size=None: _storyboard(str(ws.root), hero, shots, name, seed, aspect=aspect, size=size)),
+            run=guard(lambda hero, shots, name="", seed=None, aspect="", size=None, loras=None: _storyboard(str(ws.root), hero, shots, name, seed, aspect=aspect, size=size, loras=loras)),
             needs_permission=True,
             summarize=lambda a: f"storyboard: {len(a.get('shots') or [])} shots from {a.get('hero', '')}",
         ),
@@ -2733,11 +2798,12 @@ def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provi
                                        "prompt": {"type": "string", "description": "What happens across the shot"},
                                        "camera": {"type": "array", "items": {"type": "string"}, "description": "Camera move per segment"},
                                        "upscale": {"type": "boolean", "description": "Climb to full frame after approval"},
+                                       "loras": {"type": "array", "items": {"type": "string"}, "description": "Installed wan14b LoRAs for the draft, 'name' or 'name:strength'"},
                                        "filename": {"type": "string", "description": "Optional output name"},
                                        "seed": {"type": "integer", "description": "Optional seed"}},
                         "required": ["keyframes", "hero", "prompt"]},
-            run=guard(lambda keyframes, hero, prompt, camera=None, upscale=False, filename="", seed=None:
-                      _story_video(str(ws.root), keyframes, hero, prompt, filename, camera, bool(upscale), seed)),
+            run=guard(lambda keyframes, hero, prompt, camera=None, upscale=False, filename="", seed=None, loras=None:
+                      _story_video(str(ws.root), keyframes, hero, prompt, filename, camera, bool(upscale), seed, loras=loras)),
             needs_permission=True,
             summarize=lambda a: f"story video: {len(a.get('keyframes') or [])} keyframes",
         ),
@@ -2753,6 +2819,48 @@ def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provi
             run=guard(lambda video, prompt, filename="", seed=None: _finish_video(str(ws.root), video, prompt, filename, seed)),
             needs_permission=True,
             summarize=lambda a: f"finish video: {a.get('video', '')}",
+        ),
+        Tool(
+            name="lora_search",
+            description="Find LoRAs on Civitai for one of our model families (wan14b = video drafts, klein = stills, qwen = slow stills, wan22 = Wan 2.2 LoRAs that usually work on our 14B). Shows version_id, size, license and trigger words. Adult results need the Civitai key in config.",
+            parameters={"type": "object",
+                        "properties": {"query": {"type": "string", "description": "What you're after: 'realism', 'film grain', 'slow dolly', a style, a subject"},
+                                       "family": {"type": "string", "enum": ["wan14b", "wan22", "klein", "qwen"], "description": "Which model it must fit (default wan14b)"},
+                                       "nsfw": {"type": "boolean", "description": "true = adult only, false = safe only, omit = both"},
+                                       "limit": {"type": "integer", "description": "How many (default 10)"}},
+                        "required": ["query"]},
+            run=guard(lambda query, family="wan14b", nsfw=None, limit=10: _lora_search(query, family, nsfw, limit)),
+            needs_permission=False,
+            summarize=lambda a: f"lora search: {a.get('query', '')[:50]}",
+        ),
+        Tool(
+            name="lora_install",
+            description="Download a LoRA from Civitai (by version_id from lora_search) onto the render box, link it into ComfyUI and record it in the manifest with its license. 300-700 MB, about a minute. Then use it via loras=[...] on generate_video / story_video / generate_image / storyboard.",
+            parameters={"type": "object",
+                        "properties": {"version_id": {"type": "integer", "description": "The version_id from lora_search"},
+                                       "family": {"type": "string", "enum": ["wan14b", "wan22", "klein", "qwen"], "description": "Override the detected family only if you know better"},
+                                       "name": {"type": "string", "description": "Optional short name to call it by"},
+                                       "strength": {"type": "number", "description": "Default strength when used (0-1.5; the author's note usually says)"}},
+                        "required": ["version_id"]},
+            run=guard(lambda version_id, family="", name="", strength=None: _lora_install(version_id, family, name, strength)),
+            needs_permission=True,
+            summarize=lambda a: f"install LoRA {a.get('version_id', '')}",
+        ),
+        Tool(
+            name="lora_list",
+            description="What LoRAs are installed, per family, with strengths, licenses and trigger words — the manifest.",
+            parameters={"type": "object", "properties": {"family": {"type": "string", "description": "Optional filter: wan14b | wan22 | klein | qwen"}}},
+            run=guard(lambda family="": _lora_list(family)),
+            needs_permission=False,
+            summarize=lambda a: "list LoRAs",
+        ),
+        Tool(
+            name="lora_remove",
+            description="Delete an installed LoRA from the render box and the manifest (built-in ones stay).",
+            parameters={"type": "object", "properties": {"name": {"type": "string", "description": "Its name from lora_list"}}, "required": ["name"]},
+            run=guard(lambda name: _lora_remove(name)),
+            needs_permission=True,
+            summarize=lambda a: f"remove LoRA {a.get('name', '')}",
         ),
         Tool(
             name="extract_pose",

@@ -23,6 +23,7 @@ from pathlib import Path
 
 from . import imagegen, videogen
 from .videogen import DEFAULT_URL, RESTYLE, _run, _upload, _probe, _post, _get
+from .imagegen import add_loras
 
 STORY = {"board_w": 768, "board_h": 432,          # storyboard stills (16:9, small)
          "draft_w": 512, "draft_h": 288,          # tiny draft segments (exact 16:9 like the boards; was 448x256 = 7:4)
@@ -84,7 +85,7 @@ def _fill_workflow(prompt: str, seed: int, w: int, h: int, n: int, first_name: s
         "10": {"class_type": "CreateVideo", "inputs": {"images": ["9", 0], "fps": 24}},
         "11": {"class_type": "SaveVideo", "inputs": {"video": ["10", 0], "filename_prefix": "merge/story_seg", "format": "auto", "codec": "auto"}},
     }
-    return wf
+    return add_loras(wf, "1l")
 
 
 def fill(keyframes: list[str], prompt: str, hero: str, out_path: str, base: str = DEFAULT_URL,
@@ -119,7 +120,7 @@ def fill(keyframes: list[str], prompt: str, hero: str, out_path: str, base: str 
 def _guided_workflow(src_name: str, prompt: str, seed: int, w: int, h: int, n: int, hero_name: str, strength: float) -> dict:
     """VACE repaint at a bigger size: the draft's frames are the control (structure), the hero the reference (identity)."""
     p = RESTYLE
-    return {
+    return add_loras({
         "1": {"class_type": "UnetLoaderGGUF", "inputs": {"unet_name": p["unet"]}},
         "1l": {"class_type": "LoraLoaderModelOnly", "inputs": {"model": ["1", 0], "lora_name": p["lora"], "strength_model": 1.0}},
         "2": {"class_type": "CLIPLoader", "inputs": {"clip_name": p["clip"], "type": "wan", "device": "default"}},
@@ -141,7 +142,7 @@ def _guided_workflow(src_name: str, prompt: str, seed: int, w: int, h: int, n: i
         "9": {"class_type": "VAEDecode", "inputs": {"samples": ["9t", 0], "vae": ["3", 0]}},
         "10": {"class_type": "CreateVideo", "inputs": {"images": ["9", 0], "fps": 24}},
         "11": {"class_type": "SaveVideo", "inputs": {"video": ["10", 0], "filename_prefix": "merge/story_up", "format": "auto", "codec": "auto"}},
-    }
+    }, "1l")
 
 
 def guided_up(draft: str, prompt: str, hero: str, out_path: str, factor: int = 2, base: str = DEFAULT_URL,
@@ -456,7 +457,7 @@ def _pinned_workflow(prompt: str, seed: int, w: int, h: int, n: int, pins: list[
     wf["9"] = {"class_type": "VAEDecode", "inputs": {"samples": ["9t", 0], "vae": ["3", 0]}}
     wf["10"] = {"class_type": "CreateVideo", "inputs": {"images": ["9", 0], "fps": 24}}
     wf["11"] = {"class_type": "SaveVideo", "inputs": {"video": ["10", 0], "filename_prefix": "merge/story_pin", "format": "auto", "codec": "auto"}}
-    return wf
+    return add_loras(wf, "1l")
 
 
 def _crossfade_join(parts: list[Path], overlaps: list[int], out: Path, fps: int, work: Path) -> None:

@@ -38,6 +38,7 @@ _CORE = {
     "recall", "save_note",                                          # memory
     "compute",                                                      # exact math
     "look_at_image",                                                # her eyes
+    "lora_search", "lora_install", "lora_list", "lora_remove",      # 2026-09-07: she grows the LoRA shelf herself
     # 2026-09-05: pictures became first-class (ComfyUI on the GPU, reference
     # images, ~20 s). Without this on the belt she went looking for the tool on
     # the web and started writing her own with PIL — watched live. One schema.

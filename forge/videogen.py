@@ -19,7 +19,7 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-from .imagegen import _post, _get, _upload   # same ComfyUI plumbing
+from .imagegen import _post, _get, _upload, add_loras, using_loras, extra_loras   # same ComfyUI plumbing + LoRA context
 
 DEFAULT_URL = "http://10.42.0.1:8189"
 
@@ -81,6 +81,7 @@ def _workflow(prompt: str, seed: int, width: int, height: int, frames: int,
     if start_image:
         w["12"] = {"class_type": "LoadImage", "inputs": {"image": start_image}}
         w["7"]["inputs"]["start_image"] = ["12", 0]
+    add_loras(w, "13" if p.get("lora") else "1")
     return w
 
 
@@ -199,7 +200,7 @@ def _restyle_workflow(src_name: str, prompt: str, seed: int, width: int, height:
     if ref_name:
         w["r0"] = {"class_type": "LoadImage", "inputs": {"image": ref_name}}
         w["7"]["inputs"]["reference_image"] = ["r0", 0]
-    return w
+    return add_loras(w, "1l")
 
 
 def _probe(path: str) -> tuple[int, int, float, float]:
@@ -650,7 +651,7 @@ def _vace_extend_workflow(prompt: str, seed: int, width: int, height: int, frame
     if ref_name:
         w["r0"] = {"class_type": "LoadImage", "inputs": {"image": ref_name}}
         w["7"]["inputs"]["reference_image"] = ["r0", 0]
-    return w
+    return add_loras(w, "1l")
 
 
 def depth_map(image: str, out_path: str, base: str = DEFAULT_URL, free_person: bool = False,

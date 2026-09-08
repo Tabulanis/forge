@@ -169,7 +169,7 @@ def _workflow(p: dict, prompt: str, seed: int, width: int, height: int,
         "10": {"class_type": "SaveImage", "inputs": {"images": ["9", 0], "filename_prefix": "merge/img"}},
     }
     model = ["1", 0]
-    loras = list(p.get("loras") or ([(p["lora"], 1.0)] if p.get("lora") else []))
+    loras = list(p.get("loras") or ([(p["lora"], 1.0)] if p.get("lora") else [])) + list(extra_loras.get())
     for i, (lname, lstr) in enumerate(loras):
         nid = "1l" if i == 0 else f"1l{i}"
         w[nid] = {"class_type": "LoraLoaderModelOnly", "inputs": {"model": model, "lora_name": lname, "strength_model": float(lstr)}}
@@ -226,6 +226,43 @@ def _workflow(p: dict, prompt: str, seed: int, width: int, height: int,
             "model": model, "seed": seed, "steps": steps or p["steps"], "cfg": p["cfg"],
             "sampler_name": p["sampler"], "scheduler": p["scheduler"], "denoise": 1.0,
             "positive": positive, "negative": negative, "latent_image": ["7", 0]}}
+    return w
+
+
+import contextlib
+import contextvars
+
+# Extra LoRAs for the render happening right now (set by the tool layer with using_loras); every
+# workflow builder in imagegen/videogen/storyvideo chains whatever is here after its preset's own.
+extra_loras: contextvars.ContextVar[list] = contextvars.ContextVar("extra_loras", default=[])
+
+
+@contextlib.contextmanager
+def using_loras(loras):
+    tok = extra_loras.set(list(loras or []))
+    try:
+        yield
+    finally:
+        extra_loras.reset(tok)
+
+
+def add_loras(w: dict, tail: str) -> dict:
+    """Chain the context's extra LoRAs after node `tail` (the model output every consumer reads),
+    re-pointing those consumers at the last LoRA. No-op when there are none."""
+    loras = extra_loras.get()
+    if not loras:
+        return w
+    model = [tail, 0]
+    for i, (lname, lstr) in enumerate(loras):
+        nid = f"lx{i}"
+        w[nid] = {"class_type": "LoraLoaderModelOnly", "inputs": {"model": model, "lora_name": lname, "strength_model": float(lstr)}}
+        model = [nid, 0]
+    for nid, node in w.items():
+        if nid.startswith("lx"):
+            continue
+        for k, v in list(node.get("inputs", {}).items()):
+            if k == "model" and v == [tail, 0]:
+                node["inputs"][k] = model
     return w
 
 
