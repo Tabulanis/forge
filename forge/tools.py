@@ -46,7 +46,13 @@ FINDINGS_DIR = Path.home() / ".forge" / "findings"  # per-task working-facts scr
 # --- scouts: throwaway read-only sub-agents (fan-out) ---
 SCOUT_TOOLS = {"read_file", "search", "list_dir", "fetch_url"}   # read-only only
 SCOUT_STEPS = 14
-AUTO_SCOUT_ENABLED = False   # shelved: too slow on the 27B, hallucinates on the 3B — flip on with a fast brain
+# Shelved on the old box: too slow on the 27B, and it hallucinated on the 3B.
+# The 3B was the actual problem — the digest ran on the summariser, which is the
+# little model, so "flip on with a fast brain" was never going to be enough on
+# its own. Enabled 2026-09-08 together with the fix below: the digest now runs
+# on the main brain, and the big-file threshold is sized for a 131k window, so
+# this fires only on genuinely large files rather than ordinary source files.
+AUTO_SCOUT_ENABLED = True
 SCOUT_PROMPT = (
     "You are a SCOUT — a throwaway research worker with your own scratch memory. "
     "You are handed ONE narrow question and nothing else matters. Investigate with "
@@ -1041,7 +1047,13 @@ def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provi
         # Keep paging the SAME big file -> the harness auto-scouts it and hands back a
         # digest, so even a model that never elects a scout stops drowning.
         # contains= / small files bypass entirely (a deliberate read is never limited).
-        _big = len(lines) > 600 or f.stat().st_size > 50_000
+        # What counts as too big to hand over whole. 600 lines / 50 KB was
+        # sized when her whole window was 16-32k, and it made ordinary source
+        # files unreadable: a 700-line module became a map and three hints.
+        # 2000 lines / 100 KB is ~25k tokens, under a fifth of the 131k window,
+        # so a normal file is simply read and only a genuinely huge one is
+        # summarised. Raised 2026-09-08.
+        _big = len(lines) > 2000 or f.stat().st_size > 100_000
         if _big and not contains:
             _k = str(f)
             _bigfile_reads[_k] = _bigfile_reads.get(_k, 0) + 1
@@ -1054,14 +1066,16 @@ def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provi
                         f"MAP of {ws.rel(f)}:\n" + _file_outline(lines))
             if AUTO_SCOUT_ENABLED and _bigfile_reads[_k] >= 3 and provider is not None:
                 if _k not in _bigfile_digest:
-                    # fast digest: the LITTLE model, low step budget — trading a
-                    # perfect summary for speed, since a slow scout would drag the turn.
+                    # The MAIN BRAIN writes this digest, not the little model.
+                    # A summary she will act on without re-reading the file has
+                    # to be true; the 3B's version was fast and wrong, which is
+                    # what got this feature shelved in the first place.
                     _bigfile_digest[_k] = _run_scout(
                         f"Summarize {ws.rel(f)} tightly for someone who must understand it "
                         f"WITHOUT reading it whole: what it does, its key functions/classes/"
                         f"sections with one-line notes and line numbers, and anything notable. "
                         f"A few short paragraphs at most.",
-                        summarizer or provider, 6)
+                        provider or summarizer, 6)
                 return (f"You've paged {ws.rel(f)} several times — to spare your working "
                         f"memory a scout read the whole file and summarized it. Use "
                         f"read_file(\"{ws.rel(f)}\", contains=\"...\") for exact lines you "
@@ -1355,8 +1369,9 @@ def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provi
 
     def _run_scout(mission: str, prov, steps: int) -> str:
         """Run a throwaway read-only sub-agent on the given provider/step-budget
-        and return only its short conclusion. Used both by the scout tool (full
-        27B) and the auto-scout digest (fast little model)."""
+        and return only its short conclusion. Used by the scout tool and by the
+        auto-scout digest — both on the main brain, so what comes back is
+        trustworthy enough to act on without re-reading the file."""
         if prov is None:
             return "Scout unavailable (no model wired in)."
         from .agent import Agent   # lazy import: avoid a tools<->agent cycle
