@@ -59,20 +59,26 @@ the morning of 2026-09-08, before any of this.
   sized for a 16k window, trimming the tail so the OLDEST rules died first.
   Raised to 32,000 and the trim now keeps both ends.
 
-> **Not done, deliberately — 2026-09-08:** `AUTO_SCOUT_ENABLED` stays `False`.
-> Its comment says "flip on with a fast brain", and there is one now, but the
-> code tells a different story: the digest runs on `summarizer or provider`,
-> which is the little 3B — and "hallucinates on the 3B" is exactly why it was
-> shelved. The stated condition is not actually met. Enabling it would need the
-> digest pointed at the big brain first, which is a behaviour change, not a lift.
-
-> **Not done, deferred — 2026-09-08:** `SUMMARY_INPUT_TOKENS` stays 7,000. It is
-> held down by the 3B fallback's real 8k window, not by old hardware. Raising it
-> needs the budget to follow whichever model is actually summarizing.
-
-> **Left alone — 2026-09-08:** `power.py`'s exclusive-model logic still knows the
-> retired units. They exist but are disabled, and the power switch needs to be
-> able to report on them. Intentional, not drift.
+- **2026-09-08** — **The power switch could not see the embedder,** the model
+  that makes her memory cards searchable. Live and enabled, absent from the
+  roster, so `forge off` could not stop it and the Power card never showed it.
+  Also emptied `EXCLUSIVE`: it auto-stopped a rival model before starting one,
+  because on the 24GB card the 30B and 27B could never fit together. The whole
+  stack is resident at once now. Retired units moved to `LEGACY_UNITS`, kept only
+  so a stray hand-started one can still be stopped.
+- **2026-09-08** — **The summary budget follows the model doing the work.** One
+  number served two models that are nothing alike: a 131k main brain and an 8k
+  fallback. It was sized for the fallback and applied to both, so a compaction
+  that drops ~60,000 tokens wrote its briefing from the last 7,000. The main
+  brain now reads 45% of its own window (58,982 tokens); the 3B keeps its 7,000.
+- **2026-09-08** — **Auto-scout is back, on a brain that can be trusted with it.**
+  Flipping the flag alone would have shipped the original bug: the digest ran on
+  the summariser, which is the little 3B, and "hallucinates on the 3B" was the
+  wrong model writing, not slow hardware. The digest is written by the main brain
+  now. The big-file threshold also goes 600 lines / 50 KB → 2000 / 100 KB, sized
+  for the 131k window: `storyvideo.py` (872 lines) and `videogen.py` (787) came
+  back as a map and three hints and now read whole, while `agent.py` and
+  `tools.py` are still mapped, correctly — they are genuinely huge.
 
 > **Found, not fixed — 2026-09-08:** `forge doctor` reports three false warnings
 > ("Config truth") by comparing a short model name in config against the full
