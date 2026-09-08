@@ -36,6 +36,121 @@ def check(name: str, fn, needs_server: bool = False):
         FAIL.append((name, f"{type(e).__name__}: {e}"))
 
 
+
+# ------------------------------------------------- the 2026-09-08 rebuild
+def t_no_retired_model_in_defaults():
+    """The vision ghost. The LIVE config was always right, but the code default
+    still named the retired 27B, and that default fires on any config
+    regeneration — which is how a dead model survived two rebuilds."""
+    from forge.config import DEFAULT_CONFIG
+    from forge.media import MediaConfig
+    v = DEFAULT_CONFIG["media"]["vision_model"]
+    return v == MediaConfig().vision_model and "27b" not in v.lower()
+
+
+def t_flows_point_at_real_models():
+    """All six flows named qwen30b or tiny, retired 2026-09-05. Every flow
+    raised PipelineError on its first step, silently, for a month."""
+    import yaml
+    from forge.config import load_config
+    cfg = load_config(); have = set(cfg.get("models", {}))
+    doc = yaml.safe_load((Path.home() / ".forge/pipelines.yaml").read_text())
+    flows = doc.get("pipelines", doc)
+    for flow in flows.values():
+        for step in (flow.get("steps") or []):
+            m = (step or {}).get("model")
+            if m and m not in have:
+                return False
+    return True
+
+
+def t_browse_is_iterative():
+    """The 2026-09-08 fix exempted the three tools that LOOK at a page from the
+    repeat cap and missed `browse`, the one that OPENS a page. Eleven pages in
+    a turn and the cap lands on the only tool that reaches the twelfth."""
+    from forge.agent import _ITERATIVE_TOOLS
+    return {"browse", "browser_js", "browser_view", "browser_console"} <= _ITERATIVE_TOOLS
+
+
+def t_notebook_trim_keeps_both_ends():
+    """The cap was 8000 chars, sized for a 16k window, and it trimmed the TAIL
+    — dropping the OLDEST rules first, which are usually the founding ones.
+    Found live 2026-08-11 when a notebook hit 4.7k and behaviour degraded."""
+    from forge.agent import NOTES_LIMIT_CHARS as CAP
+    if CAP < 16000:
+        return False
+    notes = "FOUNDING RULE\n" + ("filler\n" * 20000) + "NEWEST RULE\n"
+    head = CAP // 3; tail = CAP - head
+    out = notes[:head] + "\n\n(...middle of the notebook trimmed to fit...)\n\n" + notes[-tail:]
+    return "FOUNDING RULE" in out and "NEWEST RULE" in out
+
+
+def t_summary_budget_follows_the_model():
+    """One number served a 131k brain and an 8k fallback. Sized for the
+    fallback, applied to both, so a compaction dropping ~60k tokens wrote its
+    briefing from the last 7k."""
+    from forge.agent import SUMMARY_INPUT_TOKENS, SUMMARY_INPUT_FRACTION
+    return (0 < SUMMARY_INPUT_FRACTION < 1
+            and int(131072 * SUMMARY_INPUT_FRACTION) > SUMMARY_INPUT_TOKENS * 4)
+
+
+def t_power_knows_the_live_stack():
+    """forge-model-embed — the model that makes her memories searchable — was
+    absent from the power roster entirely, so `forge off` could not stop it.
+    And EXCLUSIVE still auto-stopped rivals for a card that now holds
+    everything at once."""
+    from forge import power
+    live = set(power.LIVE_UNITS)
+    return ({"forge-model-big122", "forge-model-little", "forge-model-embed"} <= live
+            and not power.EXCLUSIVE
+            and power.PORTS.get("embed") == 8086)
+
+
+def t_ordinary_module_reads_whole():
+    """600 lines / 50KB was sized for a 16-32k window and made ordinary source
+    files unreadable: an 800-line module came back as a map and three hints."""
+    from forge import tools as T
+    from forge.session import Workspace
+    ws_dir = tempfile.mkdtemp()
+    (Path(ws_dir) / "ordinary.py").write_text("x = 1\n" * 900)   # a normal module
+    tools = {t.name: t for t in T.build_tools(Workspace(ws_dir))}
+    out = tools["read_file"].run(path="ordinary.py")
+    return "MAP of" not in out[:600] and "not dumped whole" not in out[:600]
+
+
+def t_superego_is_a_second_model():
+    """It was reviewing itself: superego_model was blank, and blank means fall
+    back to the answering brain. The 122B marked its own homework."""
+    from forge.config import load_config
+    cfg = load_config()
+    name = (cfg["agent"].get("superego_model") or "").strip()
+    if not name or name not in cfg.get("models", {}):
+        return False
+    judge = cfg["models"][name]; brain = cfg["models"][cfg["active_model"]]
+    return judge.get("base_url") and judge["base_url"] != brain.get("base_url")
+
+
+def t_superego_reviews_a_toolless_turn():
+    """The hole in the middle of the gate. It ran only when tools had run, so a
+    turn with NO tool calls was never reviewed — exactly the shape of a pure
+    fabrication. Caught live 2026-09-08: asked her dashboard port, she named a
+    port and a dotfile that do not exist, and nothing reviewed it."""
+    import inspect
+    from forge import agent as A
+    src = inspect.getsource(A.Agent)
+    i = src.find('get_mode(self.active_mode)["superego"]')
+    if i < 0:
+        return False
+    line = src[max(0, i - 200):i]
+    return "_tools_ran" not in line.split("if self.superego")[-1]
+
+
+def t_everyday_mode_is_reviewed():
+    """Balanced is the default. The honesty check was off there, so most
+    answers he ever saw were never checked at all."""
+    from forge.modes import get_mode
+    return all(get_mode(m)["superego"] for m in ("balanced", "precise", "deep"))
+
 # ---------------------------------------------------------------- context
 def t_overhead_counted():
     """The bare 400: schemas + system prompt were invisible, so a turn read 19%
@@ -129,27 +244,32 @@ def t_toolindex_excludes_itself():
     return not ({"find_tools", "load_tools"} & set(T._INDEX_REGISTRY))
 
 
-def t_loaded_tools_survive_and_reset():
-    """A tool loaded early has to still be there late, and must not leak into
-    the next turn."""
+def t_belt_is_whole_and_stays_whole():
+    """Rewritten 2026-09-08. This used to assert that an on-demand tool
+    DISAPPEARS after the turn ends, which was right while 51 of 84 tools were
+    hidden behind a search step to save an 11.8k-token schema bill on a 24k
+    window. On the 131k window that bill is 11.6%, the hiding is gone, and the
+    thing worth guarding is the opposite: no tool may ever vanish mid-turn.
+    She reported a working game as broken on 2026-09-08 because she held three
+    tools for inspecting a page and not the one that opens it."""
     from forge.agent import Agent
     from forge import tools as T, toolindex
     from forge.session import Workspace
     ws = Workspace(tempfile.mkdtemp())
-    ag = Agent(provider=object(), tools=T.build_tools(ws),
+    built = T.build_tools(ws)
+    ag = Agent(provider=object(), tools=built,
                permission_mode="auto", superego=None)
     ag.active_mode = "balanced"; ag.privacy = "normal"
     ag.client_env = ""; ag.identity_owner = ""; ag.history = []
-    reg = T._INDEX_REGISTRY
-    toolindex.reset(); toolindex.load_tools(["query_dataset"], reg)
-    here = lambda: any(s["name"] == "query_dataset" for s in ag.tool_schemas)
-    early = here()
+    names = lambda: {s["name"] for s in ag.tool_schemas}
+    before = names()
+    if len(before) < len(built):          # everything she owns is on the belt
+        return False
     for _ in range(8):
         ag.history.append({"role": "tool_result", "content": "x" * 3000})
     ag._trim_tool_results(keep_recent=2)
-    late = here()
-    toolindex.reset()
-    return early and late and not here()
+    toolindex.reset()                     # a reset must take nothing away
+    return names() == before
 
 
 def t_load_cannot_bypass_privacy():
@@ -328,7 +448,17 @@ CHECKS = [
     ("vault: chat-typed secrets scrubbed", t_secrets_scrubbed, False),
     ("vault: values never readable", t_vault_hides_values, False),
     ("toolindex: does not index itself", t_toolindex_excludes_itself, False),
-    ("toolindex: loads survive, then reset", t_loaded_tools_survive_and_reset, False),
+    ("belt: whole, and nothing vanishes mid-turn", t_belt_is_whole_and_stays_whole, False),
+    ("rebuild: no retired model in the code defaults", t_no_retired_model_in_defaults, False),
+    ("rebuild: every flow points at a real model", t_flows_point_at_real_models, False),
+    ("rebuild: browse counts as iterative", t_browse_is_iterative, False),
+    ("rebuild: notebook trim keeps both ends", t_notebook_trim_keeps_both_ends, False),
+    ("rebuild: summary budget follows the model", t_summary_budget_follows_the_model, False),
+    ("rebuild: power knows the live stack", t_power_knows_the_live_stack, False),
+    ("rebuild: an ordinary module reads whole", t_ordinary_module_reads_whole, False),
+    ("superego: is a SECOND model", t_superego_is_a_second_model, False),
+    ("superego: reviews a turn with no tools", t_superego_reviews_a_toolless_turn, False),
+    ("superego: the everyday mode is reviewed", t_everyday_mode_is_reviewed, False),
     ("toolindex: cannot bypass privacy", t_load_cannot_bypass_privacy, False),
     ("toolindex: retrieval quality + junk refused", t_tool_search_quality, True),
     ("embedder: batches large inputs", t_embedder_batches, True),
