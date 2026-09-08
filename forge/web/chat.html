@@ -297,7 +297,8 @@
 <script>
 const $ = id => document.getElementById(id);
 const log = $('log');
-let SESSION = localStorage.getItem('forge-session') || null;
+let SESSION = new URLSearchParams(location.search).get('session')
+              || localStorage.getItem('forge-session') || null;   // ?session= opens one chat by link
 // The build this page was served as. After a dash restart with new code an open tab keeps running
 // the old JS — checked on every reconnect below, and the page reloads itself when it has gone stale.
 const BUILD = '__BUILD_ID__';
@@ -449,7 +450,7 @@ function showVideo(path) {
   v.src = fileUrl(path);
   v.controls = true; v.playsInline = true; v.setAttribute('playsinline', ''); v.preload = 'metadata';
   v.muted = false; v.loop = true;
-  v.onerror = () => card.remove();     // not servable / not really a video
+  v.onerror = () => { shownImages.delete(key); card.remove(); };   // let a later mention retry
   card.appendChild(v);
   const cap = document.createElement('div');
   cap.className = 'cap';
@@ -466,7 +467,7 @@ function showImage(path) {
   img.src = fileUrl(path);
   img.alt = path.split('/').pop();
   img.onclick = () => window.open(img.src, '_blank');
-  img.onerror = () => card.remove();     // not servable / not really an image
+  img.onerror = () => { shownImages.delete(key); card.remove(); };   // let a later mention retry
   card.appendChild(img);
   const cap = document.createElement('div');
   cap.className = 'cap';

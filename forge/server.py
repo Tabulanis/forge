@@ -442,23 +442,43 @@ _VID_MIME = {".mp4": "video/mp4", ".m4v": "video/mp4", ".webm": "video/webm", ".
 def _find_in_workspace(name: str, session: str) -> Path | None:
     """A bare filename ('cafe-draft.mp4') resolved inside that session's workspace. She names files
     without their folder all the time — that used to mean the dash showed nothing at all."""
-    if not session or "/" in name or "\\" in name:
+    if "/" in name or "\\" in name or name in ("", ".", ".."):
         return None
-    sess = STORE.get(session)
-    if not sess:
-        STORE.rescan()
-        sess = STORE.get(session)
-    if not sess:
-        return None
-    root = Path(sess.workspace).expanduser()
-    hits = [c for c in (root / name, root / "generated" / name) if c.is_file()]
-    if not hits:
-        try:                                   # a folder deeper (storyboards, story runs)
-            hits = sorted((c for c in root.glob(f"*/{name}") if c.is_file()), key=lambda c: c.stat().st_mtime, reverse=True)
-            hits += sorted((c for c in root.glob(f"*/*/{name}") if c.is_file()), key=lambda c: c.stat().st_mtime, reverse=True)
+
+    def _under(root: Path) -> Path | None:
+        root = Path(root).expanduser()
+        for c in (root / name, root / "generated" / name):
+            if c.is_file():
+                return c.resolve()
+        try:                                   # a folder or two deeper (storyboards, story runs)
+            deep = [c for pat in (f"*/{name}", f"*/*/{name}") for c in root.glob(pat) if c.is_file()]
         except OSError:
-            hits = []
-    return hits[0].resolve() if hits else None
+            deep = []
+        return max(deep, key=lambda c: c.stat().st_mtime).resolve() if deep else None
+
+    roots: list[Path] = []
+    if session:
+        sess = STORE.get(session)
+        if not sess:
+            STORE.rescan()
+            sess = STORE.get(session)
+        if sess:
+            roots.append(Path(sess.workspace))
+    # Then every other session's workspace, newest first. The session id can be missing or stale
+    # (a tab that reloaded, a link without it) and the file is still one she just made — refusing
+    # to look is how a video silently fails to appear.
+    try:
+        for s in sorted(STORE.sessions.values(), key=lambda s: getattr(s, "last_used", 0) or 0, reverse=True):
+            r = Path(s.workspace)
+            if r not in roots:
+                roots.append(r)
+    except Exception:
+        pass
+    for r in roots:
+        hit = _under(r)
+        if hit:
+            return hit
+    return None
 
 
 @app.get("/api/file", dependencies=[Depends(require_token)])
