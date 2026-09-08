@@ -13,25 +13,36 @@ from __future__ import annotations
 import subprocess
 import time
 
-# Order matters only for display. big122 is her brain since 2026-09-05; the
-# 27B (merge) and 30B (big) are retired but their units still exist.
-MODEL_UNITS = ("forge-model-big122", "forge-model-big", "forge-model-merge",
-               "forge-model-vision", "forge-model-little", "forge-model-tiny")
+# The stack as it actually runs since the 2026-09-05 cutover: her brain (which
+# is also her eyes), the little model that distils memory cards, and the
+# embedder that makes those cards searchable. All three are enabled and up.
+LIVE_UNITS = ("forge-model-big122", "forge-model-little", "forge-model-embed")
 
-PORTS = {"big122": 8087, "big": 8084, "merge": 8085, "vision": 8090,
-         "little": 8083, "tiny": 8081}
+# Retired 2026-09-05, units still on disk but disabled. Kept in the roster for
+# one reason only: `forge off` must still be able to stop one if somebody
+# starts it by hand. Nothing here is part of the running stack.
+LEGACY_UNITS = ("forge-model-big", "forge-model-merge",
+                "forge-model-vision", "forge-model-tiny")
+
+MODEL_UNITS = LIVE_UNITS + LEGACY_UNITS
+
+PORTS = {"big122": 8087, "little": 8083, "embed": 8086,
+         # retired
+         "big": 8084, "merge": 8085, "vision": 8090, "tiny": 8081}
 
 # How much GPU memory each model takes once loaded — measured. Only used to
 # draw the loading bar; if a model ever changes, the bar just runs fast or slow.
-EXPECTED_LOAD_MB = {"big122": 70000, "big": 17700, "merge": 17300}
+EXPECTED_LOAD_MB = {"big122": 70000, "little": 2100, "embed": 700,
+                    "big": 17700, "merge": 17300}
 
-# Models that shouldn't share the GPU at once. On the 24GB TITAN big and merge
-# never fit together; on Void (96GB carve-out, 128k window) the 122B plus
-# either of them would push into system RAM, which is off limits. Starting one
-# auto-stops its rivals first, instead of leaving that as a comment a human
-# has to remember — a rule that isn't enforced gets crossed eventually.
-EXCLUSIVE = {"big122": ("big", "merge"), "big": ("merge", "big122"),
-             "merge": ("big", "big122")}
+# Nothing competes for the card any more. This used to auto-stop a rival model
+# before starting one, because on the 24GB TITAN the 30B and the 27B could
+# never fit together. On Void the whole stack — 122B, 3B and embedder — is
+# resident at once inside the 96GB carve-out with room to spare, and every
+# render moved to the other box entirely. Emptied 2026-09-08: the rule now
+# describes a scarcity that no longer exists, and enforcing it would stop a
+# model that has every right to be running.
+EXCLUSIVE: dict[str, tuple[str, ...]] = {}
 
 
 def _run(*args: str) -> subprocess.CompletedProcess:
