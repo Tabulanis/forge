@@ -208,6 +208,41 @@ _FENCE_ALLOWED = ("/usr/", "/bin/", "/sbin/", "/lib/", "/lib64/", "/opt/",
                   "/dev/null", "/proc/self")
 
 
+# Her own guts: the package she runs on, her settings and state, and the
+# services that are her. Her FILE tools already refuse these from a project
+# workspace; the shell did not, so the boundary held everywhere except the one
+# tool that can go anywhere.
+_SELF_PATHS = (Path.home() / "forge", Path.home() / ".forge")
+_SELF_UNITS = re.compile(r"systemctl[^\n]*\b(forge-\S+|makerstudio)", re.I)
+_SELF_REACH = re.compile(
+    r"(?:^|[\s\"\'=:(])(?:~|\$HOME|/home/[^/\s]+)/\.?forge(?:/|\b)", re.I)
+
+
+def _self_reach(command: str, root: Path) -> str | None:
+    """What in this command touches Merge herself, when she is not working on
+    herself. Returns the offending fragment, or None.
+
+    She is the builder; MoneyLab, Storyweave and the rest are what she builds.
+    Working inside a project must never turn into modifying herself by
+    accident. When her workspace IS her own source, this is off — that is the
+    deliberate act of working on herself, and it needs no sneaking.
+    """
+    try:
+        here = root.resolve()
+        if any(here == sp or sp in here.parents or here in sp.parents
+               for sp in _SELF_PATHS):
+            return None                     # she is deliberately working on herself
+    except Exception:
+        pass
+    m = _SELF_REACH.search(command)
+    if m:
+        return m.group(0).strip(" \"'=:(")
+    m = _SELF_UNITS.search(command)
+    if m:
+        return m.group(0)
+    return None
+
+
 def _fence_violation(command: str, root: Path) -> str | None:
     """In kid mode, find the first thing in a command that reaches outside
     the workspace: home shortcuts, parent-hopping, absolute paths that
@@ -1410,6 +1445,14 @@ def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provi
             return (f"Error: blocked — {blocked}. This command could damage the "
                     f"whole machine, so it's refused even in auto mode. If the "
                     f"user genuinely wants it, they can run it themselves.")
+        reach = _self_reach(command, ws.root)
+        if reach:
+            return (f"Error: that reaches into Merge herself ({reach!r}) while the "
+                    f"workspace is {ws.root}. This is a project — you are the "
+                    f"builder, not the thing being built. Your file tools already "
+                    f"refuse this and the shell now does too. If you genuinely "
+                    f"mean to work on yourself, say so and have the workspace "
+                    f"switched to your own source first; then this is allowed.")
         if fenced:
             bad = _fence_violation(command, ws.root)
             if bad:
