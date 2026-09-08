@@ -74,7 +74,14 @@ STALL_SECONDS = 240        # no NEW progress (new distinct tool call) for this l
 # how a small local model fills memory and runs a turn out of road unlaunched.
 _ITERATIVE_TOOLS = {"read_file", "write_file", "edit_file", "undo_file",
                     "list_dir", "search", "run_command", "web_search", "recall",
-                    "list_datasets", "list_sims", "list_parts", "list_xfiles"}
+                    "list_datasets", "list_sims", "list_parts", "list_xfiles",
+                    # 2026-09-08: driving a live page is poke-read-poke, the same
+                    # class as read_file — not a generative rut. Without this she
+                    # spent a whole turn play-testing a game with EVERY browser_js
+                    # answered "tool budget spent", i.e. blindfolded, and concluded
+                    # the game was broken when it was fine.
+                    "browser_js", "browser_view", "browser_console",
+                    "fetch_url", "look_at_image"}
 
 # Every automatic bounce risks the model answering the CHECK instead of the
 # user — seen live: a casual chat turn ended in "Final Answer (Corrected and
