@@ -64,12 +64,14 @@ _PROMISES_ACTION = re.compile(
 # reported to the user.
 _TEST_FILE = re.compile(r"(^|/)(test_[^/]*|[^/]+_test\.[^./]+|conftest\.py)$")
 
-# A notebook longer than this gets tail-truncated — which silently DROPS
-# THE OLDEST RULES first. Sized for the old 16k context and never
-# revisited when the window doubled; found live 2026-08-11 when a
-# project's notebook hit 4.7k and its foundational rules quietly fell
-# off, degrading behavior that had been solid for hours.
-NOTES_LIMIT_CHARS = 8000
+# A notebook longer than this gets trimmed. Two things were wrong with the
+# old 8000: it was sized for a 16k context (the window is 131,072 now, so the
+# cap was spending 1.5% of it to protect space that isn't scarce), and it
+# trimmed the TAIL, which drops the OLDEST rules first — usually the
+# foundational ones. Found live 2026-08-11 when a notebook hit 4.7k and its
+# founding rules quietly fell off, degrading behaviour that had been solid for
+# hours. Raised 2026-09-08, and the trim now keeps both ends.
+NOTES_LIMIT_CHARS = 32000
 
 # Memory compaction: when the conversation has eaten this fraction of the
 # model's context window, the older part is condensed into a summary. Local
@@ -95,7 +97,11 @@ _ITERATIVE_TOOLS = {"read_file", "write_file", "edit_file", "undo_file",
                     # spent a whole turn play-testing a game with EVERY browser_js
                     # answered "tool budget spent", i.e. blindfolded, and concluded
                     # the game was broken when it was fine.
-                    "browser_js", "browser_view", "browser_console",
+                    # 2026-09-08 (second pass): `browse` was left out of the
+                    # fix above — the tool that actually points the browser at a
+                    # URL. Visiting eleven pages in one turn hit the cap on the
+                    # only tool that can open the twelfth. Same bug, one tool over.
+                    "browse", "browser_js", "browser_view", "browser_console",
                     "fetch_url", "look_at_image"}
 
 # Every automatic bounce risks the model answering the CHECK instead of the
@@ -586,7 +592,14 @@ class Agent:
         if not notes:
             return text
         if len(notes) > NOTES_LIMIT_CHARS:
-            notes = "(older notes trimmed)\n" + notes[-NOTES_LIMIT_CHARS:]
+            # Keep BOTH ends: the opening rules are usually the foundational
+            # ones, the closing lines are the freshest. Cut from the middle and
+            # say so, rather than silently dropping the founding rules.
+            head = NOTES_LIMIT_CHARS // 3
+            tail = NOTES_LIMIT_CHARS - head
+            notes = (notes[:head]
+                     + "\n\n(...middle of the notebook trimmed to fit...)\n\n"
+                     + notes[-tail:])
         return text + "\n\n# Project notebook (FORGE-NOTES.md)\n" + notes
 
     def _turn_context(self) -> str:
