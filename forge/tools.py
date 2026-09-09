@@ -30,7 +30,9 @@ from typing import Callable
 
 import httpx
 
-from . import (audio_nerve, bioacoustics, browser, business, cad, cortex, datasets, doolittle, persona, toolindex, vault, medical, frameworks, identity, law,                sims)
+from . import (audio_nerve, bioacoustics, browser, business, cad, cortex,
+               datasets, doolittle, frameworks, identity, law, markets,
+               medical, persona, sims, toolindex, vault)
 from .codetools import syntax_check
 from .config import load_config
 from .dataops import data_ops, date_calc
@@ -2401,6 +2403,40 @@ def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provi
                 "required": ["kind"],
             },
             run=lambda kind, params=None: business.calc(kind, params),
+        ),
+        Tool(
+            name="markets_calc",
+            description=(
+                "Opportunity & edge math — the quantitative half of evaluating any way to "
+                "make money (prediction markets, forex, commodities, real estate, betting, "
+                "arbitrage). kind is one of: ev (win_prob, win_payoff, loss_amount — or "
+                "outcomes:[{prob,payoff}]) · implied_prob (decimal_odds OR american_odds, "
+                "your_prob? for the edge) · kelly (win_prob, decimal_odds OR net_odds) · "
+                "arbitrage (odds_a, odds_b, cost_pct?) · carry (notional, rate_diff, "
+                "holding_months, leverage?) · cap_rate (noi, price) · cash_on_cash "
+                "(annual_cash_flow, cash_invested) · dscr (noi, annual_debt_service) · "
+                "contango (spot, futures, months) · risk_of_ruin (win_prob, bankroll_units) · "
+                "position (map a signal to an ACTION tier — HOLD / small buy / big buy / short — "
+                "sized by fractional Kelly, but it stays HOLD unless validated=true, i.e. the "
+                "signal actually survived out-of-sample; shorts need allow_short=true). "
+                "Pass params as an object. Every calc is selftest-verified. Use it to "
+                "EVALUATE an opportunity the user brings — never to recommend a trade or "
+                "give personalized investment advice; and remember +EV on paper ≠ safe."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "kind": {"type": "string",
+                             "enum": ["ev", "implied_prob", "kelly", "arbitrage", "carry",
+                                      "cap_rate", "cash_on_cash", "dscr", "contango",
+                                      "risk_of_ruin", "position"]},
+                    "params": {"type": "object",
+                               "description": "Calculator inputs as an object, e.g. "
+                                              "{\"decimal_odds\": 2.0, \"your_prob\": 0.6}"},
+                },
+                "required": ["kind"],
+            },
+            run=lambda kind, params=None: markets.calc(kind, params),
         ),
         Tool(
             name="business_framework",

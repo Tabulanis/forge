@@ -285,10 +285,17 @@ def t_no_project_tools_in_her_core():
     looked like one of hers. This fails if project tooling comes back."""
     from forge.tools import build_tools, Workspace
     names = {t.name for t in build_tools(Workspace(Path(tempfile.mkdtemp())))}
-    project_only = {"markets_calc", "paper_market", "market_regime", "walk_forward",
+    # markets_calc came BACK on 2026-09-08 and is deliberately not in this list.
+    # It is not market machinery: expected value, implied odds, Kelly sizing,
+    # arbitrage, forex carry, real-estate cap rate / cash-on-cash / DSCR,
+    # contango, risk of ruin. That is general opportunity maths and it is hers
+    # everywhere. MoneyLab is the APP — the paper trader, the backtesters, the
+    # scanner, the anomaly casebook.
+    project_only = {"paper_market", "market_regime", "walk_forward",
                     "cross_map", "signal_scan", "find_third_party", "flag_xfile",
                     "list_xfiles", "news_feed"}
-    return not (names & project_only)
+    hers = {"markets_calc", "business_calc", "business_framework"}
+    return not (names & project_only) and hers <= names
 
 
 def t_a_project_can_ship_its_own_tools():
