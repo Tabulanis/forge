@@ -42,6 +42,45 @@ def _git(repo: Path, *args: str, timeout: int = 60) -> tuple[bool, str]:
     return r.returncode == 0, (r.stdout or r.stderr or "").strip()
 
 
+
+def _find_repo(start: Path) -> tuple[Path | None, str]:
+    """The repository the caller MEANT.
+
+    2026-09-09, measured. The first bug-hunt run with this tool: she reached for
+    it on her very first history question, correctly, and got back "'.' is not a
+    git repository, so it has no history to search" — because the workspace root
+    was not the repo, the repo sat one directory below at `repo/`. She never
+    called it again and spent the rest of the run typing `git show` at a shell,
+    which is the exact habit this exists to replace. One wrong default undid the
+    whole tool.
+
+    So: try the path, then walk UP (a subdirectory of a repo is still the repo),
+    then look one level DOWN for a single obvious candidate. Say which was
+    picked, because silently searching a different repository would be worse
+    than finding none.
+    """
+    ok, _ = _git(start, "rev-parse", "--git-dir")
+    if ok:
+        return start, ""
+    for parent in start.resolve().parents:
+        ok, _ = _git(parent, "rev-parse", "--git-dir")
+        if ok:
+            return parent, f"(searched {parent}, the repository containing {start})"
+        if parent == parent.parent or str(parent) in ("/", str(Path.home().parent)):
+            break
+    try:
+        subs = [d for d in sorted(start.iterdir())
+                if d.is_dir() and (d / ".git").exists()]
+    except OSError:
+        subs = []
+    if len(subs) == 1:
+        return subs[0], f"(no history at {start}; searched {subs[0].name}/ instead)"
+    if len(subs) > 1:
+        names = ", ".join(d.name for d in subs[:6])
+        return subs[0], (f"(no history at {start}; several repositories below it "
+                         f"[{names}] — searched {subs[0].name}/. Pass repo= to pick another.)")
+    return None, ""
+
 def when_changed(repo: str = ".", text: str = "", path: str = "",
                  since: str = "", until: str = "", regex: bool = False,
                  limit: int = MAX_HITS) -> str:
@@ -49,9 +88,27 @@ def when_changed(repo: str = ".", text: str = "", path: str = "",
     p = Path(str(repo or ".")).expanduser()
     if not p.exists():
         return f"No such directory: {p}"
-    ok, _ = _git(p, "rev-parse", "--git-dir")
-    if not ok:
-        return f"{p} is not a git repository, so it has no history to search."
+    given = p
+    p, note = _find_repo(p)
+    # If the repository turned out to be BELOW where she pointed, a path she
+    # wrote relative to that place no longer resolves. Same class of fault as
+    # the default that broke this tool on its first real use: correct call,
+    # wrong frame of reference, silent empty answer.
+    if p is not None and path:
+        try:
+            rel = Path(path)
+            if not rel.is_absolute() and p != given and given in p.parents:
+                trimmed = p.relative_to(given)
+                sp = str(rel)
+                if sp.startswith(str(trimmed) + "/"):
+                    path = sp[len(str(trimmed)) + 1:]
+        except Exception:
+            pass
+    if p is None:
+        return (f"No git repository at {Path(str(repo or '.')).expanduser()} or "
+                f"just below it, so there is no history to search here. If the "
+                f"code came as a copy without its history, say so — that is a "
+                f"finding, not a dead end.")
     if not text and not path:
         return ("Give it something to look for: text= to find when a string "
                 "appeared or vanished (the sharpest question you can ask a "
@@ -81,6 +138,8 @@ def when_changed(repo: str = ".", text: str = "", path: str = "",
                 f"broken behaviour.")
 
     head = []
+    if note:
+        head.append(note)
     if text:
         head.append(f"Commits where {text!r} appeared or vanished"
                     + (f" in {path}" if path else "") + ":")

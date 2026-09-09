@@ -603,6 +603,40 @@ def t_a_standing_pattern_reaches_her_unasked():
     quiet = myrecord.standing_pattern(days=7, min_hits=10_000)
     return quiet == ""
 
+
+def t_when_changed_finds_the_repo_below():
+    """Measured on the first real bug-hunt run with the tool, 2026-09-09. She
+    reached for it on her very FIRST history question, correctly, and got back
+    "'.' is not a git repository" — because the workspace root was not the repo,
+    the repo sat one directory down at repo/. She never called it again and
+    spent the rest of the run typing `git show` at a shell, which is the exact
+    habit it exists to replace. One wrong default undid the whole tool.
+
+    Two faults, both checked here: find the repository below (or above), and
+    make a path written relative to the WORKSPACE still resolve once it has."""
+    import subprocess
+    from forge.history import when_changed
+    d = Path(tempfile.mkdtemp())
+    inner = d / "repo"
+    inner.mkdir()
+    env = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
+           "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t", "HOME": str(d)}
+    import os
+    e = {**os.environ, **env}
+    subprocess.run(["git", "init", "-q"], cwd=inner, env=e, check=True)
+    sub = inner / "pkg"
+    sub.mkdir()
+    (sub / "thing.txt").write_text("MARKER_ALPHA\n")
+    subprocess.run(["git", "add", "-A"], cwd=inner, env=e, check=True)
+    subprocess.run(["git", "commit", "-qm", "add the marker"], cwd=inner, env=e, check=True)
+
+    # asked from the WORKSPACE, not the repo — the exact shape that broke it
+    by_text = when_changed(str(d), text="MARKER_ALPHA")
+    by_path = when_changed(str(d), path="repo/pkg/thing.txt")
+    return ("add the marker" in by_text
+            and "searched repo/" in by_text
+            and "add the marker" in by_path)
+
 # ---------------------------------------------------------------- context
 def t_overhead_counted():
     """The bare 400: schemas + system prompt were invisible, so a turn read 19%
@@ -913,6 +947,7 @@ CHECKS = [
     ("self: an unproven tool never reaches the belt", t_an_unproven_tool_never_reaches_the_belt, False),
     ("ears: the spectrogram shows high frequencies", t_spectrogram_shows_high_frequencies, False),
     ("bughunt: when_changed surfaces the missed commit", t_when_changed_surfaces_the_missed_commit, False),
+    ("bughunt: when_changed finds the repo below", t_when_changed_finds_the_repo_below, False),
     ("record: she can see her own verdicts", t_she_can_see_her_own_record, False),
     ("record: a pattern reaches her unasked", t_a_standing_pattern_reaches_her_unasked, False),
     ("superego: evidence is data, not instruction", t_superego_treats_evidence_as_data, False),
