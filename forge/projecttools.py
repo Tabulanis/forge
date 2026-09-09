@@ -45,9 +45,26 @@ def project_tool_files(ws_root: Path) -> list[Path]:
     return sorted(p for p in d.glob("*.py") if not p.name.startswith("_"))
 
 
-def load(ws) -> tuple[list, list[str]]:
-    """Return (tools, notes). Never raises."""
+def _looks_like_a_tool(t) -> bool:
+    """A project returns whatever it likes. Only real tools get through.
+
+    Adversarial testing 2026-09-08: a file returning ['not a tool', 42, None]
+    was counted as "3 tool(s)" and handed straight to the agent, where it would
+    have broken schema-building on the next turn with nothing pointing back
+    here."""
+    return all(hasattr(t, a) for a in ("name", "description", "parameters", "run"))
+
+
+def load(ws, reserved: set[str] | None = None) -> tuple[list, list[str]]:
+    """Return (tools, notes). Never raises.
+
+    `reserved` is the set of names her core already owns. A project may not
+    take one: adversarial testing 2026-09-08 showed a project file defining
+    `read_file` was accepted and appended alongside hers, so which one answered
+    depended on ordering downstream. A project extends her; it does not get to
+    quietly replace how she reads a file."""
     found, notes = [], []
+    reserved = reserved or set()
     root = getattr(ws, "root", None)
     if root is None:
         return found, notes
@@ -65,8 +82,23 @@ def load(ws) -> tuple[list, list[str]]:
                 notes.append(f"{f.name}: no tools(ws) function — skipped")
                 continue
             got = list(fn(ws) or [])
-            found.extend(got)
-            notes.append(f"{f.name}: {len(got)} tool(s)")
+            kept, junk, taken = [], 0, []
+            for t in got:
+                if not _looks_like_a_tool(t):
+                    junk += 1
+                    continue
+                if t.name in reserved:
+                    taken.append(t.name)
+                    continue
+                kept.append(t)
+            found.extend(kept)
+            note = f"{f.name}: {len(kept)} tool(s)"
+            if junk:
+                note += f" ({junk} returned item(s) were not tools — ignored)"
+            if taken:
+                note += (f" (refused {', '.join(sorted(taken))} — a project cannot "
+                         f"replace one of her own tools)")
+            notes.append(note)
         except Exception as e:
             # A project's broken tool file must never stop her working.
             notes.append(f"{f.name}: skipped — {type(e).__name__}: {e}")

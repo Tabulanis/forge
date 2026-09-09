@@ -103,8 +103,8 @@ class PendingPermission:
     allowed: bool = False
 
 
-def _project_tools(ws) -> list:
-    got, notes = _load_project_tools(ws)
+def _project_tools(ws, reserved=None) -> list:
+    got, notes = _load_project_tools(ws, reserved=reserved)
     for n in notes:
         print(f"  project tools · {n}")
     return got
@@ -175,7 +175,10 @@ class Session:
             tools=build_tools(ws, fenced=bool(cfg.get("kid_mode")), session_id=self.id,
                             provider=provider, summarizer=summarizer)
                   + build_media_tools(ws, mc)
-                  + _project_tools(ws),
+                  + _project_tools(ws, reserved={t.name for t in
+                        build_tools(ws, fenced=bool(cfg.get("kid_mode")), session_id=self.id,
+                                    provider=provider, summarizer=summarizer)}
+                        | {t.name for t in build_media_tools(ws, mc)}),
             max_steps=int(cfg["agent"].get("max_steps", 40)),
             permission_mode=cfg["agent"].get("permission_mode", "ask"),
             notes_path=ws.root / "FORGE-NOTES.md",
