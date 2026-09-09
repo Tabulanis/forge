@@ -12,6 +12,8 @@ from __future__ import annotations
 import re
 import xml.etree.ElementTree as ET
 
+from concurrent.futures import ThreadPoolExecutor
+
 import httpx
 
 FEEDS = {
@@ -26,24 +28,33 @@ _TAG = re.compile(r"<[^>]+>")
 
 def fetch(sources: list[str] | None = None, per_feed: int = 15) -> list[dict]:
     """Structured, timestamped items from the requested feeds (all if None)."""
-    out = []
-    for name in (sources or list(FEEDS)):
-        url = FEEDS.get(name)
-        if not url:
-            continue
+    # 2026-09-08: these were fetched one after another, each with its own 15s
+    # timeout, so five feeds meant up to 75 seconds of waiting for work that has
+    # no order to it. They go together now; the slowest feed sets the wait.
+    wanted = [(n, FEEDS[n]) for n in (sources or list(FEEDS)) if FEEDS.get(n)]
+
+    def grab(item):
+        name, url = item
         try:
             r = httpx.get(url, timeout=15, follow_redirects=True,
                           headers={"User-Agent": "Mozilla/5.0"})
             root = ET.fromstring(r.text)
-            for it in root.findall(".//item")[:per_feed]:
-                out.append({
-                    "source": name,
-                    "title": (it.findtext("title", "") or "").strip(),
-                    "date": (it.findtext("pubDate", "") or "").strip(),
-                    "summary": _TAG.sub("", it.findtext("description", "") or "")[:220].strip(),
-                })
+            return [{
+                "source": name,
+                "title": (it.findtext("title", "") or "").strip(),
+                "date": (it.findtext("pubDate", "") or "").strip(),
+                # 2026-09-08: summaries were cut to 220 chars. A headline plus a
+                # sentence is not a story, and on a 131k window the saving was
+                # a rounding error.
+                "summary": _TAG.sub("", it.findtext("description", "") or "")[:1200].strip(),
+            } for it in root.findall(".//item")[:per_feed]]
         except Exception:
-            continue
+            return []
+
+    out = []
+    with ThreadPoolExecutor(max_workers=min(8, len(wanted) or 1)) as pool:
+        for got in pool.map(grab, wanted):
+            out.extend(got)
     return out
 
 

@@ -19,6 +19,8 @@ test, never as mechanism. Descriptive of the past; fragile; costs not modelled.
 """
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
+
 import numpy as np
 from sklearn.decomposition import PCA
 
@@ -32,12 +34,19 @@ _SHORT = {"XBTUSD": "BTC", "ETHUSD": "ETH", "SOLUSD": "SOL", "ADAUSD": "ADA",
 
 
 def _returns_matrix(pairs):
-    series = {}
-    for p in pairs:
+    # 2026-09-08: twelve pairs were fetched one after another at 25s each — up
+    # to five minutes of waiting for calls that do not depend on one another.
+    def one(p):
         try:
-            series[p] = np.array(fetch_closes(p, 1440))
+            return p, np.array(fetch_closes(p, 1440))
         except Exception:
-            pass
+            return p, None
+
+    series = {}
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        for p, arr in pool.map(one, list(pairs)):
+            if arr is not None:
+                series[p] = arr
     names = list(series)
     m = min(len(series[p]) for p in names)
     closes = np.column_stack([series[p][-m:] for p in names])

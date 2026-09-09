@@ -2518,11 +2518,13 @@ def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provi
                 "properties": {
                     "pair": {"type": "string", "description": "e.g. XBTUSD, ETHUSD"},
                     "strategy": {"type": "string", "enum": ["buy_and_hold", "sma_cross", "band"]},
-                    "strat_params": {"type": "object", "description": "e.g. {\"short\": 10, \"long\": 50}"},
+                    "start_cash": {"type": "number", "description": "starting capital for the simulated run (default 1000)"},
+                            "strat_params": {"type": "object", "description": "e.g. {\"short\": 10, \"long\": 50}"},
                 },
             },
-            run=lambda pair="XBTUSD", strategy="sma_cross", strat_params=None:
-                market_regime.run(pair, strategy, strat_params),
+            run=lambda pair="XBTUSD", strategy="sma_cross", strat_params=None,
+                       start_cash=1000.0:
+                market_regime.run(pair, strategy, strat_params, start_cash),
         ),
         Tool(
             name="walk_forward",
@@ -2540,10 +2542,13 @@ def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provi
                 "type": "object",
                 "properties": {
                     "pair": {"type": "string", "description": "e.g. XBTUSD, ETHUSD"},
-                    "train_frac": {"type": "number", "description": "fraction for training, e.g. 0.6"},
+                    "start_cash": {"type": "number", "description": "starting capital (default 1000)"},
+                            "interval": {"type": "integer", "description": "candle size in minutes (default 1440 = daily)"},
+                            "train_frac": {"type": "number", "description": "fraction for training, e.g. 0.6"},
                 },
             },
-            run=lambda pair="XBTUSD", train_frac=0.6: walkforward.run(pair, 1440, train_frac),
+            run=lambda pair="XBTUSD", train_frac=0.6, interval=1440, start_cash=1000.0:
+                walkforward.run(pair, interval, train_frac, start_cash),
         ),
         Tool(
             name="cross_map",
@@ -2557,8 +2562,10 @@ def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provi
                 "params: lag (days, default 1)."
             ),
             parameters={"type": "object", "properties": {
-                "lag": {"type": "integer", "description": "lead-lag in days, e.g. 1"}}},
-            run=lambda lag=1: crossmap.run(lag),
+                "min_edge": {"type": "number", "description": "how strong a link must be to be drawn (default 0.18)"},
+                            "top": {"type": "integer", "description": "how many links to report (default 10)"},
+                            "lag": {"type": "integer", "description": "lead-lag in days, e.g. 1"}}},
+            run=lambda lag=1, min_edge=0.18, top=10: crossmap.run(lag, min_edge, top),
         ),
         Tool(
             name="signal_scan",
@@ -2577,8 +2584,11 @@ def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provi
             parameters={"type": "object", "properties": {
                 "pair": {"type": "string", "description": "e.g. XBTUSD, ETHUSD"},
                 "horizon": {"type": "integer", "description": "forward-return days, e.g. 5"},
-                "thresh": {"type": "number", "description": "min out-of-sample edge, e.g. 0.015"}}},
-            run=lambda pair="XBTUSD", horizon=5, thresh=0.015: scanner.run(pair, horizon, thresh=thresh),
+                "min_n": {"type": "integer", "description": "fewest samples a combo needs to count (default 25)"},
+                            "perms": {"type": "integer", "description": "shuffles used to build the chance baseline (default 25). This IS the precision of the null — raise it to 200+ when a result matters, since 25 shuffles is a coarse test of 'could this be luck'."},
+                            "thresh": {"type": "number", "description": "min out-of-sample edge, e.g. 0.015"}}},
+            run=lambda pair="XBTUSD", horizon=5, thresh=0.015, min_n=25, perms=25:
+                scanner.run(pair, horizon, min_n=min_n, thresh=thresh, perms=perms),
         ),
         Tool(
             name="news_feed",

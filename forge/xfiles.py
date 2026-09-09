@@ -23,6 +23,8 @@ import time
 from pathlib import Path
 
 import httpx
+from concurrent.futures import ThreadPoolExecutor
+
 import numpy as np
 
 UA = {"User-Agent": "Mozilla/5.0 (research)"}
@@ -52,8 +54,21 @@ def _norm(name: str) -> str:
 
 
 def _fetch_fred(code: str) -> dict:
-    r = httpx.get(FRED, params={"id": code}, headers=UA, timeout=25, follow_redirects=True)
-    r.raise_for_status()
+    # 2026-09-08: one attempt, 25s, and a required series failing took the whole
+    # investigation down with it. FRED is reached over the house VPN and a
+    # blocked or slow exit IP looks exactly like an outage, so a single miss is
+    # not evidence of anything. Two quick tries beat one long one.
+    last = None
+    for wait in (12, 12):
+        try:
+            r = httpx.get(FRED, params={"id": code}, headers=UA,
+                          timeout=wait, follow_redirects=True)
+            r.raise_for_status()
+            break
+        except Exception as e:
+            last = e
+    else:
+        raise last
     out = {}
     for ln in r.text.splitlines()[1:]:
         parts = ln.split(",")
@@ -91,16 +106,34 @@ def _aligned_returns(names, n=400, required=2):
     names (the odd couple) define the window and MUST fetch; the rest (suspects)
     are optional — one that fails to fetch or doesn't cover the window is
     dropped, not fatal. Returns (dates, rets, dropped)."""
-    series, dropped = {}, []
-    for i, nm in enumerate(names):
+    # 2026-09-08: these were fetched one after another at 25s each — the pair
+    # plus up to seven suspects, so a slow run could sit for minutes on calls
+    # that do not depend on one another. Fetched together now; the failure rules
+    # are unchanged (a required series still stops the run, an optional one is
+    # dropped), they are just applied after everything has come back.
+    def one(nm):
         try:
             s = _series(nm)
-            if not s:
-                raise ValueError("no data")
-            series[nm] = s
+            return nm, (s if s else None)
         except Exception:
-            if i < required:
-                raise ValueError(f"couldn't fetch '{nm}' — can't run without it")
+            return nm, None
+
+    got = {}
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        for nm, s in pool.map(one, list(names)):
+            got[nm] = s
+
+    series, dropped = {}, []
+    for i, nm in enumerate(names):
+        if got.get(nm):
+            series[nm] = got[nm]
+        elif i < required:
+            raise ValueError(
+                f"couldn't fetch '{nm}' — can't run without it. That series comes "
+                f"from an outside data service; a slow or blocked connection "
+                f"(the house VPN exit, usually) looks the same as an outage. "
+                f"Check the connection before assuming the tool is broken.")
+        else:
             dropped.append(nm)
     base = [series[names[i]] for i in range(required)]
     common = set.intersection(*(set(s) for s in base))
