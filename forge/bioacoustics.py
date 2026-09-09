@@ -296,6 +296,15 @@ def study_calls(source: str, max_sec: float = 300.0) -> str:
 
     out = _render(sig, sr, units, labels, k, M, struct_line[:110], label)
 
+    # 2026-09-08: everything below was computed and then thrown away — the
+    # prose said "12 calls, 3 types" and the actual schedule (which type fired
+    # at which second) died with the function. The Deduction Pad is built to
+    # accept exactly this ("optional signal_scores to feed a real study_calls
+    # result in as that answer") and had nothing to accept, because the half
+    # that produces it never wrote it down. A field log is timestamped; so are
+    # these calls; matching them is mechanical once both exist on disk.
+    result = _write_call_sheet(label, sr, units, labels, k, st, out, vecs)
+
     lines = [f"Studied {label}: {len(units)} calls → {k} recurring call-type(s)."]
     lines.append(struct_line)
     if st and st[2] < 0.05:
@@ -308,9 +317,103 @@ def study_calls(source: str, max_sec: float = 300.0) -> str:
                      "'no adjacent structure' is NOT 'no structure'.")
     lines.append(f"Rendered to {out} — look_at_image it to SEE the repertoire, the "
                  "call timeline, and the transition grammar.")
+    lines.append(f"Call sheet written to {result} — every call with its start "
+                 f"time, end time and type, plus a distinctness score per type. "
+                 f"Pass that file to deduce_meaning as calls_file, and align "
+                 f"timestamped field notes against it to build observations.")
     lines.append("Honest limit: this finds STRUCTURE, never meaning. It cannot "
                  "tell you what a call says.")
     return "\n".join(lines)
+
+
+def _acoustic_distinctness(vecs, labels, trials: int = 200, seed: int = 0):
+    """How tightly each call-type's members resemble one another, as a
+    percentile against random groupings of the same size.
+
+    Two attempts were made to turn this into the Deduction Pad's SIGNAL score
+    and both were wrong, so it is reported as description only:
+
+    1. A recurrence score (how often a type repeats). Different quantity, same
+       slot — it would have read as a null-test result.
+    2. This percentile. It does not discriminate: 70 calls at random pitches,
+       with no repertoire whatsoever, scored 0.92-1.00 on every type — exactly
+       like a recording built from three fixed types. Clustering produces tight
+       clusters whether or not there is anything there.
+
+    The question "is this call a signal?" is not answerable from audio. It is
+    answered by whether the call predicts the world, which needs a context log.
+    """
+    X = np.array(vecs, dtype=float)
+    lab = np.asarray(labels)
+    if len(X) < 6:
+        return {f"call_{int(t)}": 0.0 for t in sorted(set(lab.tolist()))}
+
+    def tightness(mask):
+        m = X[mask]
+        if len(m) < 2:
+            return 0.0
+        c = m.mean(axis=0)
+        spread = float(np.mean(np.linalg.norm(m - c, axis=1)))
+        overall = float(np.mean(np.linalg.norm(X - X.mean(axis=0), axis=1))) or 1.0
+        return 1.0 - spread / overall          # higher = tighter than the whole set
+
+    rng = np.random.default_rng(seed)
+    out = {}
+    for t in sorted(set(lab.tolist())):
+        real = tightness(lab == t)
+        n = int((lab == t).sum())
+        beaten = 0
+        for _ in range(trials):
+            idx = rng.permutation(len(X))[:n]
+            mask = np.zeros(len(X), dtype=bool)
+            mask[idx] = True
+            if real > tightness(mask):
+                beaten += 1
+        out[f"call_{int(t)}"] = round(beaten / trials, 3)
+    return out
+
+
+def _write_call_sheet(label, sr, units, labels, k, st, picture, vecs=None):
+    """The machine-readable half of a study: which type fired when, and how
+    distinct each type is. Prose is for him; this is for the next tool."""
+    import json
+    calls = []
+    for (a, b), lab in zip(units, labels):
+        calls.append({"start_s": round(float(a) / sr, 3),
+                      "end_s": round(float(b) / sr, 3),
+                      "type": f"call_{int(lab)}"})
+    counts = {}
+    for c in calls:
+        counts[c["type"]] = counts.get(c["type"], 0) + 1
+
+    # Acoustic distinctness per type. NOT a signal test — see the note below,
+    # and the two failed attempts recorded in _acoustic_distinctness.
+    distinct = _acoustic_distinctness(vecs, labels)
+    sheet = {
+        "source": label,
+        "calls": calls,
+        "types": sorted(counts),
+        "counts": counts,
+        "acoustic_distinctness": distinct,
+        "acoustic_distinctness_note": (
+            "How tightly this type's calls resemble one another. It is a "
+            "DESCRIPTION OF THE AUDIO and nothing more. It is deliberately NOT "
+            "offered as the Deduction Pad's signal score: measured on 2026-09-08, "
+            "a recording of 70 calls at RANDOM pitches — no repertoire at all — "
+            "scored 0.92 to 1.00 on every type, the same as a recording built "
+            "from three fixed call-types. Clustering always produces tight "
+            "clusters, so acoustic tidiness cannot tell a real signal from a "
+            "slice of a continuum. Whether a call carries information is "
+            "answered by the CONTEXT LOG (does the call predict what was "
+            "happening?), which is the test the Pad already runs."),
+        "sequence_test": ({"predictability": st[0], "chance": st[1], "p": st[2]}
+                          if st else None),
+        "picture": str(picture),
+    }
+    RENDERS.mkdir(parents=True, exist_ok=True)
+    path = RENDERS / (re.sub(r"[^A-Za-z0-9_-]+", "_", label)[:40] + "-calls.json")
+    path.write_text(json.dumps(sheet, indent=1), encoding="utf-8")
+    return path
 
 
 # ======================================================================

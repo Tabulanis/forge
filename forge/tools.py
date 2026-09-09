@@ -2054,6 +2054,28 @@ def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provi
             run=bioacoustics.language_scorecard,
         ),
         Tool(
+            name="align_field_notes",
+            description=(
+                "Join a timestamped field notebook to a call sheet, producing the "
+                "observation log deduce_meaning needs. study_calls writes a sheet "
+                "saying which call-type fired at which second; an observer's notes "
+                "say what was TRUE at which second. This matches them.\n"
+                "notes = [{\"t\": 14.2, \"cues\": {\"threat\": true, "
+                "\"predator_above\": true}}, ...]. A note that matches no call is "
+                "REPORTED, never dropped — something happened and nobody called is "
+                "usually the interesting observation."),
+            parameters={"type": "object",
+                        "properties": {
+                            "calls_file": {"type": "string",
+                                "description": "the -calls.json study_calls wrote"},
+                            "notes": {"type": "string",
+                                "description": "JSON list of {t, cues} field notes"},
+                            "window_s": {"type": "number",
+                                "description": "how far a note may sit from a call and still describe it (default 2)"}},
+                        "required": ["calls_file", "notes"]},
+            run=doolittle.observations_from_field_notes,
+        ),
+        Tool(
             name="deduce_meaning",
             description="The DEDUCTION PAD — corner an animal call's meaning by "
                         "ELIMINATION, Clue-style, never by claiming to read its mind. "

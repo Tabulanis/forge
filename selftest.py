@@ -309,6 +309,39 @@ def t_a_project_can_ship_its_own_tools():
     return ([t.name for t in got] == ["probe_tool"]
             and any("skipped" in n for n in notes))
 
+
+def t_call_sheet_joins_field_notes():
+    """study_calls computed which call-type fired at which second and threw it
+    all away, keeping only prose. The Deduction Pad was built to receive a real
+    study result and had nothing to receive, so the protocol broke in the middle
+    and the log had to be written by hand. This checks the join both ways: a
+    note near a call matches it, and a note near NOTHING is reported rather than
+    silently dropped (an unmatched note is usually the interesting one)."""
+    from forge import doolittle as D
+    sheet = {"calls": [{"start_s": 1.0, "end_s": 1.2, "type": "call_1"},
+                       {"start_s": 5.0, "end_s": 5.2, "type": "call_2"}]}
+    notes = [{"t": 1.3, "cues": {"threat": True}},
+             {"t": 5.1, "cues": {"food": True}},
+             {"t": 400.0, "cues": {"threat": True}}]
+    out = D.observations_from_field_notes(sheet, notes, window_s=1.0)
+    first = out.splitlines()[0]
+    obs = json.loads(first)
+    return (len(obs) == 2
+            and obs[0]["call"] == "call_1" and obs[1]["call"] == "call_2"
+            and "400.0s" in out)
+
+
+def t_audio_is_not_offered_as_a_signal_answer():
+    """Measured 2026-09-08: 70 calls at random pitches, with no repertoire at
+    all, scored 0.92-1.00 on acoustic distinctness — the same as a recording
+    built from three fixed types. Clustering makes tight clusters whether or not
+    anything is there, so audio tidiness must never be fed to the Pad as its
+    signal score. This fails if that wiring comes back."""
+    from forge import doolittle as D
+    out = str(D.deduce_meaning([{"call": "a", "cues": {"threat": True}}],
+                               title="guard", calls_file="/tmp/anything.json"))
+    return "can't answer the signal question" in out
+
 # ---------------------------------------------------------------- context
 def t_overhead_counted():
     """The bare 400: schemas + system prompt were invisible, so a turn read 19%
@@ -608,6 +641,8 @@ CHECKS = [
     ("ears: separation actually separates", t_separation_actually_separates, False),
     ("separation: no project tools in her core", t_no_project_tools_in_her_core, False),
     ("separation: a project ships its own tools", t_a_project_can_ship_its_own_tools, False),
+    ("doolittle: the call sheet joins field notes", t_call_sheet_joins_field_notes, False),
+    ("doolittle: audio is not a signal answer", t_audio_is_not_offered_as_a_signal_answer, False),
     ("toolindex: cannot bypass privacy", t_load_cannot_bypass_privacy, False),
     ("toolindex: retrieval quality + junk refused", t_tool_search_quality, True),
     ("embedder: batches large inputs", t_embedder_batches, True),

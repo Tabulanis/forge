@@ -346,7 +346,87 @@ def _render(pad, title):
     return out
 
 
-def deduce_meaning(observations, title: str = "case", signal_scores=None) -> str:
+
+def observations_from_field_notes(calls_file, notes, window_s: float = 2.0) -> str:
+    """Turn timestamped field notes into a Deduction Pad observation log.
+
+    This is the join that was missing. study_calls knows WHICH call type fired
+    at WHICH second. An observer's notebook knows WHAT WAS TRUE at which second
+    ("14.2 hawk overhead, everyone dived"). Both are timestamped, so matching
+    them is mechanical — but until 2026-09-08 the call half was never written
+    down, so the join could not be made and the Pad had to be fed by hand.
+
+    calls_file: the -calls.json study_calls writes.
+    notes: [{"t": 14.2, "cues": {"threat": true, "predator_above": true}}, ...]
+           or the same as a JSON string.
+    window_s: how far from a note a call may sit and still be the one it
+           describes. An observer writes the time they SAW the thing, not the
+           millisecond the call started.
+
+    Returns the observation log as JSON, ready for deduce_meaning, plus a
+    plain-English note of what matched and what did not. A note that matches no
+    call is REPORTED, not silently dropped — an unmatched note is usually the
+    interesting one (something happened and nobody called).
+    """
+    import json
+    if isinstance(calls_file, str):
+        try:
+            sheet = json.loads(Path(calls_file).expanduser().read_text(encoding="utf-8"))
+        except Exception as e:
+            return f"Couldn't read the call sheet at {calls_file}: {e}"
+    else:
+        sheet = calls_file
+    if isinstance(notes, str):
+        try:
+            notes = json.loads(notes)
+        except Exception as e:
+            return f"notes wasn't valid JSON: {e}"
+    if not isinstance(notes, list):
+        return "notes must be a list of {\"t\": seconds, \"cues\": {...}}."
+
+    calls = sheet.get("calls") or []
+    if not calls:
+        return "That call sheet has no calls in it."
+
+    obs, unmatched, used = [], [], set()
+    for n in notes:
+        if not isinstance(n, dict):
+            continue
+        try:
+            t = float(n.get("t"))
+        except (TypeError, ValueError):
+            unmatched.append(f"note with no usable time: {str(n)[:60]}")
+            continue
+        cues = n.get("cues") if isinstance(n.get("cues"), dict) else {}
+        # nearest call whose span (widened by the window) contains the note
+        best, best_gap = None, None
+        for i, c in enumerate(calls):
+            a, b = float(c["start_s"]), float(c["end_s"])
+            gap = 0.0 if a - window_s <= t <= b + window_s else min(abs(t - a), abs(t - b))
+            if gap <= window_s and (best_gap is None or gap < best_gap):
+                best, best_gap = i, gap
+        if best is None:
+            unmatched.append(f"{t:.1f}s — no call within {window_s:g}s")
+            continue
+        used.add(best)
+        obs.append({"call": calls[best]["type"], "cues": cues})
+
+    lines = [json.dumps(obs)]
+    lines.append("")
+    lines.append(f"Matched {len(obs)} of {len(notes)} note(s) to calls "
+                 f"(window ±{window_s:g}s). {len(calls) - len(used)} call(s) had "
+                 f"no note against them.")
+    if unmatched:
+        lines.append("Notes that matched NOTHING — usually the interesting ones, "
+                     "something happened and nobody called:")
+        for u in unmatched[:10]:
+            lines.append(f"  · {u}")
+    lines.append("Feed the JSON above to deduce_meaning as observations, with the "
+                 "same call sheet as calls_file.")
+    return "\n".join(lines)
+
+def deduce_meaning(observations, title: str = "case", signal_scores=None,
+                   calls_file: str = "") -> str:
     """Play Clue with animal calls: given a log of OBSERVATIONS (each = a call
     plus the context cues true when it fired), rule out the meanings it CAN'T
     carry and report what's left standing. `observations` is a list of
@@ -369,6 +449,19 @@ def deduce_meaning(observations, title: str = "case", signal_scores=None) -> str
             observations = json.loads(observations)
         except Exception as e:
             return f"observations wasn't valid JSON: {e}"
+    # 2026-09-08: a call sheet was briefly wired in here as the signal answer
+    # and taken back out. study_calls can say how ACOUSTICALLY distinct a type
+    # is, and that is not the same question — a recording of 70 random pitches
+    # with no repertoire scored just as high as a real three-type repertoire.
+    # Whether a call is a signal is whether it predicts the world, which only
+    # the context log below can answer. The sheet's job is the call SCHEDULE
+    # (see observations_from_field_notes), not the verdict.
+    if calls_file:
+        return ("A call sheet can't answer the signal question — acoustic "
+                "tidiness doesn't separate a real call-type from a slice of a "
+                "continuum (measured: random pitches score as high as a real "
+                "repertoire). Use the sheet with observations_from_field_notes "
+                "to build the log, and let the log answer it.")
     observations = _clean_obs(observations)   # count the header off the CLEAN log
     title = str(title)[:80]                    # keep the header/filename sane
     pad = deduce(observations, signal_scores=signal_scores)
