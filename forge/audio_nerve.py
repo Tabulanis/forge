@@ -24,7 +24,8 @@ from pathlib import Path
 import numpy as np
 from PIL import Image, ImageDraw
 from scipy.fft import dct
-from scipy.signal import stft
+from scipy.ndimage import median_filter
+from scipy.signal import istft, stft
 
 from .paths import DATASETS_DIR
 VEC_STORE = DATASETS_DIR / "audio-nerve" / "vectors.jsonl"
@@ -375,6 +376,183 @@ def _label(img, text, sub=""):
         d.text((10, 20), sub, fill=(120, 132, 150))
     return img
 
+
+# ---- pulling a mixture apart ------------------------------------------
+# Two borrowed ideas, both pure numpy/scipy.
+#
+# NMF (non-negative matrix factorisation) is the trick recommender systems use
+# to explain a ratings table as a few hidden tastes. A magnitude spectrogram is
+# the same shape of problem: |S| (freq x time) is explained as W (a handful of
+# recurring SPECTRAL SHAPES) times H (when each one is active). Every source in
+# a mixture tends to be one recurring shape with its own timing, so the factors
+# come out as the separate voices — no training, no labels.
+#
+# HPSS (harmonic-percussive) is borrowed from image processing: a median filter
+# ALONG TIME keeps whatever is steady (tones, held notes, hum) and a median
+# filter ALONG FREQUENCY keeps whatever is broadband and brief (clicks, hits,
+# consonants). Two median filters and a soft mask.
+#
+# Both rebuild real audio by soft-masking the ORIGINAL complex STFT, so the
+# phase is the true phase and the separated files sound like themselves rather
+# than like a vocoder.
+
+def _nnd_svd_init(V, k: int):
+    """Deterministic NMF starting point from the SVD (NNDSVD).
+
+    Random starts were tried first and failed the ground-truth test: on a
+    mixture of a loud steady tone and quiet clicks, all three components landed
+    on the tone and the clicks were never separated at all. NMF chases variance,
+    and a random start lets a loud source soak up every component. Seeding from
+    the leading singular vectors gives each component a distinct direction to
+    begin from, and makes the result repeatable run to run.
+    """
+    U, S, Vt = np.linalg.svd(V, full_matrices=False)
+    W = np.zeros((V.shape[0], k), dtype=np.float32)
+    H = np.zeros((k, V.shape[1]), dtype=np.float32)
+    W[:, 0] = np.abs(U[:, 0]) * np.sqrt(S[0])
+    H[0, :] = np.abs(Vt[0, :]) * np.sqrt(S[0])
+    for j in range(1, min(k, len(S))):
+        u, v = U[:, j], Vt[j, :]
+        up, un = np.maximum(u, 0), np.maximum(-u, 0)
+        vp, vn = np.maximum(v, 0), np.maximum(-v, 0)
+        np_, nn = np.linalg.norm(up) * np.linalg.norm(vp), np.linalg.norm(un) * np.linalg.norm(vn)
+        if np_ >= nn:
+            W[:, j] = up / (np.linalg.norm(up) or 1) * np.sqrt(S[j] * np_)
+            H[j, :] = vp / (np.linalg.norm(vp) or 1) * np.sqrt(S[j] * np_)
+        else:
+            W[:, j] = un / (np.linalg.norm(un) or 1) * np.sqrt(S[j] * nn)
+            H[j, :] = vn / (np.linalg.norm(vn) or 1) * np.sqrt(S[j] * nn)
+    eps = float(V.mean()) * 1e-3
+    return np.maximum(W, eps), np.maximum(H, eps)
+
+
+def _nmf(V, k: int, iters: int = 300):
+    """Factor a non-negative matrix V (freq x time) into W (freq x k) and
+    H (k x time). Multiplicative updates — the standard Lee & Seung rules —
+    from an NNDSVD start."""
+    W, H = _nnd_svd_init(V, k)
+    eps = 1e-9
+    for _ in range(iters):
+        WH = W @ H + eps
+        H *= (W.T @ (V / WH)) / (W.T @ np.ones_like(V) + eps)
+        WH = W @ H + eps
+        W *= ((V / WH) @ H.T) / (np.ones_like(V) @ H.T + eps)
+        W /= (W.sum(axis=0, keepdims=True) + eps)      # keep scale in H
+    return W, H
+
+
+def _soft_mask_audio(Z, part, total):
+    """Rebuild one component's audio from the ORIGINAL complex STFT."""
+    mask = part / (total + 1e-9)
+    _, x = istft(Z * mask, SR, nperseg=_SEP_NPERSEG, noverlap=_SEP_NOVERLAP)
+    return np.asarray(x, dtype=np.float32)
+
+
+_SEP_NPERSEG = 2048
+_SEP_NOVERLAP = 1536
+
+
+def separate_sounds(source: str, voices: int = 4, max_sec: float = DEFAULT_MAX_SEC,
+                    method: str = "nmf") -> str:
+    """Pull a mixture apart into separate sounds she can study one at a time.
+
+    method 'nmf'  — find `voices` recurring spectral shapes and split by them.
+    method 'hpss' — split steady/tonal from brief/percussive (always 2 parts).
+
+    Writes a WAV per part plus one picture showing each part's spectral shape
+    and when it is active, and returns the paths. Every part is a real audio
+    file, so see_sound / study_calls / match_sound work on each one alone.
+    """
+    sig, label = _load(source, max_sec=max_sec)
+    if sig is None:
+        return f"Couldn't hear that: {label}"
+    heard = len(sig) / SR
+    sig = sig / (np.abs(sig).max() or 1)
+
+    f, tt, Z = stft(sig, SR, nperseg=_SEP_NPERSEG, noverlap=_SEP_NOVERLAP)
+    V = np.abs(Z).astype(np.float32)
+
+    parts, names = [], []
+    if method.lower() == "hpss":
+        harm = median_filter(V, size=(1, 17))     # steady along time
+        perc = median_filter(V, size=(17, 1))     # broadband, brief
+        parts = [harm ** 2, perc ** 2]
+        names = ["harmonic (steady, pitched)", "percussive (brief, broadband)"]
+    else:
+        k = max(2, min(int(voices), 8))
+        # Factor the SQUARE ROOT of the magnitudes. On the linear magnitude a
+        # loud tone dwarfs a quiet click and takes every component with it;
+        # compressing first lets a quiet broadband source compete for one.
+        W, H = _nmf(np.sqrt(V), k)
+        order = np.argsort(-(W.sum(axis=0) * H.sum(axis=1)))    # loudest first
+        for n, i in enumerate(order, 1):
+            comp = np.outer(W[:, i], H[i, :]) ** 2              # back to magnitude
+            parts.append(comp)
+            col = W[:, i] / (W[:, i].sum() or 1)
+            peak = f[int(np.argmax(col))]
+            # How concentrated in frequency is it? A tone lives in a few bins;
+            # a click or a hiss is spread across most of them.
+            spread = float(np.sort(col)[-24:].sum())
+            kind = ("tonal" if spread > 0.55 else
+                    "broadband" if spread < 0.22 else "mixed")
+            names.append(f"voice {n} — {kind}, energy centred near {peak:.0f} Hz")
+
+    total = sum(parts) + 1e-9
+    RENDERS.mkdir(parents=True, exist_ok=True)
+    safe = re.sub(r"[^A-Za-z0-9_-]+", "_", label)[:34]
+    written = []
+    for i, part in enumerate(parts, 1):
+        x = _soft_mask_audio(Z, part, total)
+        x = x / (np.abs(x).max() or 1)
+        wav = RENDERS / f"{safe}-part{i}.wav"
+        _write_wav(wav, x)
+        written.append(wav)
+
+    pic = _separation_picture(V, parts, names, heard, RENDERS / f"{safe}-separated.png")
+
+    lines = [f"Pulled {label} apart into {len(parts)} part(s) "
+             f"({heard:.1f}s analysed, method={method}).", str(pic)]
+    for n, (nm, w) in enumerate(zip(names, written), 1):
+        lines.append(f"  {n}. {nm} -> {w}")
+    lines.append("look_at_image the picture to SEE the split; each .wav is real "
+                 "audio, so see_sound or study_calls any one of them on its own.")
+    return "\n".join(lines)
+
+
+def _write_wav(path, x) -> None:
+    import wave
+    pcm = np.clip(x, -1, 1)
+    pcm = (pcm * 32767).astype("<i2")
+    with wave.open(str(path), "wb") as w:
+        w.setnchannels(1); w.setsampwidth(2); w.setframerate(SR)
+        w.writeframes(pcm.tobytes())
+
+
+def _separation_picture(V, parts, names, dur, out):
+    """One row per part: its spectral shape, and when it is active."""
+    rows = len(parts)
+    W_img, row_h, pad, top = 900, 110, 10, 34
+    img = Image.new("RGB", (W_img + 2 * pad, top + rows * (row_h + pad) + pad), BG)
+    d = ImageDraw.Draw(img)
+    d.text((pad, 10), f"\U0001f9ea separated — {rows} part(s)", fill=CYAN)
+    y = top
+    for part, nm in zip(parts, names):
+        panel = Image.new("RGB", (W_img, row_h), BG)
+        S = np.log1p(part * 8)
+        hi = float(np.percentile(S, 99.5)) or float(S.max() or 1)
+        S = np.clip(S / (hi or 1), 0, 1)
+        rgb = _color(S[::-1])
+        panel.paste(Image.fromarray(rgb).resize((W_img, row_h), Image.BILINEAR), (0, 0))
+        pd = ImageDraw.Draw(panel)
+        pd.text((6, 4), nm, fill=CYAN)
+        for frac in (0.0, 0.5, 1.0):
+            x = int(frac * (W_img - 1))
+            pd.line([(x, row_h - 6), (x, row_h - 1)], fill=CYAN)
+            pd.text((min(x + 2, W_img - 26), row_h - 14), f"{frac * dur:.1f}s", fill=CYAN)
+        img.paste(panel, (pad, y))
+        y += row_h + pad
+    img.save(out)
+    return out
 
 def see_sound(source: str, max_sec: float = DEFAULT_MAX_SEC) -> str:
     """Turn a sound into a picture of its structure Merge can SEE — waveform,

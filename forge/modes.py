@@ -80,6 +80,9 @@ TOOL_SETS = {
     "pictures": {"generate_image", "look_at_image"},
     "video": {"generate_video", "finish_video", "look_at_video"},
     "loras": {"lora_search", "lora_install", "lora_list"},
+    # Her ears: seeing a sound, pulling a mixture apart, and recalling one.
+    # Half this set is a bug the same way half the browser set was.
+    "hearing": {"see_sound", "separate_sounds", "match_sound"},
 }
 
 

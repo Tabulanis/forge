@@ -1970,6 +1970,33 @@ def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provi
             run=audio_nerve.see_sound,
         ),
         Tool(
+            name="separate_sounds",
+            description=(
+                "Pull a MIXTURE apart into the separate sounds inside it, and write "
+                "each one as its own audio file. Use when several things are sounding "
+                "at once and you want them one at a time: a bird over traffic, a voice "
+                "over music, one animal in a chorus, a rattle inside an engine.\n"
+                "method 'nmf' (default) finds recurring spectral shapes and splits by "
+                "them — set voices to how many sources you think are in there. "
+                "method 'hpss' splits steady/pitched from brief/percussive, which is "
+                "the right choice for 'separate the tone from the clatter'.\n"
+                "Returns a picture of the split plus one .wav per part. Each part is "
+                "REAL audio, so run see_sound, study_calls or match_sound on any single "
+                "part to study it alone — that is the point of the tool."),
+            parameters={"type": "object",
+                        "properties": {
+                            "source": {"type": "string",
+                                "description": "audio file path"},
+                            "voices": {"type": "integer",
+                                "description": "how many sources to look for, 2-8 (nmf only, default 4)"},
+                            "method": {"type": "string",
+                                "description": "'nmf' (default) or 'hpss'"},
+                            "max_sec": {"type": "number",
+                                "description": "seconds to analyse (default 60)"}},
+                        "required": ["source"]},
+            run=audio_nerve.separate_sounds,
+        ),
+        Tool(
             name="match_sound",
             description="Recall the remembered sounds most like a given one — your "
                         "ear-memory searched by similarity. Every sound see_sound "
