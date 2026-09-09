@@ -364,11 +364,48 @@ $('privacy').onchange = () => {
 updatePrivacyUI();
 
 const q = p => p + (p.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(TOKEN);
-const api = (p, opts) => fetch(q(p), opts).then(r => {
-  if (r.status === 401) { badToken(); throw new Error('unauthorized'); }
-  if (!r.ok) throw new Error('HTTP ' + r.status);
-  return r.json();
-});
+// 2026-09-08: a request that landed while the dash was restarting failed with
+// "Could not send", handed the typed message back, and read to the owner as
+// being logged out. Measured: the token is NOT invalidated by a restart and the
+// build stamp does not move unless the page code changes — the server is simply
+// absent for a few seconds. So ride it out. A 401 still fails immediately (that
+// IS a bad token); only "the server isn't there" is worth waiting for.
+const RECONNECT_WINDOW_MS = 45000;
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+async function api(p, opts) {
+  const deadline = Date.now() + RECONNECT_WINDOW_MS;
+  let wait = 600, announced = false;
+  for (;;) {
+    try {
+      const r = await fetch(q(p), opts);
+      if (r.status === 401) { badToken(); throw new Error('unauthorized'); }
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      if (announced) setStatus('');
+      return await r.json();
+    } catch (e) {
+      const down = (e instanceof TypeError);        // fetch could not reach the server
+      if (!down || Date.now() > deadline) throw e;
+      if (!announced) { announced = true; setStatus('reconnecting…'); }
+      await sleep(wait);
+      wait = Math.min(wait * 1.6, 4000);
+    }
+  }
+}
+
+// One quiet line for transient states, so a restart looks like a pause and not
+// like a failure. Falls back to the error slot if the status element is absent.
+function setStatus(msg) {
+  let el = document.getElementById('connStatus');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'connStatus';
+    el.style.cssText = 'opacity:.65;font-size:.85em;padding:2px 6px;';
+    (document.getElementById('log') || document.body).appendChild(el);
+  }
+  el.textContent = msg || '';
+  el.style.display = msg ? '' : 'none';
+}
 
 function badToken() {
   localStorage.removeItem('forge-token');
@@ -763,9 +800,13 @@ async function dispatch(text) {
     $('mModel').textContent = r.model;
     $('mWs').textContent = r.workspace;
   } catch (err) {
+    setStatus('');
     el('err', err.name === 'AbortError'
       ? 'The server didn\'t answer in time — your message was put back. Try again.'
-      : 'Could not send: ' + err.message);
+      : (err instanceof TypeError
+         ? 'The dash has been unreachable for 45s — your message was put back. '
+           + 'It is probably still restarting; send again in a moment.'
+         : 'Could not send: ' + err.message));
     $('box').value = text;          // don't eat what they typed
     setWorking(false);
   }
