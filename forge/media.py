@@ -71,6 +71,69 @@ def load_media_config(cfg: dict) -> MediaConfig:
 
 # ---------------------------------------------------------------- vision
 
+def watch(video_path: str, question: str, mc: MediaConfig,
+          max_seconds: float = 20.0, max_tokens: int = 2000) -> str:
+    """Let her WATCH a clip, not just look at a frame of it.
+
+    Her brain reports vision:True, video:True, audio:False — it has taken video
+    since 2026-09-05 and nothing used it. She was building an entire video
+    pipeline and checking the result with a single still, which cannot show
+    drift, flicker, a subject leaving frame, or whether the motion is right at
+    all. Proved with a three-second clip cut red/green/blue: she answered
+    "Red, Orange, Green, Teal, Blue" — the three colours and the blended frames
+    between them. No single frame produces that.
+
+    The clip is thinned before it is sent: scaled down, dropped to a few frames
+    a second, and trimmed. Motion reads fine at that size, and it keeps a long
+    render from becoming an enormous request.
+    """
+    src = Path(video_path).expanduser()
+    if not src.exists():
+        return f"No video at {src}."
+
+    tmp = Path(tempfile.gettempdir()) / f"watch-{os.getpid()}-{src.stem[:40]}.mp4"
+    cmd = ["ffmpeg", "-y", "-loglevel", "error", "-i", str(src),
+           "-t", str(max(1.0, float(max_seconds))),
+           "-vf", "fps=4,scale='min(512,iw)':-2",
+           "-an", "-pix_fmt", "yuv420p", str(tmp)]
+    try:
+        subprocess.run(cmd, capture_output=True, timeout=180, check=True)
+    except FileNotFoundError:
+        return "ffmpeg isn't installed, so the clip can't be prepared for viewing."
+    except subprocess.CalledProcessError as e:
+        return f"Couldn't read that video: {(e.stderr or b'').decode()[:200]}"
+    except subprocess.TimeoutExpired:
+        return "Preparing that clip took too long — try a shorter max_seconds."
+
+    try:
+        b64 = base64.b64encode(tmp.read_bytes()).decode()
+    finally:
+        tmp.unlink(missing_ok=True)
+
+    body = {
+        "model": mc.vision_model,
+        "max_tokens": max_tokens,
+        "chat_template_kwargs": {"enable_thinking": False},
+        "messages": [{"role": "user", "content": [
+            {"type": "text", "text": question},
+            # The server rejects a "video_url" content type but accepts a video
+            # data URI in an image_url block, and genuinely reads it as frames
+            # over time. Measured 2026-09-08.
+            {"type": "image_url",
+             "image_url": {"url": f"data:video/mp4;base64,{b64}"}},
+        ]}],
+    }
+    try:
+        r = httpx.post(f"{mc.vision_url.rstrip('/')}/chat/completions",
+                       json=body, timeout=180.0)
+        r.raise_for_status()
+        return r.json()["choices"][0]["message"]["content"].strip()
+    except Exception as e:
+        return f"Couldn't watch that clip: {type(e).__name__}: {e}"
+
+
+
+
 def _endpoints(mc: MediaConfig) -> list[tuple[str, str]]:
     """Vision endpoints in priority order: her own eyes first, then any
     configured fallback. The separate 7B vision model was retired 2026-09-05;

@@ -460,6 +460,39 @@ def build_media_tools(ws: Workspace, mc) -> list[Tool]:
                 pass
             return media.see(path, question, mc)
 
+        def watch_clip(video: str, question: str = "Describe what happens in this clip.",
+                       max_seconds: float = 20.0) -> str:
+            path = video
+            try:
+                path = str(ws.resolve(video))
+            except PermissionError:
+                pass          # reading a clip the user pointed at is fine
+            return media.watch(path, question, mc, max_seconds=max_seconds)
+
+        tools.append(Tool(
+            name="look_at_video",
+            description=(
+                "WATCH a video clip and answer a question about it — motion, not a "
+                "single frame. This is how you check your own renders: a still "
+                "cannot show drift, flicker, a subject leaving frame, warping "
+                "background, or whether the movement is right at all. Use it on "
+                "every clip you make before you call it good. The clip is thinned "
+                "(smaller, a few frames a second) before you see it, so a long "
+                "render is fine — raise max_seconds if you need to see further in."),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "video": {"type": "string", "description": "Path to the video file"},
+                    "question": {"type": "string",
+                                 "description": "What you want to know about it"},
+                    "max_seconds": {"type": "number",
+                                    "description": "How much of the clip to watch (default 20)"},
+                },
+                "required": ["video"],
+            },
+            run=watch_clip,
+        ))
+
         tools.append(Tool(
             name="look_at_image",
             description="Look at an image file and answer a question about it. "

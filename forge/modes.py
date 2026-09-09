@@ -78,7 +78,7 @@ _CORE = {
 TOOL_SETS = {
     "browser": {"browse", "browser_js", "browser_view", "browser_console"},
     "pictures": {"generate_image", "look_at_image"},
-    "video": {"generate_video", "finish_video"},
+    "video": {"generate_video", "finish_video", "look_at_video"},
     "loras": {"lora_search", "lora_install", "lora_list"},
 }
 
