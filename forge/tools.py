@@ -21,6 +21,7 @@ import json
 import time
 import os
 import re
+import shutil
 import subprocess
 import sys
 import threading
@@ -246,8 +247,12 @@ _FENCE_ALLOWED = ("/usr/", "/bin/", "/sbin/", "/lib/", "/lib64/", "/opt/",
 # tool that can go anywhere.
 _SELF_PATHS = (Path.home() / "forge", Path.home() / ".forge")
 _SELF_UNITS = re.compile(r"systemctl[^\n]*\b(forge-\S+|makerstudio)", re.I)
+# Her SOURCE and her STATE are off limits from a project. Her .venv is not:
+# an interpreter is a tool, a project may legitimately run it (MoneyLab's own
+# collector does), and blocking it broke ordinary work in testing.
 _SELF_REACH = re.compile(
-    r"(?:^|[\s\"\'=:(])(?:~|\$HOME|/home/[^/\s]+)/\.?forge(?:/|\b)", re.I)
+    r"(?:^|[\s\"\'=:(])(?:~|\$HOME|/home/[^/\s]+)/"
+    r"(?:\.forge(?:/|\b)|forge/(?!\.venv/)|forge\b(?!/))", re.I)
 
 
 def _self_reach(command: str, root: Path) -> str | None:
@@ -274,6 +279,45 @@ def _self_reach(command: str, root: Path) -> str | None:
         return m.group(0)
     return None
 
+
+
+def _sandbox_prefix(root: Path) -> list[str]:
+    """Wrap a shell command so it CANNOT see Merge's own source or state.
+
+    2026-09-08. The first version of this fence matched paths in the command
+    text, and adversarial testing walked through it five ways out of eighteen:
+    `../../../forge/...`, `cd /home/tabulanis && cat forge/...`, a glob
+    (`fo*ge`), quoting (`'forge'`), and a split variable (`D=/home/…/for;
+    ${D}ge`). Two of those are not even attacks — changing directory and using
+    a relative path is the most natural thing in the world. A text filter can
+    never win against a shell, because the shell builds the path AFTER the
+    filter has looked.
+
+    So the boundary moved into the filesystem. bubblewrap hides her package and
+    her state directory behind empty mounts for the duration of the command.
+    Her interpreter stays visible (a project may legitimately use it) but her
+    code and her config are simply not there. Verified: every one of the five
+    bypasses returns "No such file or directory", while the project's files and
+    both interpreters work normally.
+
+    Returns [] when no sandbox is needed or possible — she is working ON
+    herself, or bwrap is not installed, in which case the text rule below is
+    the only guard left and says so.
+    """
+    try:
+        here = root.resolve()
+        for sp in _SELF_PATHS:
+            if here == sp or sp in here.parents or here in sp.parents:
+                return []                       # deliberately working on herself
+    except Exception:
+        return []
+    if not shutil.which("bwrap"):
+        return []
+    pkg = Path(__file__).resolve().parent        # .../forge/forge
+    return ["bwrap", "--dev-bind", "/", "/",
+            "--tmpfs", str(pkg),
+            "--tmpfs", str(Path.home() / ".forge"),
+            "--chdir", str(root), "--"]
 
 def _fence_violation(command: str, root: Path) -> str | None:
     """In kid mode, find the first thing in a command that reaches outside
@@ -1528,8 +1572,10 @@ def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provi
                         f"outside the workspace ({bad!r}). Work only inside "
                         f"{ws.root} — rewrite the command with relative paths.")
         try:
+            _sb = _sandbox_prefix(ws.root)
             r = subprocess.run(
-                command, shell=True, cwd=str(ws.root),
+                (_sb + ["bash", "-lc", command]) if _sb else command,
+                shell=not _sb, cwd=str(ws.root),
                 capture_output=True, text=True, timeout=timeout,
             )
         except subprocess.TimeoutExpired:

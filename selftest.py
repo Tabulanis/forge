@@ -381,6 +381,46 @@ def t_superego_lets_her_describe_herself():
     return ("Facts about HERSELF are different" in P
             and "describing her own capabilities" in P)
 
+
+def t_self_fence_survives_shell_tricks():
+    """Adversarial, 2026-09-08. The first fence matched paths in the command
+    TEXT and eighteen attacks walked through five of them: ../../../forge,
+    `cd /home/x && cat forge/...`, a glob (fo*ge), quoting ('forge'), and a
+    split variable. Two of those are not attacks — cd-then-relative is the most
+    natural thing a person types. A text filter cannot win against a shell,
+    which builds the path after the filter has looked. The boundary is a
+    bubblewrap mount now: her package and state simply are not there. This
+    fails if real CONTENT ever comes back."""
+    from forge.tools import build_tools, Workspace
+    T = {t.name: t for t in build_tools(Workspace(Path("/home/tabulanis/aidojo/current/MoneyLab")))}
+    if "run_command" not in T:
+        return True
+    secret = "The agent loop"
+    attacks = [
+        "cat /home/tabulanis/forge/forge/agent.py",
+        "cat ../../../forge/forge/agent.py",
+        "cd /home/tabulanis && cat forge/forge/agent.py",
+        "cat /home/tabulanis/fo*ge/forge/agent.py",
+        "cat /home/tabulanis/'forge'/forge/agent.py",
+        "D=/home/tabulanis/for; cat ${D}ge/forge/agent.py",
+        "python3 -c \"print(open('/home/tabulanis/forge/forge/agent.py').read()[:40])\"",
+    ]
+    for cmd in attacks:
+        if secret in str(T["run_command"].run(command=cmd)):
+            return False
+    # and ordinary work must still run
+    return "exit 0" in str(T["run_command"].run(command="echo alive"))
+
+
+def t_self_fence_allows_deliberate_self_work():
+    """The fence is off when her workspace IS her source — that is the
+    deliberate act of working on herself and needs no sneaking."""
+    from forge.tools import build_tools, Workspace
+    T = {t.name: t for t in build_tools(Workspace(Path("/home/tabulanis/forge")))}
+    if "run_command" not in T:
+        return True
+    return "The agent loop" in str(T["run_command"].run(command="head -3 forge/agent.py"))
+
 # ---------------------------------------------------------------- context
 def t_overhead_counted():
     """The bare 400: schemas + system prompt were invisible, so a turn read 19%
@@ -684,6 +724,8 @@ CHECKS = [
     ("doolittle: audio is not a signal answer", t_audio_is_not_offered_as_a_signal_answer, False),
     ("separation: a project adds its own news sources", t_a_project_can_add_its_own_news_sources, False),
     ("superego: she may describe herself", t_superego_lets_her_describe_herself, False),
+    ("fence: survives shell tricks", t_self_fence_survives_shell_tricks, False),
+    ("fence: allows deliberate self-work", t_self_fence_allows_deliberate_self_work, False),
     ("toolindex: cannot bypass privacy", t_load_cannot_bypass_privacy, False),
     ("toolindex: retrieval quality + junk refused", t_tool_search_quality, True),
     ("embedder: batches large inputs", t_embedder_batches, True),
