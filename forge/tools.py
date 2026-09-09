@@ -30,8 +30,7 @@ from typing import Callable
 
 import httpx
 
-from . import (audio_nerve, bioacoustics, browser, business, cad, cortex, datasets, doolittle, persona, toolindex, vault, medical, xfiles, frameworks, identity, law, markets,
-               market_regime, crossmap, news, paper_market, scanner, sims, walkforward)
+from . import (audio_nerve, bioacoustics, browser, business, cad, cortex, datasets, doolittle, persona, toolindex, vault, medical, frameworks, identity, law,                sims)
 from .codetools import syntax_check
 from .config import load_config
 from .dataops import data_ops, date_calc
@@ -2232,39 +2231,6 @@ def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provi
             run=persona.personality,
         ),
         Tool(
-            name="find_third_party",
-            description="The X-Files hunt: given an odd couple of markets that move "
-                        "together (e.g. ETH and SPX), find WHO DRIVES BOTH. Pulls "
-                        "aligned data (crypto via Kraken, stocks/macro via FRED), "
-                        "checks the correlation is real out-of-sample, then for each "
-                        "suspect driver reports how much the link collapses when you "
-                        "control for it — a suspect that kills the link (out-of-sample "
-                        "too) is the third party. Names: ETH/BTC/SOL... , SPX/VIX/DXY/"
-                        "US10Y/OIL/HYSPREAD/M2. Finds a statistical SUSPECT, never "
-                        "proof of cause; not investment advice.",
-            parameters={"type": "object",
-                        "properties": {"a": {"type": "string"}, "b": {"type": "string"},
-                            "suspects": {"type": "array", "items": {"type": "string"}}},
-                        "required": ["a", "b"]},
-            run=lambda a, b, suspects=None: xfiles.find_third_party(a, b, suspects),
-        ),
-        Tool(
-            name="flag_xfile",
-            description="Open an X-File — flag an odd-couple market anomaly as a case "
-                        "to investigate (title, the two assets, an optional note).",
-            parameters={"type": "object",
-                        "properties": {"title": {"type": "string"}, "a": {"type": "string"},
-                            "b": {"type": "string"}, "note": {"type": "string"}},
-                        "required": ["title", "a", "b"]},
-            run=lambda title, a, b, note="": xfiles.flag_xfile(title, a, b, note),
-        ),
-        Tool(
-            name="list_xfiles",
-            description="List the open X-Files (flagged market anomalies).",
-            parameters={"type": "object", "properties": {}},
-            run=xfiles.list_xfiles,
-        ),
-        Tool(
             name="web_search",
             description="Search the web (current, live results — use this for anything "
                         "you don't know, anything recent, or to check a fact). Returns "
@@ -2409,40 +2375,6 @@ def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provi
             run=lambda kind, params=None: business.calc(kind, params),
         ),
         Tool(
-            name="markets_calc",
-            description=(
-                "Opportunity & edge math — the quantitative half of evaluating any way to "
-                "make money (prediction markets, forex, commodities, real estate, betting, "
-                "arbitrage). kind is one of: ev (win_prob, win_payoff, loss_amount — or "
-                "outcomes:[{prob,payoff}]) · implied_prob (decimal_odds OR american_odds, "
-                "your_prob? for the edge) · kelly (win_prob, decimal_odds OR net_odds) · "
-                "arbitrage (odds_a, odds_b, cost_pct?) · carry (notional, rate_diff, "
-                "holding_months, leverage?) · cap_rate (noi, price) · cash_on_cash "
-                "(annual_cash_flow, cash_invested) · dscr (noi, annual_debt_service) · "
-                "contango (spot, futures, months) · risk_of_ruin (win_prob, bankroll_units) · "
-                "position (map a signal to an ACTION tier — HOLD / small buy / big buy / short — "
-                "sized by fractional Kelly, but it stays HOLD unless validated=true, i.e. the "
-                "signal actually survived out-of-sample; shorts need allow_short=true). "
-                "Pass params as an object. Every calc is selftest-verified. Use it to "
-                "EVALUATE an opportunity the user brings — never to recommend a trade or "
-                "give personalized investment advice; and remember +EV on paper ≠ safe."
-            ),
-            parameters={
-                "type": "object",
-                "properties": {
-                    "kind": {"type": "string",
-                             "enum": ["ev", "implied_prob", "kelly", "arbitrage", "carry",
-                                      "cap_rate", "cash_on_cash", "dscr", "contango",
-                                      "risk_of_ruin", "position"]},
-                    "params": {"type": "object",
-                               "description": "Calculator inputs as an object, e.g. "
-                                              "{\"decimal_odds\": 2.0, \"your_prob\": 0.6}"},
-                },
-                "required": ["kind"],
-            },
-            run=lambda kind, params=None: markets.calc(kind, params),
-        ),
-        Tool(
             name="business_framework",
             description=(
                 "Structured thinking scaffolds — the JUDGMENT half of hard problems "
@@ -2470,141 +2402,6 @@ def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provi
                 "required": ["name"],
             },
             run=lambda name: frameworks.get(name),
-        ),
-        Tool(
-            name="paper_market",
-            description=(
-                "Honest paper-trading backtest — REAL market data, FAKE money, REAL costs. "
-                "No real trades, no keys, no risk, ever. Fetches public price history and "
-                "runs a long/flat strategy against it WITH fees + slippage, then scores it "
-                "against just holding AND against random — because a strategy that loses to "
-                "buy-and-hold or sits inside the noise of random has no edge. This is the "
-                "ONLY trading capability you have and the only one you'll get: evaluating "
-                "ideas on fake money. Never live execution, never real funds. Use it to TEST "
-                "whether a trading idea has any edge before anyone risks a cent — it almost "
-                "never does; most die right there to the fees, which is the honest lesson. "
-                "params: pair (e.g. XBTUSD, ETHUSD), interval (candle minutes, 60=hourly), "
-                "strategy (buy_and_hold, sma_cross, or band — band = the classic buy-low/"
-                "sell-high-around-a-moving-average mechanic), strat_params (e.g. "
-                "{\"short\":10,\"long\":30}), start_cash."
-            ),
-            parameters={
-                "type": "object",
-                "properties": {
-                    "pair": {"type": "string", "description": "e.g. XBTUSD, ETHUSD"},
-                    "interval": {"type": "integer", "description": "candle size in minutes, e.g. 60"},
-                    "strategy": {"type": "string", "enum": ["buy_and_hold", "sma_cross", "band"]},
-                    "strat_params": {"type": "object", "description": "e.g. {\"short\": 10, \"long\": 30}"},
-                    "start_cash": {"type": "number", "description": "fake starting cash, default 1000"},
-                },
-            },
-            run=lambda pair="XBTUSD", interval=60, strategy="sma_cross", strat_params=None, start_cash=1000.0:
-                paper_market.run(pair, interval, strategy, strat_params, start_cash),
-        ),
-        Tool(
-            name="market_regime",
-            description=(
-                "Long-term regime analysis on real daily history (public, read-only, no keys, "
-                "no trades). Labels the market bull / bear / neutral via a 4-D state vector "
-                "[trend, momentum, volatility, drawdown], and — the key part — splits a "
-                "strategy's return BY regime versus buy-and-hold, so you can SEE a predictor "
-                "that wins in bulls but bleeds in bears (which means it has no real edge, just "
-                "a bet on the regime). Descriptive of the PAST, not predictive — regimes are "
-                "only clean in hindsight. params: pair (XBTUSD, ETHUSD), strategy "
-                "(buy_and_hold or sma_cross), strat_params (e.g. {\"short\": 10, \"long\": 50})."
-            ),
-            parameters={
-                "type": "object",
-                "properties": {
-                    "pair": {"type": "string", "description": "e.g. XBTUSD, ETHUSD"},
-                    "strategy": {"type": "string", "enum": ["buy_and_hold", "sma_cross", "band"]},
-                    "start_cash": {"type": "number", "description": "starting capital for the simulated run (default 1000)"},
-                            "strat_params": {"type": "object", "description": "e.g. {\"short\": 10, \"long\": 50}"},
-                },
-            },
-            run=lambda pair="XBTUSD", strategy="sma_cross", strat_params=None,
-                       start_cash=1000.0:
-                market_regime.run(pair, strategy, strat_params, start_cash),
-        ),
-        Tool(
-            name="walk_forward",
-            description=(
-                "The honesty rig for a strategy: out-of-sample / walk-forward test on real "
-                "daily data (read-only, no keys, no trades). Splits history into TRAIN (pick "
-                "the best params) and TEST (held out), grades the in-sample winner OUT of "
-                "sample, and reports the in-sample-vs-out-of-sample rank correlation — if it's "
-                "~0 or negative, the best backtest predicts NOTHING about the future (textbook "
-                "overfitting). ALWAYS run this before trusting a backtest; a strategy that "
-                "can't clear this bar is a curve-fit, not an edge. params: pair (XBTUSD, "
-                "ETHUSD), train_frac (0.6 = 60% train)."
-            ),
-            parameters={
-                "type": "object",
-                "properties": {
-                    "pair": {"type": "string", "description": "e.g. XBTUSD, ETHUSD"},
-                    "start_cash": {"type": "number", "description": "starting capital (default 1000)"},
-                            "interval": {"type": "integer", "description": "candle size in minutes (default 1440 = daily)"},
-                            "train_frac": {"type": "number", "description": "fraction for training, e.g. 0.6"},
-                },
-            },
-            run=lambda pair="XBTUSD", train_frac=0.6, interval=1440, start_cash=1000.0:
-                walkforward.run(pair, interval, train_frac, start_cash),
-        ),
-        Tool(
-            name="cross_map",
-            description=(
-                "Cross-asset coupling + residual influence map over a crypto universe "
-                "(real daily data, read-only). Measures the common market mode (PCA — how "
-                "coupled everything is / BTC-beta), strips it out, then maps directed "
-                "lead-lag on the RESIDUALS and keeps ONLY edges that survive out-of-sample. "
-                "Predictive influence, not proven cause; a wide scan is a spurious-pattern "
-                "factory, so most 'edges' die in the OOS filter (which is the honest point). "
-                "params: lag (days, default 1)."
-            ),
-            parameters={"type": "object", "properties": {
-                "min_edge": {"type": "number", "description": "how strong a link must be to be drawn (default 0.18)"},
-                            "top": {"type": "integer", "description": "how many links to report (default 10)"},
-                            "lag": {"type": "integer", "description": "lead-lag in days, e.g. 1"}}},
-            run=lambda lag=1, min_edge=0.18, top=10: crossmap.run(lag, min_edge, top),
-        ),
-        Tool(
-            name="signal_scan",
-            description=(
-                "The caged multi-signal scanner — throw EVERYTHING at forward returns "
-                "(price features, calendar, lunar, volume/return anomaly 'footprints', and "
-                "all their pairwise CROSS PRODUCTS) and it can only hand back what beats "
-                "luck. Gauntlet: a minimum-sample floor per bucket (sparse interactions "
-                "rejected), an out-of-sample split, and the kill-shot — it re-runs the WHOLE "
-                "search on SHUFFLED data to measure how many 'survivors' pure chance "
-                "produces. If real survivors ≤ the chance baseline, it's noise, full stop. "
-                "This is how you look wide (markets aren't textbook) WITHOUT fooling "
-                "yourself — more combos tested = a higher bar, measured directly. params: "
-                "pair (XBTUSD, ETHUSD), horizon (forward days), thresh (min OOS edge, e.g. 0.015)."
-            ),
-            parameters={"type": "object", "properties": {
-                "pair": {"type": "string", "description": "e.g. XBTUSD, ETHUSD"},
-                "horizon": {"type": "integer", "description": "forward-return days, e.g. 5"},
-                "min_n": {"type": "integer", "description": "fewest samples a combo needs to count (default 25)"},
-                            "perms": {"type": "integer", "description": "shuffles used to build the chance baseline (default 25). This IS the precision of the null — raise it to 200+ when a result matters, since 25 shuffles is a coarse test of 'could this be luck'."},
-                            "thresh": {"type": "number", "description": "min out-of-sample edge, e.g. 0.015"}}},
-            run=lambda pair="XBTUSD", horizon=5, thresh=0.015, min_n=25, perms=25:
-                scanner.run(pair, horizon, min_n=min_n, thresh=thresh, perms=perms),
-        ),
-        Tool(
-            name="news_feed",
-            description=(
-                "Pull real-world crypto news — free, timestamped RSS headlines from major "
-                "outlets (cointelegraph, coindesk, decrypt, bitcoinmagazine, theblock) as "
-                "clean structured text you can read, embed, or tag. The world-data firehose, "
-                "the one signal frontier NOT derived from price. Honest caveat: public "
-                "headlines are usually already priced in — the edge (if any) is in "
-                "interpretation or niche feeds, not the headline. params: sources (list, "
-                "omit for all), limit (how many, default 25)."
-            ),
-            parameters={"type":"object","properties":{
-                "sources":{"type":"array","items":{"type":"string"},"description":"feed names, omit for all"},
-                "limit":{"type":"integer","description":"max headlines, default 25"}}},
-            run=lambda sources=None, limit=25: news.feed(sources, limit),
         ),
         Tool(
             name="verify_shelf",

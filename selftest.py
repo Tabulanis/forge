@@ -276,6 +276,39 @@ def t_separation_actually_separates():
             return False
     return True
 
+
+def t_no_project_tools_in_her_core():
+    """Merge is the builder; MoneyLab, Storyweave and the rest are what she
+    builds. A whole market-trading suite lived in her core until 2026-09-08 and
+    rode on her belt in EVERY project she opened. Nobody put it there on
+    purpose - it accumulated, and two audits swept past it because every file
+    looked like one of hers. This fails if project tooling comes back."""
+    from forge.tools import build_tools, Workspace
+    names = {t.name for t in build_tools(Workspace(Path(tempfile.mkdtemp())))}
+    project_only = {"markets_calc", "paper_market", "market_regime", "walk_forward",
+                    "cross_map", "signal_scan", "find_third_party", "flag_xfile",
+                    "list_xfiles", "news_feed"}
+    return not (names & project_only)
+
+
+def t_a_project_can_ship_its_own_tools():
+    """The other half: a project's merge-tools/ must load, and a broken file
+    there must be skipped rather than take her whole belt down."""
+    from forge.tools import Workspace
+    from forge.projecttools import load
+    d = Path(tempfile.mkdtemp())
+    (d / "merge-tools").mkdir()
+    (d / "merge-tools" / "good.py").write_text(
+        "from forge.tools import Tool\n"
+        "def tools(ws):\n"
+        "    return [Tool(name='probe_tool', description='x',\n"
+        "                 parameters={'type':'object','properties':{}},\n"
+        "                 run=lambda: 'ok')]\n")
+    (d / "merge-tools" / "broken.py").write_text("raise RuntimeError('boom')\n")
+    got, notes = load(Workspace(d))
+    return ([t.name for t in got] == ["probe_tool"]
+            and any("skipped" in n for n in notes))
+
 # ---------------------------------------------------------------- context
 def t_overhead_counted():
     """The bare 400: schemas + system prompt were invisible, so a turn read 19%
@@ -485,28 +518,6 @@ def t_physics_refuses_impossible():
     return r.startswith("Error") and "16.0000" in good
 
 
-def t_markets_refuse_impossible():
-    """implied_prob returned 'implied probability: -0.5' for negative odds, and
-    arbitrage reported a negative stake."""
-    from forge import markets as M
-    for fn, args in ((M.implied_prob, {"decimal_odds": -2}),
-                     (M.implied_prob, {"decimal_odds": 0}),
-                     (M.arbitrage, {"odds_a": 2.1, "odds_b": -1})):
-        try:
-            fn(args)
-            return False
-        except (ValueError, KeyError, ZeroDivisionError):
-            pass
-    return abs(M.implied_prob({"decimal_odds": 2.5})[0][1] - 0.4) < 1e-9
-
-
-def t_xfiles_keeps_near_complete_suspects():
-    """A suspect covering 399 of 400 days was dropped wholesale over one
-    missing holiday, leaving a hollow verdict."""
-    import inspect
-    from forge import xfiles
-    src = inspect.getsource(xfiles._aligned_returns)
-    return "0.9" in src and "dropped.append" in src
 
 
 def t_doolittle_wont_corner_noise():
@@ -595,6 +606,8 @@ CHECKS = [
     ("separation: shelf is not inside her source", t_shelf_is_not_in_her_source, False),
     ("separation: the shelf survived the move", t_shelf_survived_the_move, False),
     ("ears: separation actually separates", t_separation_actually_separates, False),
+    ("separation: no project tools in her core", t_no_project_tools_in_her_core, False),
+    ("separation: a project ships its own tools", t_a_project_can_ship_its_own_tools, False),
     ("toolindex: cannot bypass privacy", t_load_cannot_bypass_privacy, False),
     ("toolindex: retrieval quality + junk refused", t_tool_search_quality, True),
     ("embedder: batches large inputs", t_embedder_batches, True),
@@ -602,8 +615,6 @@ CHECKS = [
     ("shelf: circular selftests stay demoted", t_circular_selftests_stay_demoted, False),
     ("recall: refuses gibberish", t_recall_refuses_gibberish, True),
     ("physics: refuses impossible trips", t_physics_refuses_impossible, False),
-    ("markets: refuses impossible odds", t_markets_refuse_impossible, False),
-    ("xfiles: keeps near-complete suspects", t_xfiles_keeps_near_complete_suspects, False),
     ("doolittle: will not corner noise", t_doolittle_wont_corner_noise, False),
     ("cortex: refuses nonsense queries", t_cortex_refuses_nonsense, True),
     ("persona: clamps and refuses bad values", t_persona_clamps, False),

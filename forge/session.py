@@ -35,6 +35,7 @@ from .config import active_model_config, load_config
 from .media import load_media_config
 from .modes import get_privacy
 from .providers import ToolCall, build_provider
+from .projecttools import load as _load_project_tools
 from .tools import Workspace, build_media_tools, build_tools
 
 # How long the agent waits for a human to tap allow/deny before giving up.
@@ -102,6 +103,13 @@ class PendingPermission:
     allowed: bool = False
 
 
+def _project_tools(ws) -> list:
+    got, notes = _load_project_tools(ws)
+    for n in notes:
+        print(f"  project tools · {n}")
+    return got
+
+
 class Session:
     """One conversation, one workspace, one agent."""
 
@@ -161,9 +169,13 @@ class Session:
                 superego = None
         self.agent = Agent(
             provider=provider,
+            # Her own tools, her eyes, and then whatever THIS project ships in
+            # its merge-tools/ directory. A project's specialist tooling belongs
+            # to the project and appears only while she is working in it.
             tools=build_tools(ws, fenced=bool(cfg.get("kid_mode")), session_id=self.id,
                             provider=provider, summarizer=summarizer)
-                  + build_media_tools(ws, mc),
+                  + build_media_tools(ws, mc)
+                  + _project_tools(ws),
             max_steps=int(cfg["agent"].get("max_steps", 40)),
             permission_mode=cfg["agent"].get("permission_mode", "ask"),
             notes_path=ws.root / "FORGE-NOTES.md",
