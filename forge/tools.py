@@ -1959,8 +1959,13 @@ def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provi
                         "a PNG and returns its path — it shows in the chat and you "
                         "look_at_image it to actually perceive the sound.",
             parameters={"type": "object",
-                        "properties": {"source": {"type": "string",
-                            "description": "audio file path, or synth spec like 'chord:major:C'"}},
+                        "properties": {
+                            "source": {"type": "string",
+                                "description": "audio file path, or synth spec like 'chord:major:C'"},
+                            "max_sec": {"type": "number",
+                                "description": "how many seconds to analyse (default 60). "
+                                               "Anything past this is not looked at, so raise it "
+                                               "for a long recording rather than judging the opening."}},
                         "required": ["source"]},
             run=audio_nerve.see_sound,
         ),
@@ -1994,8 +1999,7 @@ def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provi
                         "yet, and you must not pretend to. source = audio file path.",
             parameters={"type": "object",
                         "properties": {"source": {"type": "string",
-                            "description": "path to an audio recording of calls"}},
-                        "required": ["source"]},
+                            "description": "path to an audio recording of calls"}, "max_sec": {"type": "number", "description": "seconds of the recording to analyse (default 300). Raise it for a long field recording — anything past this is never looked at."}}, "required": ["source"]},
             run=bioacoustics.study_calls,
         ),
         Tool(
@@ -2012,8 +2016,7 @@ def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provi
                         "structure is not language, and no call can be translated. "
                         "source = audio file path.",
             parameters={"type": "object",
-                        "properties": {"source": {"type": "string"}},
-                        "required": ["source"]},
+                        "properties": {"source": {"type": "string"}, "max_sec": {"type": "number", "description": "seconds of the recording to analyse (default 300). Raise it for a long field recording — anything past this is never looked at."}}, "required": ["source"]},
             run=bioacoustics.language_scorecard,
         ),
         Tool(

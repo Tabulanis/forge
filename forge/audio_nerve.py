@@ -99,7 +99,13 @@ def _synth(spec: str, dur: float = 2.0):
     return out.astype(np.float32), label
 
 
-def _load(source: str, max_sec: float = 8.0):
+# 2026-09-08: max_sec was a fixed 8.0 and no caller could change it, so every
+# recording longer than eight seconds was silently cut down to its opening and
+# the rest was never analysed at all. Nothing said so in the output.
+DEFAULT_MAX_SEC = 60.0
+
+
+def _load(source: str, max_sec: float = DEFAULT_MAX_SEC):
     """Return (samples float32 mono @ SR, human label). File path -> ffmpeg
     decode; 'kind:...' -> synth."""
     _kind = source.split(":", 1)[0].lower()
@@ -146,10 +152,45 @@ def _spectrogram(sig, W, H):
     idx = np.clip(np.searchsorted(f, logf), 0, len(f) - 1)
     S = S[idx, :]
     S = np.log1p(S * 8)
-    S = S / (S.max() or 1)
+    # 2026-09-08: was S / S.max(). One loud transient — a door, a wingbeat, a
+    # clipped peak — set the ceiling for the whole picture and everything
+    # quieter went black. The 99.5th percentile keeps the scale honest for the
+    # body of the sound and lets the rare peak clip instead of the other way
+    # round.
+    hi = float(np.percentile(S, 99.5)) or float(S.max() or 1)
+    S = np.clip(S / (hi or 1), 0, 1)
     rgb = _color(S[::-1])                       # low freq at bottom
     img = Image.fromarray(rgb).resize((W, H), Image.BILINEAR)
+    _axes(img, dur=len(sig) / SR, fmin=fmin, fmax=fmax)
     return img
+
+
+def _axes(img, dur: float, fmin: float, fmax: float) -> None:
+    """Put numbers on the spectrogram.
+
+    Without these she can describe a shape but never measure it: "a rising
+    tone" instead of "a rising tone from 400 Hz to 1.2 kHz between 2.1 and 2.6
+    seconds". Analysis needs the second sentence. Ticks are drawn INSIDE the
+    panel so the layout above is untouched.
+    """
+    W, H = img.size
+    d = ImageDraw.Draw(img)
+    # time, along the bottom
+    for frac in (0.0, 0.25, 0.5, 0.75, 1.0):
+        x = int(frac * (W - 1))
+        d.line([(x, H - 7), (x, H - 1)], fill=CYAN)
+        t = frac * dur
+        txt = f"{t:.1f}s" if dur < 20 else f"{t:.0f}s"
+        d.text((min(x + 2, W - 26), H - 15), txt, fill=CYAN)
+    # frequency, up the left edge (log scale — the axis is geomspaced)
+    for hz in (100, 250, 500, 1000, 2000, 4000, 8000):
+        if not (fmin <= hz <= fmax):
+            continue
+        frac = np.log(hz / fmin) / np.log(fmax / fmin)
+        y = int((1.0 - frac) * (H - 1))
+        d.line([(0, y), (6, y)], fill=CYAN)
+        lab = f"{hz // 1000}k" if hz >= 1000 else str(hz)
+        d.text((8, max(0, y - 6)), lab, fill=CYAN)
 
 
 def _waveform(sig, W, H):
@@ -335,19 +376,20 @@ def _label(img, text, sub=""):
     return img
 
 
-def see_sound(source: str) -> str:
+def see_sound(source: str, max_sec: float = DEFAULT_MAX_SEC) -> str:
     """Turn a sound into a picture of its structure Merge can SEE — waveform,
     spectrogram, harmonic spectrum, and pitch-class mandala. `source` is an
     audio file path OR a synth spec: 'note:A4', 'chord:major:C',
     'interval:fifth', 'harmonics:220'. Saves a PNG and returns its path (so it
     shows in the chat and she can look_at_image it)."""
-    sig, label = _load(source)
+    sig, label = _load(source, max_sec=max_sec)
     if sig is None:
         return f"Couldn't hear that: {label}"
+    heard = len(sig) / SR
     sig = sig / (np.abs(sig).max() or 1)
 
     W = 900
-    spec = _spectrogram(sig, W, 300); _label(spec, "SPECTROGRAM", "time →   ·   frequency (log) ↑")
+    spec = _spectrogram(sig, W, 300); _label(spec, "SPECTROGRAM", "axes are real: seconds along the bottom, Hz up the side")
     wave = _waveform(sig, W, 90); _label(wave, "WAVEFORM")
     harm = _harmonic(sig, W // 2, 240); _label(harm, "HARMONIC SPECTRUM", "overtones at integer ratios")
     mand = _mandala(sig, W - W // 2, 240); _label(mand, "PITCH MANDALA", "harmony as geometry")
@@ -372,7 +414,7 @@ def see_sound(source: str) -> str:
         _remember(label, source, embed(sig))
     except Exception:
         pass
-    return (f"Heard it: {label}. Rendered its structure to {out}\n"
+    return (f"Heard it: {label} ({heard:.1f}s analysed). Rendered its structure to {out}\n"
             f"look_at_image that to SEE the sound — the spectrogram is time×"
             f"pitch, the harmonic spectrum shows the overtone ladder, and the "
             f"mandala draws the harmony as geometry (consonant and dissonant\n            chords make visibly different shapes).")

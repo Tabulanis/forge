@@ -253,14 +253,17 @@ def _render(sig, sr, units, labels, k, M, verdict, label):
     return out
 
 
-def study_calls(source: str) -> str:
+def study_calls(source: str, max_sec: float = 300.0) -> str:
     """Look for STRUCTURE in a recording of animal (or any) vocalizations:
     segment it into calls, cluster them into a repertoire of recurring types,
     and test whether the SEQUENCE of calls is non-random (a testable fingerprint
     of proto-syntax). This does NOT decode meaning — it finds whether there's a
     system there. `source` is an audio file path or a synth spec. Renders a
     picture (timeline + repertoire + grammar) and returns its path + verdict."""
-    sig, label = AN._load(source, max_sec=30.0)
+    # 2026-09-08: was a hardcoded 30.0. A repertoire and a sequence test need
+    # MANY calls; thirty seconds of a field recording is often a handful, and
+    # everything after it was silently discarded. The caller chooses now.
+    sig, label = AN._load(source, max_sec=max_sec)
     if sig is None:
         return f"Couldn't hear that: {label}"
     sig = sig - float(np.mean(sig))          # strip DC bias
@@ -483,14 +486,17 @@ def _lang_render(metrics, label, verdict):
     return out
 
 
-def language_scorecard(source: str) -> str:
+def language_scorecard(source: str, max_sec: float = 300.0) -> str:
     """How LANGUAGE-LIKE is a recording's call sequence? Segments and clusters
     it (like study_calls), then scores the call sequence on the universal
     properties of human language — Zipf's law, grammar depth (entropy that
     drops with context), combinatoriality, Menzerath's law — against two poles:
     RANDOM and real human language. Says where the animal falls between them.
     Never claims meaning or that it IS a language. `source` = audio file path."""
-    sig, label = AN._load(source, max_sec=30.0)
+    # 2026-09-08: was a hardcoded 30.0. A repertoire and a sequence test need
+    # MANY calls; thirty seconds of a field recording is often a handful, and
+    # everything after it was silently discarded. The caller chooses now.
+    sig, label = AN._load(source, max_sec=max_sec)
     if sig is None:
         return f"Couldn't hear that: {label}"
     sig = sig - float(np.mean(sig))          # strip DC bias
