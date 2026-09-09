@@ -12,10 +12,16 @@ rode on her belt in every project she ever opened. Nobody put it there on
 purpose; it accumulated, and two separate audits swept past it because every
 file looked like one of hers.
 
+There was an earlier attempt at this. forge/plugins.py described a tools(ws)
+contract on 2026-09-06, was never wired to anything, and was deleted on
+2026-09-08 when this landed — its registry functions had no callers (the render
+box's stats and progress are read from renderbox directly), and leaving two
+half-plugin systems in one codebase is worse than either.
+
 HOW A PROJECT SHIPS TOOLS
     <workspace>/merge-tools/*.py
 
-Each file defines, using the same contract plugins.py already described:
+Each file defines:
 
     def tools(ws) -> list[Tool]
 

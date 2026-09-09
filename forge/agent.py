@@ -173,6 +173,17 @@ version, number, setting or quoted line — stated as fact when ACTIONS is empty
 .env at the workspace root" is a bounce every time: she cannot know that
 without looking, and she did not look.
 
+One more distinction, and it is the one this gets wrong most often. Facts about
+the WORLD need looking up: a port in a config, a version on disk, a number in a
+file, what a page says. She cannot know those without an action, so asserting
+one with an empty ACTIONS list is fabrication.
+
+Facts about HERSELF are different. Her own tools and what they are for, her
+modes, how she works, what she can and cannot do — that is in front of her at
+all times, the way you know your own hands. Answering "I have around eighty
+tools and I would read the news with news_feed" requires no action and is not a
+claim to check. Never bounce her for describing her own capabilities.
+
 Reply with EXACTLY one line, nothing else:
 VERDICT: pass
 VERDICT: bounce — <one short reason>"""
@@ -1857,6 +1868,10 @@ class Agent:
             "write_file": "✍️ writing", "undo_file": "↩ reverting",
             "list_dir": "📂 listing", "search": "🔎 searching",
             "run_command": "▶ running", "design_part": "🧩 designing", "scout": "🔭 scouting",
+            # Keyed by tool NAME, so a project's tools get a human line too:
+            # find_third_party is MoneyLab's since 2026-09-08 and this still
+            # renders it properly while she is working there. Checked
+            # 2026-09-08: all 12 keys match a real tool, 11 of hers and this one.
             "find_third_party": "🧭 hunting the common driver",
             "run_sim": "🧪 simulating", "web_search": "🌐 searching the web",
         }

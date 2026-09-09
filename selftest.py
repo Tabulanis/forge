@@ -369,6 +369,18 @@ def t_a_project_can_add_its_own_news_sources():
             and there == hers | {"a_project_feed"}
             and set(news.feeds_for(bad)) == hers)     # a bad file must not break her news
 
+
+def t_superego_lets_her_describe_herself():
+    """Caught live 2026-09-08 on the first real turn after the gate was opened
+    to toolless answers: she was bounced for naming her own tools and count
+    "without evidence". Her tools are in front of her at all times — the judge
+    just cannot see her belt. Facts about the WORLD need an action; facts about
+    HERSELF do not, and bouncing those makes the gate a tax on ordinary
+    questions."""
+    from forge.agent import SUPEREGO_PROMPT as P
+    return ("Facts about HERSELF are different" in P
+            and "describing her own capabilities" in P)
+
 # ---------------------------------------------------------------- context
 def t_overhead_counted():
     """The bare 400: schemas + system prompt were invisible, so a turn read 19%
@@ -671,6 +683,7 @@ CHECKS = [
     ("doolittle: the call sheet joins field notes", t_call_sheet_joins_field_notes, False),
     ("doolittle: audio is not a signal answer", t_audio_is_not_offered_as_a_signal_answer, False),
     ("separation: a project adds its own news sources", t_a_project_can_add_its_own_news_sources, False),
+    ("superego: she may describe herself", t_superego_lets_her_describe_herself, False),
     ("toolindex: cannot bypass privacy", t_load_cannot_bypass_privacy, False),
     ("toolindex: retrieval quality + junk refused", t_tool_search_quality, True),
     ("embedder: batches large inputs", t_embedder_batches, True),

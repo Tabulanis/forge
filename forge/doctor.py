@@ -297,7 +297,20 @@ def _extras(cfg: dict) -> list[Check]:
                 got = _json.load(r)["models"][0]["name"]
         except Exception:
             continue        # not running — the reachability check covers that
-        if not (got.startswith(want) or want.startswith(got)):
+        # 2026-09-08: this compared a config NAME against a served PATH with
+        # startswith, so every correctly-configured model failed it — 'qwen2.5-3b'
+        # does not start with '/home/.../qwen2.5-3b-instruct-q4.gguf'. Four false
+        # warnings on a healthy machine, every run, which is how a person learns
+        # to ignore warnings. Compare the filenames, both directions.
+        def _norm(x: str) -> str:
+            x = str(x).replace("\\", "/").rsplit("/", 1)[-1]
+            for ext in (".gguf", ".safetensors", ".bin"):
+                if x.lower().endswith(ext):
+                    x = x[: -len(ext)]
+            return x.lower()
+
+        a, b = _norm(got), _norm(want)
+        if not (a.startswith(b) or b.startswith(a) or a in b or b in a):
             out.append(Check(f"Config truth: {name}", WARN,
                              f"config says {want!r} but {url} serves {got!r}",
                              "fix base_url or restart the right server"))
