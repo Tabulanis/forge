@@ -2033,7 +2033,13 @@ def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provi
                         "yet, and you must not pretend to. source = audio file path.",
             parameters={"type": "object",
                         "properties": {"source": {"type": "string",
-                            "description": "path to an audio recording of calls"}, "max_sec": {"type": "number", "description": "seconds of the recording to analyse (default 300). Raise it for a long field recording — anything past this is never looked at."}}, "required": ["source"]},
+                            "description": "path to an audio recording of calls"}, "separate": {"type": "string", "description":
+                                "'hpss' to lift the animal out of background (hum, traffic, wind) "
+                                "BEFORE studying — the recommended choice. 'nmf' splits by spectral "
+                                "shape and a call-type IS a spectral shape, so on one animal with "
+                                "several calls it splits the ANIMAL and destroys the sequence you "
+                                "are testing for (measured). Leave empty to study the recording whole."},
+                            "max_sec": {"type": "number", "description": "seconds of the recording to analyse (default 300). Raise it for a long field recording — anything past this is never looked at."}}, "required": ["source"]},
             run=bioacoustics.study_calls,
         ),
         Tool(

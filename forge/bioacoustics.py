@@ -253,13 +253,21 @@ def _render(sig, sr, units, labels, k, M, verdict, label):
     return out
 
 
-def study_calls(source: str, max_sec: float = 300.0) -> str:
+def study_calls(source: str, max_sec: float = 300.0, separate: str = "") -> str:
     """Look for STRUCTURE in a recording of animal (or any) vocalizations:
     segment it into calls, cluster them into a repertoire of recurring types,
     and test whether the SEQUENCE of calls is non-random (a testable fingerprint
     of proto-syntax). This does NOT decode meaning — it finds whether there's a
     system there. `source` is an audio file path or a synth spec. Renders a
     picture (timeline + repertoire + grammar) and returns its path + verdict."""
+    # 2026-09-08: a chorus used to be studied as one jumble, so the "repertoire"
+    # it found was several animals blended together — which the whole protocol
+    # assumes it is not. `separate` pulls the voices apart first and studies each
+    # alone, then says which one carries structure. In a field recording you
+    # rarely know in advance which voice is the animal.
+    if separate:
+        return _study_each_voice(source, max_sec=max_sec, method=separate)
+
     # 2026-09-08: was a hardcoded 30.0. A repertoire and a sequence test need
     # MANY calls; thirty seconds of a field recording is often a handful, and
     # everything after it was silently discarded. The caller chooses now.
@@ -442,6 +450,75 @@ waited for the rain that would come or would not come but always the morning
 came slow over the hills and the light moved across the fields again.
 """
 
+
+
+def _study_each_voice(source: str, max_sec: float, method: str) -> str:
+    """Pull a mixture apart, study every part alone, and report which part
+    carries the structure. A repertoire built from two animals at once is not
+    a repertoire.
+
+    WHICH METHOD MATTERS, and getting it wrong destroys the evidence. Measured
+    2026-09-08 on a recording of one animal cycling through three call-types
+    under a steady hum:
+
+      hpss  — splits steady from brief. The hum comes off, the animal stays
+              whole, and the structure survives (p=0.000 on both parts).
+      nmf   — splits by SPECTRAL SHAPE, and a call-type IS a spectral shape.
+              It cut the single animal into three separate "voices", one per
+              call-type, each with one type and therefore no sequence left to
+              test. The structure the study exists to find was destroyed by
+              the step meant to reveal it.
+
+    So: hpss to lift an animal out of background. nmf only when the voices are
+    genuinely different animals sitting in different frequency bands — and if
+    every part comes back with one call-type each, suspect you have split one
+    animal rather than several.
+    """
+    sep = AN.separate_sounds(source,
+                             method=("hpss" if str(method).lower().startswith("h") else "nmf"),
+                             max_sec=max_sec)
+    if not str(sep).lower().startswith("pulled"):
+        return f"Couldn't separate that first: {sep}"
+    parts = []
+    for line in str(sep).splitlines():
+        if "-> " in line and line.strip().endswith(".wav"):
+            name = line.split("-> ")[0].strip().lstrip("0123456789. ")
+            parts.append((name, line.split("-> ")[1].strip()))
+    if not parts:
+        return f"Separation produced no parts to study:\n{sep}"
+
+    out = [f"Separated first ({len(parts)} voice(s)), then studied each one alone.",
+           "A repertoire built from two animals at once is not a repertoire — this "
+           "is which VOICE carries the structure.", ""]
+    structured = []
+    for name, wav in parts:
+        rows = str(study_calls(wav, max_sec=max_sec)).splitlines()
+        head = rows[0] if rows else ""
+        verdict = next((l for l in rows[1:3] if l.strip()), "")
+        sheet = next((l.split("written to ")[1].split(" —")[0]
+                      for l in rows if "written to" in l), "")
+        if "NON-RANDOM" in verdict:
+            structured.append(name)
+        out.append(f"● {name}")
+        out.append(f"    {head}")
+        out.append(f"    {verdict[:150]}")
+        if sheet:
+            out.append(f"    call sheet: {sheet}")
+    out.append("")
+    singletons = sum(1 for line in out if "→ 1 recurring call-type" in line
+                     or "1 recurring call-type(s)" in line)
+    if singletons >= 2 and str(method).lower().startswith("n"):
+        out.append("⚠ Most parts came back with a SINGLE call-type each. That is "
+                   "the signature of splitting one animal by its call-types "
+                   "rather than splitting several animals. Try separate='hpss', "
+                   "or study the recording whole.")
+    if structured:
+        out.append(f"→ Structure sits in: {', '.join(structured)}. Study that part, "
+                   f"and align your field notes against ITS call sheet.")
+    else:
+        out.append("→ No part shows adjacent structure beyond chance. That is not "
+                   "'no structure' — this test only sees one-step patterns.")
+    return "\n".join(out)
 
 def _human_seq():
     words = re.findall(r"[a-z]+", _HUMAN_TEXT.lower())
