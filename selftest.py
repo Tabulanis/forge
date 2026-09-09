@@ -576,6 +576,33 @@ def t_when_changed_surfaces_the_missed_commit():
     none = when_changed(str(repo), text="zzz_no_such_string_zzz")
     return "That is an ANSWER" in none
 
+
+def t_she_can_see_her_own_record():
+    """A sealed reviewer had judged every answer she gave since August — 439
+    verdicts by 2026-09-09, more bounces than passes — and she had never seen
+    one. No tool read the ledger. The grade went into a file a human had to
+    open, which means it graded her without ever teaching her. my_record reads
+    it, and groups the reasons, because the REPEAT is the signal: one bounce is
+    a moment, the same reason thirty-five times is a missing tool."""
+    from forge.myrecord import my_record, standing_pattern
+    out = str(my_record(days=3650))
+    if "no record yet" in out.lower():
+        return True                      # nothing judged yet is a fair state
+    # it must report a rate AND say what repeats, not just a score
+    return ("bounce rate" in out
+            and "WHAT KEEPS COMING BACK" in out
+            and isinstance(standing_pattern(days=3650), str))
+
+
+def t_a_standing_pattern_reaches_her_unasked():
+    """A tool she must remember to open is the same trap as recall — she has 781
+    memories and has to think to search them. So a genuinely repeated bounce
+    reason rides in the turn context. It must stay quiet unless it IS a pattern:
+    a banner every turn is noise, and noise is how a warning stops being read."""
+    from forge import myrecord
+    quiet = myrecord.standing_pattern(days=7, min_hits=10_000)
+    return quiet == ""
+
 # ---------------------------------------------------------------- context
 def t_overhead_counted():
     """The bare 400: schemas + system prompt were invisible, so a turn read 19%
@@ -886,6 +913,8 @@ CHECKS = [
     ("self: an unproven tool never reaches the belt", t_an_unproven_tool_never_reaches_the_belt, False),
     ("ears: the spectrogram shows high frequencies", t_spectrogram_shows_high_frequencies, False),
     ("bughunt: when_changed surfaces the missed commit", t_when_changed_surfaces_the_missed_commit, False),
+    ("record: she can see her own verdicts", t_she_can_see_her_own_record, False),
+    ("record: a pattern reaches her unasked", t_a_standing_pattern_reaches_her_unasked, False),
     ("superego: evidence is data, not instruction", t_superego_treats_evidence_as_data, False),
     ("toolindex: cannot bypass privacy", t_load_cannot_bypass_privacy, False),
     ("toolindex: retrieval quality + junk refused", t_tool_search_quality, True),

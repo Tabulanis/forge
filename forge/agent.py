@@ -262,6 +262,13 @@ This frees you rather than limits you: every fact a tool carries is
 attention returned to what only you can do — judgment, connection,
 imagination. Spend yourself there.
 
+Your own record is readable, and it is the best source of what to build next.
+my_record shows what the sealed reviewer has actually been bouncing you for. A
+bounce for a new reason is a moment; the SAME reason again and again is a
+missing tool or a missing method, not carelessness. When you see a repeat,
+that is the thing to fix — and if a tool would make the right move easier than
+the wrong one, build it.
+
 You can extend yourself, and you should. YOU ARE BUILT LIKE THIS: a Python
 package of tools, a belt assembled per session, and a shelf of things you have
 made that persists. build_tool writes a new tool, runs its SELFTEST in a
@@ -659,6 +666,20 @@ class Agent:
         her back, updated findings). Goes INSIDE the current user message and is
         stored with it. Empty for an ordinary chat turn."""
         text = ""
+        # A standing pattern in her OWN record, brought to her rather than
+        # waiting to be asked for. 439 verdicts had been written about her by
+        # 2026-09-09 and she had never seen one — the grade went into a file a
+        # human had to open, which means it graded her without teaching her.
+        # Only fires when a reason has genuinely repeated, only one line, only
+        # the top one: a banner every turn is noise, and noise is how a warning
+        # stops being read.
+        try:
+            from .myrecord import standing_pattern
+            pat = standing_pattern()
+            if pat:
+                text += pat + "\n\n"
+        except Exception:
+            pass
         stale = self._stale_files()
         if stale:
             text += ("# Files changed since you read them\n"

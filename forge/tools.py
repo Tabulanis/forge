@@ -33,7 +33,7 @@ import httpx
 
 from . import (audio_nerve, bioacoustics, browser, business, cad, cortex,
                datasets, doolittle, frameworks, history, identity, law, markets,
-               medical, news, owntools, persona, sims, toolindex, vault)
+               medical, myrecord, news, owntools, persona, sims, toolindex, vault)
 from .codetools import syntax_check
 from .config import load_config
 from .dataops import data_ops, date_calc
@@ -2528,6 +2528,23 @@ def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provi
                             "limit": {"type": "integer", "description": "max commits (default 40)"}},
                         "required": []},
             run=history.when_changed,
+        ),
+        Tool(
+            name="my_record",
+            description=(
+                "What the sealed reviewer has actually said about your answers — "
+                "your pass/bounce rate and, more usefully, WHAT KEEPS COMING BACK.\n"
+                "A bounce for a new reason is a moment. The SAME reason again and "
+                "again is not carelessness, it is a missing tool or a missing "
+                "method — go and build it. That is exactly how the bug-hunt "
+                "failure was found: not one bad run, but seven failing the same "
+                "way. Read this when something feels like it keeps going wrong."),
+            parameters={"type": "object",
+                        "properties": {
+                            "days": {"type": "integer", "description": "window to look back over (default 14)"},
+                            "limit": {"type": "integer", "description": "how many patterns to show (default 6)"}},
+                        "required": []},
+            run=myrecord.my_record,
         ),
         Tool(
             name="build_tool",
