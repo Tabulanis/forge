@@ -30,7 +30,17 @@ from scipy.signal import istft, stft
 from .paths import DATASETS_DIR
 VEC_STORE = DATASETS_DIR / "audio-nerve" / "vectors.jsonl"
 
-SR = 22050
+# 44.1 kHz — CD rate, so she hears to 22 kHz instead of 11.
+#
+# 22050 halved the sample rate to halve the work, and it cost the top octave of
+# everything: most bird song runs to 8-10 kHz and survived, but insect
+# stridulation, bat calls and the bright detail of a consonant all live above
+# 11 kHz and were simply not there. Nothing said so — the spectrogram just
+# stopped, and a structure test cannot find what was never sampled.
+#
+# Raised 2026-09-09. Cost is linear in the audio and everything here is fast:
+# a 60s study was 0.3s, a 60s sound portrait 0.4s.
+SR = 44100
 RENDERS = DATASETS_DIR / "audio-nerve"
 BG = (13, 16, 23)
 INK = (230, 236, 245)
@@ -149,9 +159,22 @@ def _spectrogram(sig, W, H):
     S = np.abs(Z)
     # log-frequency remap so octaves are evenly spaced (musical view)
     fmin, fmax = 40, SR / 2
-    logf = np.geomspace(fmin, fmax, H)
-    idx = np.clip(np.searchsorted(f, logf), 0, len(f) - 1)
-    S = S[idx, :]
+    logf = np.geomspace(fmin, fmax, H + 1)
+    # 2026-09-09: this used to take ONE fft bin per output row
+    # (searchsorted -> S[idx]). Rows are geometric, so near the top of the range
+    # each row spans hundreds of Hz while the bins are ~43 Hz apart — a narrow
+    # tone between two sampled bins was simply not drawn. Measured: a 15 kHz
+    # tone at the SAME amplitude as a 600 Hz one rendered at brightness 6
+    # against 243, i.e. invisible, and she read the picture honestly and
+    # reported only the low band. Each row now takes the LOUDEST bin inside the
+    # band it actually covers, so nothing narrow falls between rows. Raising the
+    # sample rate to 44.1 kHz made this obvious; it was wrong before, quietly.
+    edges = np.clip(np.searchsorted(f, logf), 0, len(f) - 1)
+    band = np.empty((H, S.shape[1]), dtype=S.dtype)
+    for i in range(H):
+        a, b = edges[i], max(edges[i] + 1, edges[i + 1])
+        band[i] = S[a:b, :].max(axis=0)
+    S = band
     S = np.log1p(S * 8)
     # 2026-09-08: was S / S.max(). One loud transient — a door, a wingbeat, a
     # clipped peak — set the ceiling for the whole picture and everything
@@ -184,7 +207,11 @@ def _axes(img, dur: float, fmin: float, fmax: float) -> None:
         txt = f"{t:.1f}s" if dur < 20 else f"{t:.0f}s"
         d.text((min(x + 2, W - 26), H - 15), txt, fill=CYAN)
     # frequency, up the left edge (log scale — the axis is geomspaced)
-    for hz in (100, 250, 500, 1000, 2000, 4000, 8000):
+    # 2026-09-09: these stopped at 8k, which was fine at 22050 Hz and wrong the
+    # moment the rate went to 44100. A 15 kHz tone was correctly captured and she
+    # still could not name it, because the band had no number beside it — she
+    # read the picture honestly and reported only what was labelled.
+    for hz in (100, 250, 500, 1000, 2000, 4000, 8000, 16000, 20000):
         if not (fmin <= hz <= fmax):
             continue
         frac = np.log(hz / fmin) / np.log(fmax / fmin)

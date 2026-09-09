@@ -523,6 +523,34 @@ def t_an_unproven_tool_never_reaches_the_belt():
             return False
     return True
 
+
+def t_spectrogram_shows_high_frequencies():
+    """2026-09-09. The spectrogram took ONE fft bin per output row. Rows are
+    geometric, so near the top each row spans hundreds of Hz while the bins are
+    ~43 Hz apart, and a narrow tone falling between two sampled bins was never
+    drawn. Measured: a 15 kHz tone at the SAME amplitude as a 600 Hz one
+    rendered at brightness 6 against 243 — invisible — and she read the picture
+    honestly and reported only the low band. It was wrong before; raising the
+    sample rate to 44.1 kHz made it obvious. Each row now takes the loudest bin
+    in the band it actually covers."""
+    import numpy as np
+    from forge import audio_nerve as AN
+    SR = AN.SR
+    t = np.arange(int(SR * 2)) / SR
+    sig = 0.5 * np.sin(2 * np.pi * 600 * t) + 0.5 * np.sin(2 * np.pi * 15000 * t)
+    sig = sig / (np.abs(sig).max() or 1)
+    a = np.asarray(AN._spectrogram(sig, 600, 300).convert("L")).astype(float)
+    rows = a.mean(axis=1)
+    H, fmin, fmax = len(rows), 40, SR / 2
+
+    def bright(hz):
+        frac = np.log(hz / fmin) / np.log(fmax / fmin)
+        r = int(round((1 - frac) * (H - 1)))
+        return float(rows[max(0, r - 2):r + 3].max())
+
+    lo, hi = bright(600), bright(15000)
+    return SR >= 44100 and hi > 0.5 * lo
+
 # ---------------------------------------------------------------- context
 def t_overhead_counted():
     """The bare 400: schemas + system prompt were invisible, so a turn read 19%
@@ -831,6 +859,7 @@ CHECKS = [
     ("project: cannot hijack or junk her belt", t_project_cannot_hijack_or_junk_the_belt, False),
     ("self: she can build and use a tool", t_she_can_build_and_use_a_tool, False),
     ("self: an unproven tool never reaches the belt", t_an_unproven_tool_never_reaches_the_belt, False),
+    ("ears: the spectrogram shows high frequencies", t_spectrogram_shows_high_frequencies, False),
     ("superego: evidence is data, not instruction", t_superego_treats_evidence_as_data, False),
     ("toolindex: cannot bypass privacy", t_load_cannot_bypass_privacy, False),
     ("toolindex: retrieval quality + junk refused", t_tool_search_quality, True),
