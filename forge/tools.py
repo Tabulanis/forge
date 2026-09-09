@@ -33,7 +33,7 @@ import httpx
 
 from . import (audio_nerve, bioacoustics, browser, business, cad, cortex,
                datasets, doolittle, frameworks, identity, law, markets,
-               medical, news, persona, sims, toolindex, vault)
+               medical, news, owntools, persona, sims, toolindex, vault)
 from .codetools import syntax_check
 from .config import load_config
 from .dataops import data_ops, date_calc
@@ -2503,6 +2503,53 @@ def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provi
             run=lambda sources=None, limit=25: news.feed(sources, limit, ws_root=ws.root),
         ),
         Tool(
+            name="build_tool",
+            description=(
+                "WRITE YOURSELF A NEW TOOL, prove it, and use it in this same turn. "
+                "When you keep doing the same fiddly thing by hand, stop and build "
+                "the tool instead.\n"
+                "The file must define three things:\n"
+                "  SELFTEST = [{\"args\": {...}, \"expect\": <value>}, ...]  known cases\n"
+                "  def run(...)                                        the work\n"
+                "  TOOL = {\"name\", \"description\", \"parameters\"}       its schema\n"
+                "NO SELFTEST, NO BELT — a tool that has never run is a guess, and it "
+                "is refused. Every case is executed in a separate process before "
+                "anything is installed, so a loop or a crash costs you nothing. "
+                "Pass its own test and it goes on your belt immediately."),
+            parameters={"type": "object",
+                        "properties": {
+                            "name": {"type": "string",
+                                "description": "lower_case_with_underscores"},
+                            "code": {"type": "string",
+                                "description": "the whole file: SELFTEST, run(), TOOL"}},
+                        "required": ["name", "code"]},
+            run=owntools.build_tool,
+        ),
+        Tool(
+            name="test_tool",
+            description=("Re-run one of your own tools against its SELFTEST. Use it "
+                         "when something it depends on has changed — a tool that "
+                         "passed once is not a tool that passes now."),
+            parameters={"type": "object",
+                        "properties": {"name": {"type": "string"}},
+                        "required": ["name"]},
+            run=owntools.test_tool,
+        ),
+        Tool(
+            name="list_my_tools",
+            description="The tools you have made: which are proven, and which are staged and failing.",
+            parameters={"type": "object", "properties": {}},
+            run=owntools.list_my_tools,
+        ),
+        Tool(
+            name="remove_tool",
+            description="Take one of your own tools off the shelf for good.",
+            parameters={"type": "object",
+                        "properties": {"name": {"type": "string"}},
+                        "required": ["name"]},
+            run=owntools.remove_tool,
+        ),
+        Tool(
             name="business_framework",
             description=(
                 "Structured thinking scaffolds — the JUDGMENT half of hard problems "
@@ -3031,6 +3078,14 @@ def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provi
             run=lambda query: recall_search(query, workspace=str(ws.root)),
         ),
     ]
+    # Her OWN tools — written, proven and shelved by her. They ride the belt
+    # like any other, so a tool she made last week is simply there today.
+    try:
+        _own, _own_notes = owntools.load_own(ws)
+        _built.extend(_own)
+    except Exception:
+        pass
+
     # Everything outside the mode's core set stays reachable through the
     # index rather than riding along on every request. Registered here so
     # find_tools/load_tools can resolve a name to a real tool.

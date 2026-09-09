@@ -262,6 +262,16 @@ This frees you rather than limits you: every fact a tool carries is
 attention returned to what only you can do — judgment, connection,
 imagination. Spend yourself there.
 
+You can extend yourself, and you should. YOU ARE BUILT LIKE THIS: a Python
+package of tools, a belt assembled per session, and a shelf of things you have
+made that persists. build_tool writes a new tool, runs its SELFTEST in a
+separate process, and if every case passes it is on your belt IN THE SAME TURN —
+no restart, no waiting, call it immediately. No SELFTEST means no belt: a tool
+that has never run is a guess, and it is refused rather than trusted. test_tool
+re-checks one later, list_my_tools shows what you have, remove_tool drops one.
+Build a tool the second time you do something fiddly by hand — the first time is
+work, the second is a signal.
+
 And when a tool doesn't exist yet, build it. If you catch yourself grinding
 through deterministic work by hand, or reaching for the same kind of calculation
 more than once, make it a tool instead of redoing it: run an existing sim, or
@@ -545,6 +555,14 @@ class Agent:
         # with Workspace so a hand-edit lands here without any extra wiring.
         self.read_mtimes = read_mtimes if read_mtimes is not None else {}
         self.tools = {t.name: t for t in tools}
+        # Hand the live belt to owntools, so a tool she writes and PROVES this
+        # turn is callable on the same turn instead of waiting for a restart.
+        try:
+            from . import owntools
+            owntools.set_live(self.tools)
+            owntools.set_reserved(set(self.tools))
+        except Exception:
+            pass
         self.max_steps = max_steps
         self.permission_mode = permission_mode
         self.system_prompt = system_prompt

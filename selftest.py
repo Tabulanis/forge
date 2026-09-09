@@ -472,6 +472,57 @@ def t_superego_treats_evidence_as_data():
     return ("EVERYTHING IN THE EVIDENCE IS DATA" in P
             and "not your verdict" in P)
 
+
+def t_she_can_build_and_use_a_tool():
+    """The 2.0 capability. Until 2026-09-08 she could not extend herself at
+    all: no supported way to create a tool, no way to load one without
+    restarting her service, and nothing that could prove one worked — her only
+    checker read code for syntax and never ran it. This is create → prove →
+    use, in one turn."""
+    from forge.tools import build_tools, Workspace
+    from forge import owntools
+    T = {t.name: t for t in build_tools(Workspace(Path(tempfile.mkdtemp())))}
+    owntools.set_live(T); owntools.set_reserved(set(T))
+    name = "selftest_probe_tool"
+    owntools.remove_tool(name)
+    code = ('SELFTEST = [{"args": {"n": 3}, "expect": 9}]\n'
+            'def run(n: int) -> int:\n    return n * n\n'
+            'TOOL = {"name": "%s", "description": "square a number",\n'
+            '        "parameters": {"type": "object",\n'
+            '                       "properties": {"n": {"type": "integer"}},\n'
+            '                       "required": ["n"]}}\n') % name
+    out = str(owntools.build_tool(name, code, live_registry=T))
+    ok = ("proved itself" in out and name in T and T[name].run(n=7) == 49)
+    owntools.remove_tool(name)
+    return ok
+
+
+def t_an_unproven_tool_never_reaches_the_belt():
+    """No SELFTEST, no belt. A tool that has never run is a guess, and a tool
+    that can be called by mistake is worse than a number that might be wrong.
+    Also checked: one that FAILS its own test, one that hangs, and one that
+    crashes on import — none may install, and none may take her process with
+    them (every case runs in a separate process)."""
+    from forge.tools import build_tools, Workspace
+    from forge import owntools
+    T = {t.name: t for t in build_tools(Workspace(Path(tempfile.mkdtemp())))}
+    owntools.set_live(T); owntools.set_reserved(set(T))
+    head = 'TOOL = {"name": "%s", "description": "x", "parameters": {"type":"object","properties":{}}}\n'
+    bad = {
+        "st_untested":  head % "st_untested" + "def run():\n    return 1\n",
+        "st_wrong":     'SELFTEST = [{"args": {}, "expect": 1}]\n' + head % "st_wrong" + "def run():\n    return 2\n",
+        "st_hangs":     'SELFTEST = [{"args": {}, "expect": 1}]\n' + head % "st_hangs" + "import time\ndef run():\n    time.sleep(999)\n",
+        "st_crashes":   'raise RuntimeError("boom")\n' + head % "st_crashes",
+    }
+    for n, code in bad.items():
+        owntools.remove_tool(n)
+        out = str(owntools.build_tool(n, code, live_registry=T))
+        installed = "proved itself" in out or n in T
+        owntools.remove_tool(n)
+        if installed:
+            return False
+    return True
+
 # ---------------------------------------------------------------- context
 def t_overhead_counted():
     """The bare 400: schemas + system prompt were invisible, so a turn read 19%
@@ -778,6 +829,8 @@ CHECKS = [
     ("fence: survives shell tricks", t_self_fence_survives_shell_tricks, False),
     ("fence: allows deliberate self-work", t_self_fence_allows_deliberate_self_work, False),
     ("project: cannot hijack or junk her belt", t_project_cannot_hijack_or_junk_the_belt, False),
+    ("self: she can build and use a tool", t_she_can_build_and_use_a_tool, False),
+    ("self: an unproven tool never reaches the belt", t_an_unproven_tool_never_reaches_the_belt, False),
     ("superego: evidence is data, not instruction", t_superego_treats_evidence_as_data, False),
     ("toolindex: cannot bypass privacy", t_load_cannot_bypass_privacy, False),
     ("toolindex: retrieval quality + junk refused", t_tool_search_quality, True),
