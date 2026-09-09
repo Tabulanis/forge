@@ -2527,7 +2527,18 @@ def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provi
                             "regex": {"type": "boolean", "description": "treat text as a regex"},
                             "limit": {"type": "integer", "description": "max commits (default 40)"}},
                         "required": []},
-            run=history.when_changed,
+            # 2026-09-09: registered raw at first, so a path resolved against
+            # whatever directory the process happened to be in. Her perfectly
+            # reasonable when_changed(repo="repo") became "No such directory:
+            # repo", three times in one run — she wrote "the tool seems to have
+            # an issue", gave up, and typed 46 `git show`s instead. Every other
+            # tool goes through the workspace; this one now does too.
+            run=lambda repo="", text="", path="", since="", until="",
+                       regex=False, limit=40: history.when_changed(
+                str(Path(repo) if repo and Path(repo).is_absolute()
+                    else (Path(ws.root) / repo if repo else Path(ws.root))),
+                text=text, path=path, since=since, until=until,
+                regex=regex, limit=limit),
         ),
         Tool(
             name="my_record",

@@ -674,6 +674,37 @@ def t_card_store_stays_aligned():
     n = sum(1 for _ in open(c))
     return v.stat().st_size == n * DIM * 4
 
+
+def t_when_changed_is_anchored_to_her_workspace():
+    """Third variant of one root cause, and the one that actually cost the runs.
+    Registered raw, the tool resolved a path against whatever directory the
+    process happened to be in — so her perfectly reasonable
+    when_changed(repo="repo") returned "No such directory: repo", three times in
+    one run. She wrote "the tool seems to have an issue", gave up on it, and
+    typed 46 `git show`s instead: the exact habit it exists to replace. Every
+    other tool she has goes through the workspace; this one didn't."""
+    import os, subprocess
+    from forge.tools import build_tools, Workspace
+    d = Path(tempfile.mkdtemp())
+    inner = d / "repo"
+    inner.mkdir()
+    e = {**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
+         "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t", "HOME": str(d)}
+    subprocess.run(["git", "init", "-q"], cwd=inner, env=e, check=True)
+    (inner / "f.txt").write_text("MARKER_BETA\n")
+    subprocess.run(["git", "add", "-A"], cwd=inner, env=e, check=True)
+    subprocess.run(["git", "commit", "-qm", "the beta commit"], cwd=inner, env=e, check=True)
+
+    T = {t.name: t for t in build_tools(Workspace(d))}
+    here = os.getcwd()
+    try:
+        os.chdir("/tmp")                       # the wrong cwd, as in the real run
+        by_rel = str(T["when_changed"].run(repo="repo", text="MARKER_BETA"))
+        by_none = str(T["when_changed"].run(text="MARKER_BETA"))
+    finally:
+        os.chdir(here)
+    return "the beta commit" in by_rel and "the beta commit" in by_none
+
 # ---------------------------------------------------------------- context
 def t_overhead_counted():
     """The bare 400: schemas + system prompt were invisible, so a turn read 19%
@@ -985,6 +1016,7 @@ CHECKS = [
     ("ears: the spectrogram shows high frequencies", t_spectrogram_shows_high_frequencies, False),
     ("bughunt: when_changed surfaces the missed commit", t_when_changed_surfaces_the_missed_commit, False),
     ("bughunt: when_changed finds the repo below", t_when_changed_finds_the_repo_below, False),
+    ("bughunt: when_changed is anchored to her workspace", t_when_changed_is_anchored_to_her_workspace, False),
     ("record: she can see her own verdicts", t_she_can_see_her_own_record, False),
     ("record: a pattern reaches her unasked", t_a_standing_pattern_reaches_her_unasked, False),
     ("memory: junk never becomes a memory", t_junk_never_becomes_a_memory, False),
