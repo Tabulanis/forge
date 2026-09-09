@@ -33,7 +33,8 @@ import httpx
 
 from . import (audio_nerve, bioacoustics, browser, business, cad, cortex,
                datasets, doolittle, frameworks, history, identity, law, markets,
-               medical, myrecord, news, owntools, persona, sims, toolindex, vault)
+               medical, myrecord, news, owntools, persona, ruleout, sims,
+               toolindex, vault)
 from .codetools import syntax_check
 from .config import load_config
 from .dataops import data_ops, date_calc
@@ -2501,6 +2502,61 @@ def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provi
                                 "description": "how many headlines (default 25)"}},
                         "required": []},
             run=lambda sources=None, limit=25: news.feed(sources, limit, ws_root=ws.root),
+        ),
+        Tool(
+            name="history_survey",
+            description=(
+                "EVERY commit at once, oldest first, labelled by what KIND of thing "
+                "it changed — build/packaging, manifest/config, docs, tests, source.\n"
+                "Use it at the START of a hunt, before reading any single commit. It "
+                "removes the need to know a date it last worked: forty commits is a "
+                "readable list, and the failure it exists to stop is picking three by "
+                "which MESSAGE sounds relevant and re-reading them forty times.\n"
+                "The KIND column is the point. A fault that survives a clean rebuild "
+                "usually lives in how the thing is BUILT, stamped or packaged — the "
+                "files everyone scrolls past — not in the source everyone reads."),
+            parameters={"type": "object",
+                        "properties": {
+                            "repo": {"type": "string", "description": "repository (default: your workspace)"},
+                            "since": {"type": "string"}, "until": {"type": "string"},
+                            "limit": {"type": "integer", "description": "max commits (default 200)"}},
+                        "required": []},
+            run=lambda repo="", since="", until="", limit=200: history.survey(
+                str(Path(repo) if repo and Path(repo).is_absolute()
+                    else (Path(ws.root) / repo if repo else Path(ws.root))),
+                since=since, until=until, limit=limit),
+        ),
+        Tool(
+            name="rule_out",
+            description=(
+                "Strike a theory off the hunt, and say WHAT struck it — the command "
+                "you ran, the line you read, the thing that did not happen.\n"
+                "A theory you cannot strike is a theory you have not tested. Writing "
+                "down what killed it is what stops you circling the same three "
+                "commits. Strike the theory the DOCUMENTATION pushes first: it is the "
+                "one most likely to be wrong and least likely to be tested.\n"
+                "Use `standing` to note what the striking left behind."),
+            parameters={"type": "object",
+                        "properties": {
+                            "theory": {"type": "string", "description": "what you are ruling out"},
+                            "because": {"type": "string", "description": "the evidence that struck it"},
+                            "standing": {"type": "string", "description": "what this leaves still possible"}},
+                        "required": ["theory", "because"]},
+            run=ruleout.rule_out,
+        ),
+        Tool(
+            name="open_theories",
+            description=("The negative space: what you have ruled out and what is still "
+                         "standing. An honest 'I don't know, here is what I eliminated' "
+                         "is worth more than a confident wrong cause."),
+            parameters={"type": "object", "properties": {}},
+            run=ruleout.open_theories,
+        ),
+        Tool(
+            name="clear_theories",
+            description="Wipe the elimination pad and start a fresh hunt.",
+            parameters={"type": "object", "properties": {}},
+            run=ruleout.clear_theories,
         ),
         Tool(
             name="when_changed",

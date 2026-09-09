@@ -25,6 +25,7 @@ reason about.
 """
 from __future__ import annotations
 
+import re
 import subprocess
 from pathlib import Path
 
@@ -159,3 +160,95 @@ def when_changed(repo: str = ".", text: str = "", path: str = "",
     head.append(f"{len(rows)} commit(s). Read the suspect in full with "
                 f"`git -C {p} show <hash>` — the whole diff, not just the message.")
     return "\n".join(head)
+
+
+# ---- the whole history at once, instead of guessing which commits to read ----
+
+_KIND = (
+    ("build/packaging", r"(^|/)(Makefile|CMakeLists|.*\.xcconfig|.*\.pbxproj|"
+                        r"Package\.swift|setup\.py|pyproject\.toml|.*\.gradle|"
+                        r"Dockerfile|.*\.entitlements)$|(^|/)Scripts?/|\.sh$"),
+    ("manifest/config", r"(^|/)(Info\.plist|.*\.plist|.*\.ya?ml|.*\.json|.*\.toml|"
+                        r".*\.ini|.*\.cfg|.*\.conf)$"),
+    ("docs",            r"(^|/)(README|CHANGELOG|DEPLOY\w*|HANDOFF|docs?/).*|\.md$"),
+    ("tests",           r"(^|/)(tests?|spec)/|_test\.|test_"),
+)
+
+
+def _kind_of(path: str) -> str:
+    for name, pat in _KIND:
+        if re.search(pat, path, re.I):
+            return name
+    return "source"
+
+
+def survey(repo: str = ".", since: str = "", until: str = "", limit: int = 200) -> str:
+    """Every commit, oldest first, labelled by WHAT KIND of thing it changed.
+
+    Built 2026-09-09 after three bug-hunt runs failed the same way. The method
+    she is coached to use needs a date it last worked, and in a real repository
+    there often isn't one — so "oldest first, take the row after that date" gave
+    her nothing to anchor on and she took the most recent instead.
+
+    This removes the need for the anchor. Forty-three commits is a readable
+    number; the problem was never the size of the history, it was that she
+    picked three commits by which MESSAGE sounded relevant and re-read them
+    forty times.
+
+    And it labels the kind, because of what the misses have in common: the
+    commit holding the answer changed a BUILD SCRIPT, and she reads source. A
+    fault that survives a clean rebuild usually lives in how the thing is built,
+    stamped or packaged — the files everyone scrolls past.
+    """
+    p = Path(str(repo or ".")).expanduser()
+    if not p.exists():
+        return f"No such directory: {p}"
+    p, note = _find_repo(p)
+    if p is None:
+        return f"No git repository at or below {repo}."
+
+    args = ["log", "--reverse", f"--max-count={max(1, min(int(limit), 500))}",
+            "--date=short", "--pretty=format:@@%h\t%ad\t%s", "--name-only"]
+    if since:
+        args.append(f"--since={since}")
+    if until:
+        args.append(f"--until={until}")
+    ok, out = _git(p, *args, timeout=120)
+    if not ok:
+        return f"git could not run that: {out[:300]}"
+
+    commits, cur = [], None
+    for line in out.splitlines():
+        if line.startswith("@@"):
+            if cur:
+                commits.append(cur)
+            h, d, s = (line[2:].split("\t", 2) + ["", ""])[:3]
+            cur = {"h": h, "d": d, "s": s, "files": []}
+        elif line.strip() and cur is not None:
+            cur["files"].append(line.strip())
+    if cur:
+        commits.append(cur)
+    if not commits:
+        return "No commits in that range."
+
+    lines = []
+    if note:
+        lines.append(note)
+    lines.append(f"ALL {len(commits)} commit(s), oldest first. The KIND column is the "
+                 f"point: a fault that survives a clean rebuild usually lives in how "
+                 f"the thing is BUILT, stamped or packaged, not in the source — and "
+                 f"those are the files everyone scrolls past.")
+    lines.append("")
+    tally = {}
+    for c in commits:
+        kinds = sorted({_kind_of(f) for f in c["files"]}) or ["(no files)"]
+        for k in kinds:
+            tally[k] = tally.get(k, 0) + 1
+        tag = ",".join(kinds)[:28]
+        lines.append(f"  {c['d']}  {c['h']}  [{tag:<28}] {c['s'][:62]}")
+    lines.append("")
+    lines.append("  by kind: " + ", ".join(f"{k} {v}" for k, v in sorted(tally.items())))
+    lines.append("  Read the WHOLE diff of anything build/packaging or manifest/config "
+                 "before trusting a source-level theory — and before trusting the "
+                 "documentation, which describes what someone INTENDED.")
+    return "\n".join(lines)

@@ -181,11 +181,18 @@ MODES = {
         "nudge": "Diagnostic mode: everything you do is being recorded so a "
                  "failure can be reconstructed later. Before reading any code or "
                  "any diff: (1) find a DATE it last worked — a comment, a commit "
-                 "body, a log line; (2) when_changed(text=<that string>) — the TOOL, "
-                 "not a shell command, oldest first with dates; (3) the first "
-                 "commit after the last date it worked is the suspect: read its "
-                 "WHOLE diff. Which commit LOOKS relevant is the trap — 42 "
-                 "`git show`s on three wrong commits is the measured failure.",
+                 "body, a log line. (2) history_survey FIRST — every commit at "
+                 "once, labelled by kind. A fault that survives a clean rebuild "
+                 "lives in BUILD, PACKAGING or MANIFEST files, not the source "
+                 "everyone reads. (3) when_changed(text=<a string from the BROKEN "
+                 "BEHAVIOUR>) to date it. (4) rule_out every theory you kill, "
+                 "with the evidence that killed it — starting with the one the "
+                 "DOCUMENTATION pushes, which is the most likely to be wrong and "
+                 "the least likely to be tested. Name no cause until at least two "
+                 "theories are struck. Measured over three runs: 42 `git show`s on "
+                 "three wrong commits, 11 mentions of the docs' own theory, and "
+                 "nothing ever ruled out. An honest 'I don't know, here is what I "
+                 "eliminated' scores ABOVE a confident wrong cause.",
     },
 }
 DEFAULT_MODE = "balanced"

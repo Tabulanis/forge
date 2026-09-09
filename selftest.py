@@ -744,6 +744,48 @@ def t_path_tools_work_from_where_she_stands():
         os.chdir(here)
     return True
 
+
+def t_history_survey_flags_the_build_commit():
+    """Three failed runs share a shape: she reads SOURCE and scrolls past build
+    scripts, and the commit holding the answer is a build-script change. The
+    survey shows every commit at once labelled by KIND, so a fault that survives
+    a clean rebuild has eight candidates instead of forty-three — and it removes
+    the need for a known-good date, which she never establishes."""
+    from forge.history import survey
+    repo = Path.home() / "merge-tests" / "template" / "repo"
+    if not repo.is_dir():
+        return True
+    out = survey(str(repo))
+    line = [l for l in out.splitlines() if "a1fe588" in l]
+    return bool(line) and "build/packaging" in line[0] and "by kind:" in out
+
+
+def t_a_theory_cannot_be_struck_without_evidence():
+    """Across three runs she ruled out NOTHING — 11 mentions of the theory the
+    project's own docs push, and a confident wrong cause at the end. The answer
+    key scores an honest "I don't know, here is what I eliminated" ABOVE a
+    confident wrong answer, and she has never collected that either. A theory
+    struck without evidence is a theory you just stopped liking, so the pad
+    refuses it."""
+    from forge import ruleout
+    ruleout.clear_theories()
+    try:
+        # Check the EFFECT, not the wording. A first version of this asserted
+        # the refusal text did not contain "RULED OUT" — and the refusal says
+        # "Say what RULED OUT '<theory>'", so a correct refusal failed the test.
+        # Measuring the wrong thing and believing the result, again.
+        ruleout.rule_out("USB matching is wrong", "")          # no evidence
+        if ruleout.enough_ruled_out() or "RULED OUT (" in str(ruleout.open_theories()):
+            return False                                       # nothing may be recorded
+        ruleout.rule_out("USB matching is wrong",
+                         "git show on the matching commit: idVendor unchanged since Aug 6",
+                         standing="the dext never Start()s at all")
+        pad = str(ruleout.open_theories())
+        return ("RULED OUT (1)" in pad and "USB matching" in pad
+                and "STILL STANDING" in pad)
+    finally:
+        ruleout.clear_theories()
+
 # ---------------------------------------------------------------- context
 def t_overhead_counted():
     """The bare 400: schemas + system prompt were invisible, so a turn read 19%
@@ -1057,6 +1099,8 @@ CHECKS = [
     ("bughunt: when_changed finds the repo below", t_when_changed_finds_the_repo_below, False),
     ("bughunt: when_changed is anchored to her workspace", t_when_changed_is_anchored_to_her_workspace, False),
     ("tools: path tools work from where SHE stands", t_path_tools_work_from_where_she_stands, False),
+    ("bughunt: survey flags the build commit", t_history_survey_flags_the_build_commit, False),
+    ("bughunt: no striking a theory without evidence", t_a_theory_cannot_be_struck_without_evidence, False),
     ("record: she can see her own verdicts", t_she_can_see_her_own_record, False),
     ("record: a pattern reaches her unasked", t_a_standing_pattern_reaches_her_unasked, False),
     ("memory: junk never becomes a memory", t_junk_never_becomes_a_memory, False),

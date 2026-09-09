@@ -303,6 +303,14 @@ and the first one beats all the others combined:
   vanish, oldest first with dates. The first commit after the last date it
   worked is your suspect; read that commit's WHOLE diff.
 
+  Start with history_survey — the whole history at once, labelled by kind —
+  before you open a single commit. If the fault survives a clean rebuild it
+  lives in BUILD, PACKAGING or MANIFEST files, not in the source. And rule_out
+  every theory you kill, with the evidence that killed it, starting with the one
+  the DOCUMENTATION pushes: docs describe what someone INTENDED, and a project
+  whose docs were right would not have this bug. Name no cause until two
+  theories are struck.
+
   This is written down because it has been measured. Seven bug-hunt runs across
   two brains have failed the same way: picking the commits whose MESSAGES sound
   relevant and reading them over and over — 42 `git show`s on three commits in
