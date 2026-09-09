@@ -551,6 +551,31 @@ def t_spectrogram_shows_high_frequencies():
     lo, hi = bright(600), bright(15000)
     return SR >= 44100 and hi > 0.5 * lo
 
+
+def t_when_changed_surfaces_the_missed_commit():
+    """The bug-hunt test has been failed 7 times across two brains, always the
+    same way: hunting by which commit's MESSAGE sounds relevant (42 `git show`s
+    on three commits in one run, none of them the answer) and never once asking
+    WHEN it broke. She had been told — the four-step procedure is in her
+    always-on prompt AND repeated as a per-turn nudge. Telling her twice did not
+    work, and she had no git-aware tool at all: every history move went through
+    a shell where the easy thing to type is `git show <looks interesting>`.
+
+    This checks the tool actually surfaces the commit she never reads. If the
+    test repo is absent the check passes rather than failing on a missing
+    fixture."""
+    from forge.history import when_changed
+    repo = Path.home() / "merge-tests" / "template" / "repo"
+    if not repo.is_dir():
+        return True
+    for term in ("stamp", "Info.plist"):
+        out = when_changed(str(repo), text=term, limit=12)
+        if "a1fe588" not in out:
+            return False
+    # and a search that matches nothing must say so plainly, not look empty
+    none = when_changed(str(repo), text="zzz_no_such_string_zzz")
+    return "That is an ANSWER" in none
+
 # ---------------------------------------------------------------- context
 def t_overhead_counted():
     """The bare 400: schemas + system prompt were invisible, so a turn read 19%
@@ -860,6 +885,7 @@ CHECKS = [
     ("self: she can build and use a tool", t_she_can_build_and_use_a_tool, False),
     ("self: an unproven tool never reaches the belt", t_an_unproven_tool_never_reaches_the_belt, False),
     ("ears: the spectrogram shows high frequencies", t_spectrogram_shows_high_frequencies, False),
+    ("bughunt: when_changed surfaces the missed commit", t_when_changed_surfaces_the_missed_commit, False),
     ("superego: evidence is data, not instruction", t_superego_treats_evidence_as_data, False),
     ("toolindex: cannot bypass privacy", t_load_cannot_bypass_privacy, False),
     ("toolindex: retrieval quality + junk refused", t_tool_search_quality, True),

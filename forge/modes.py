@@ -181,17 +181,11 @@ MODES = {
         "nudge": "Diagnostic mode: everything you do is being recorded so a "
                  "failure can be reconstructed later. Before reading any code or "
                  "any diff: (1) find a DATE it last worked — a comment, a commit "
-                 "body, a log line; (2) `git log --oneline --since=<date> -- <the "
-                 "part that broke>`; (3) `git show` the FIRST commit after that "
-                 "date, in full, however boring its message; (4) only then read "
-                 "code. Write each of those four results into FINDINGS.md as you "
-                 "get it. Narrate as you go — say "
-                 "what you're about to try and why, what you expected, and what "
-                 "actually came back, especially when they differ. If a tool "
-                 "errors or returns something odd, quote the actual text rather "
-                 "than paraphrasing it, and say plainly what you can't explain. "
-                 "An unexplained oddity reported honestly is worth more here "
-                 "than a smooth answer that hides it.",
+                 "body, a log line; (2) when_changed(text=<that string>) — the TOOL, "
+                 "not a shell command, oldest first with dates; (3) the first "
+                 "commit after the last date it worked is the suspect: read its "
+                 "WHOLE diff. Which commit LOOKS relevant is the trap — 42 "
+                 "`git show`s on three wrong commits is the measured failure.",
     },
 }
 DEFAULT_MODE = "balanced"

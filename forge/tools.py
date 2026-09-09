@@ -32,7 +32,7 @@ from typing import Callable
 import httpx
 
 from . import (audio_nerve, bioacoustics, browser, business, cad, cortex,
-               datasets, doolittle, frameworks, identity, law, markets,
+               datasets, doolittle, frameworks, history, identity, law, markets,
                medical, news, owntools, persona, sims, toolindex, vault)
 from .codetools import syntax_check
 from .config import load_config
@@ -2501,6 +2501,33 @@ def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provi
                                 "description": "how many headlines (default 25)"}},
                         "required": []},
             run=lambda sources=None, limit=25: news.feed(sources, limit, ws_root=ws.root),
+        ),
+        Tool(
+            name="when_changed",
+            description=(
+                "WHEN did this change? The first move whenever something USED TO "
+                "WORK and now doesn't — before you read a single commit.\n"
+                "text= is git's pickaxe: which commits made that string appear or "
+                "vanish. It is the sharpest question you can ask a history, and it "
+                "beats guessing which commit sounds relevant. path= shows how one "
+                "file changed over time. since=/until= narrow to the window.\n"
+                "Results come back OLDEST FIRST with a date on every line, so if "
+                "you know a date it still worked, the first row after that date is "
+                "your suspect. Then read that commit's WHOLE diff.\n"
+                "Search for a string from the BROKEN BEHAVIOUR — an error message, "
+                "a setting name, a function in the failing path — not for what the "
+                "documentation says the feature is called."),
+            parameters={"type": "object",
+                        "properties": {
+                            "repo": {"type": "string", "description": "path to the repository (default '.')"},
+                            "text": {"type": "string", "description": "string whose appearance/disappearance to find"},
+                            "path": {"type": "string", "description": "a file or directory to follow"},
+                            "since": {"type": "string", "description": "e.g. '2026-08-01' — a date it still worked"},
+                            "until": {"type": "string", "description": "e.g. '2026-08-20'"},
+                            "regex": {"type": "boolean", "description": "treat text as a regex"},
+                            "limit": {"type": "integer", "description": "max commits (default 40)"}},
+                        "required": []},
+            run=history.when_changed,
         ),
         Tool(
             name="build_tool",
