@@ -33,6 +33,7 @@ kept bounded so it never chokes her):
 from __future__ import annotations
 
 import json
+import re
 import time
 from pathlib import Path
 
@@ -300,6 +301,28 @@ def remember_turn(user_text: str, answer_text: str,
         pass   # a missing card must never trouble a finished conversation
 
 
+
+MIN_CARD_CHARS = 40
+
+
+def _unusable(gist: str) -> str:
+    """Why this card is not worth keeping, or "" if it is.
+
+    Each shape here was found in the real store on 2026-09-09, not imagined.
+    """
+    g = " ".join(str(gist or "").split())
+    if len(g) < MIN_CARD_CHARS:
+        return "too thin to recognise later"
+    if re.match(r"^(User|Merge)\s*:\s*\S{0,12}$", g):
+        return "a fragment, not a summary"
+    if re.match(r"^[\d.,%$\s]+$", g):
+        return "just a number"
+    if "TEST-MARKER" in g or g.lower().startswith(("test ", "testing ")):
+        return "a test artefact"
+    if g.endswith((":", "—", "-", ",")):
+        return "truncated mid-sentence"
+    return ""
+
 def _distill(entry: dict) -> str | None:
     """One exchange → one line, via the little model.
 
@@ -381,12 +404,24 @@ def process_queue_once() -> int:
         gist = _distill(entry)
         if gist is None:
             return filed          # librarian's asleep — leave the tray be
-        if gist:
+        # Only KEEP a card that could be recognised later. Measured 2026-09-09:
+        # 141 of 810 stored cards (17%) were unusable — "Repo name: ?",
+        # "Merge: Done. Changes:", "123.45", a leftover TEST-MARKER, and 133
+        # under forty characters. A card too thin to recognise is never
+        # recalled, so it costs nothing to have and something to search past;
+        # and if cards are ever surfaced automatically, junk gets pushed at her.
+        # Better no card than a useless one.
+        text = " ".join(gist.split())[:1200] if gist else ""
+        why = _unusable(text)
+        if why:
+            f.unlink(missing_ok=True)
+            continue
+        if text:
             _append_card_and_vec({
                 "t": entry.get("t", time.time()),
                 "workspace": entry.get("workspace", ""),
                 "session": entry.get("session", ""),
-                "gist": gist.splitlines()[0][:200]})
+                "gist": text})
             filed += 1
         f.unlink(missing_ok=True)
     if filed:

@@ -637,6 +637,39 @@ def t_when_changed_finds_the_repo_below():
             and "searched repo/" in by_text
             and "add the marker" in by_path)
 
+
+def t_junk_never_becomes_a_memory():
+    """Measured on the real store 2026-09-09: 143 of 810 cards (17%) could never
+    have been recognised later — "Repo name: ?", "Merge: Done. Changes:",
+    "123.45", a leftover TEST-MARKER, and 133 under forty characters. A card too
+    thin to recognise is never recalled, so it costs nothing to have and
+    something to search past. It matters more now that a memory may be surfaced
+    without being asked for: junk that just sat there would start being pushed
+    at her. Better no card than a useless one."""
+    from forge.recall import _unusable
+    junk = ["Repo name: ?", "Merge: Done. Changes:", "123.45",
+            "TEST-MARKER: TEA-NOW", "Storyweave", "   ", "42",
+            "Settled. Blades solid from bore to r=20.5, hub and blades one piece,"]
+    real = ["Render box took 5m37s, created a 3s video self_filling_coffee.mp4 in "
+            "Merge/, chose the cozy coffee cup filling scene.",
+            "The cause is in DNPDriver/Info.plist: remove CFBundleIdentifier lines "
+            "from all 8 personality dictionaries."]
+    return (all(_unusable(g) for g in junk)
+            and not any(_unusable(g) for g in real))
+
+
+def t_card_store_stays_aligned():
+    """The vector file is row-aligned to the card file. Pruning 143 cards
+    without pruning their vectors would have shifted every later memory onto
+    the wrong text and silently mis-attributed her whole history."""
+    from forge.embed import DIM
+    c = Path.home() / ".forge" / "memory-cards.jsonl"
+    v = Path.home() / ".forge" / "card-vectors.f32"
+    if not (c.exists() and v.exists()):
+        return True
+    n = sum(1 for _ in open(c))
+    return v.stat().st_size == n * DIM * 4
+
 # ---------------------------------------------------------------- context
 def t_overhead_counted():
     """The bare 400: schemas + system prompt were invisible, so a turn read 19%
@@ -950,6 +983,8 @@ CHECKS = [
     ("bughunt: when_changed finds the repo below", t_when_changed_finds_the_repo_below, False),
     ("record: she can see her own verdicts", t_she_can_see_her_own_record, False),
     ("record: a pattern reaches her unasked", t_a_standing_pattern_reaches_her_unasked, False),
+    ("memory: junk never becomes a memory", t_junk_never_becomes_a_memory, False),
+    ("memory: the card store stays aligned", t_card_store_stays_aligned, False),
     ("superego: evidence is data, not instruction", t_superego_treats_evidence_as_data, False),
     ("toolindex: cannot bypass privacy", t_load_cannot_bypass_privacy, False),
     ("toolindex: retrieval quality + junk refused", t_tool_search_quality, True),
