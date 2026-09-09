@@ -32,7 +32,7 @@ import httpx
 
 from . import (audio_nerve, bioacoustics, browser, business, cad, cortex,
                datasets, doolittle, frameworks, identity, law, markets,
-               medical, persona, sims, toolindex, vault)
+               medical, news, persona, sims, toolindex, vault)
 from .codetools import syntax_check
 from .config import load_config
 from .dataops import data_ops, date_calc
@@ -2437,6 +2437,24 @@ def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provi
                 "required": ["kind"],
             },
             run=lambda kind, params=None: markets.calc(kind, params),
+        ),
+        Tool(
+            name="news_feed",
+            description=(
+                "Recent headlines from her news sources — world, science and "
+                "technology by default, timestamped and grouped by source. A "
+                "PROJECT can add its own sources in merge-tools/feeds.json and "
+                "they appear on top automatically while she is working there "
+                "(MoneyLab adds five crypto outlets that way). Use it to see what "
+                "has actually happened rather than guessing from memory."),
+            parameters={"type": "object",
+                        "properties": {
+                            "sources": {"type": "array", "items": {"type": "string"},
+                                "description": "limit to named sources; omit for all"},
+                            "limit": {"type": "integer",
+                                "description": "how many headlines (default 25)"}},
+                        "required": []},
+            run=lambda sources=None, limit=25: news.feed(sources, limit, ws_root=ws.root),
         ),
         Tool(
             name="business_framework",

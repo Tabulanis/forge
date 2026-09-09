@@ -293,8 +293,8 @@ def t_no_project_tools_in_her_core():
     # scanner, the anomaly casebook.
     project_only = {"paper_market", "market_regime", "walk_forward",
                     "cross_map", "signal_scan", "find_third_party", "flag_xfile",
-                    "list_xfiles", "news_feed"}
-    hers = {"markets_calc", "business_calc", "business_framework"}
+                    "list_xfiles"}
+    hers = {"markets_calc", "business_calc", "business_framework", "news_feed"}
     return not (names & project_only) and hers <= names
 
 
@@ -348,6 +348,26 @@ def t_audio_is_not_offered_as_a_signal_answer():
     out = str(D.deduce_meaning([{"call": "a", "cues": {"threat": True}}],
                                title="guard", calls_file="/tmp/anything.json"))
     return "can't answer the signal question" in out
+
+
+def t_a_project_can_add_its_own_news_sources():
+    """Reading the news is a general capability and hers everywhere; WHICH
+    sources matter is the project's business. The whole tool went to MoneyLab
+    on 2026-09-08 because its five feeds were crypto — throwing out the
+    capability to move the configuration. The tool is hers now and a project
+    layers its own sources on top via merge-tools/feeds.json."""
+    from forge import news
+    d = Path(tempfile.mkdtemp())
+    (d / "merge-tools").mkdir()
+    (d / "merge-tools" / "feeds.json").write_text('{"a_project_feed": "https://example.invalid/rss"}')
+    hers = set(news.feeds_for())
+    there = set(news.feeds_for(d))
+    bad = Path(tempfile.mkdtemp())
+    (bad / "merge-tools").mkdir()
+    (bad / "merge-tools" / "feeds.json").write_text("{ not json at all")
+    return (hers and "a_project_feed" not in hers
+            and there == hers | {"a_project_feed"}
+            and set(news.feeds_for(bad)) == hers)     # a bad file must not break her news
 
 # ---------------------------------------------------------------- context
 def t_overhead_counted():
@@ -650,6 +670,7 @@ CHECKS = [
     ("separation: a project ships its own tools", t_a_project_can_ship_its_own_tools, False),
     ("doolittle: the call sheet joins field notes", t_call_sheet_joins_field_notes, False),
     ("doolittle: audio is not a signal answer", t_audio_is_not_offered_as_a_signal_answer, False),
+    ("separation: a project adds its own news sources", t_a_project_can_add_its_own_news_sources, False),
     ("toolindex: cannot bypass privacy", t_load_cannot_bypass_privacy, False),
     ("toolindex: retrieval quality + junk refused", t_tool_search_quality, True),
     ("embedder: batches large inputs", t_embedder_batches, True),
