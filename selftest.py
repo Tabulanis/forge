@@ -639,21 +639,25 @@ def t_when_changed_finds_the_repo_below():
 
 
 def t_junk_never_becomes_a_memory():
-    """Measured on the real store 2026-09-09: 143 of 810 cards (17%) could never
-    have been recognised later — "Repo name: ?", "Merge: Done. Changes:",
-    "123.45", a leftover TEST-MARKER, and 133 under forty characters. A card too
-    thin to recognise is never recalled, so it costs nothing to have and
-    something to search past. It matters more now that a memory may be surfaced
-    without being asked for: junk that just sat there would start being pushed
-    at her. Better no card than a useless one."""
+    """A card is dropped only when it carries NOTHING that could ever be looked
+    up. The first attempt at this filtered on LENGTH — under forty characters,
+    bin it — and was caught within the hour, because short is not worthless. It
+    would have deleted his address, his graphics card, a budget cap, a project
+    codename, two conflicting heights for a story character (the contradiction
+    being exactly what you want to find later), and "Keep calling it the workshop, not the lab."
+    Content is the test, not size: 30 of 810 go, not 143."""
     from forge.recall import _unusable
-    junk = ["Repo name: ?", "Merge: Done. Changes:", "123.45",
-            "TEST-MARKER: TEA-NOW", "Storyweave", "   ", "42",
-            "Settled. Blades solid from bore to r=20.5, hub and blades one piece,"]
-    real = ["Render box took 5m37s, created a 3s video self_filling_coffee.mp4 in "
-            "Merge/, chose the cozy coffee cup filling scene.",
-            "The cause is in DNPDriver/Info.plist: remove CFBundleIdentifier lines "
-            "from all 8 personality dictionaries."]
+    junk = ["123.45", "TEST-MARKER: TEA-NOW", "coffee", "done", "ready",
+            "User: hey", "Merge: Ready.", "17 + 4 x 3 = 29", "```swift", "   "]
+    # The first version of this filtered on LENGTH and threw away every one of
+    # these within the hour: his address, his graphics card, two conflicting
+    # heights for a character (the contradiction is the useful part), a budget,
+    # a codename, and something he said that he would not want deleted.
+    real = ["Riverton NT 40881", "Card: RTX 4090", "Logan is six feet tall.",
+            "Logan is 5 feet 10 inches tall.", "Project codename: GREEN-HERON-4",
+            "Hard budget cap set at $2,300.", "User: Keep calling it the workshop, not the lab.",
+            "User: Morning — how did the overnight run go?", "dahlia. It's more recognizable.",
+            "Render box took 5m37s, created a 3s video self_filling_coffee.mp4."]
     return (all(_unusable(g) for g in junk)
             and not any(_unusable(g) for g in real))
 

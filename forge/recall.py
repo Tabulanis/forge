@@ -302,26 +302,54 @@ def remember_turn(user_text: str, answer_text: str,
 
 
 
-MIN_CARD_CHARS = 40
+# A card is dropped only when it carries NOTHING that could ever be looked up.
+#
+# The first version of this filtered on LENGTH — under forty characters, bin it
+# — and that was a category error caught within the hour. Short is not
+# worthless. It threw away "Riverton NT 40881" (an address), "Card: RTX 4090",
+# "Logan is six feet tall" and a second card saying 5 foot 10 (a contradiction
+# in the story canon, which is exactly the kind of thing you want to find
+# later), "Project codename: GREEN-HERON-4", "Hard budget cap set at $2,300",
+# and "User: Keep calling it the workshop, not the lab."
+#
+# So the test is CONTENT, not size. Anything holding a name, a number that
+# means something, a path, a decision or a preference is kept however short.
+# What goes is what could never be looked up: a bare filler word, a test
+# marker, an arithmetic result from a harness run, a greeting with nothing in
+# it, a fragment cut mid-sentence.
+
+_FILLER = {"done", "ready", "coffee", "denied", "hey", "hello", "hi", "ok",
+           "okay", "yes", "no", "thanks", "start fresh", "later, not now",
+           "seen it, seen it", "merge confirmed.", "merge completed. ready for next step.",
+           "none in exchange.", "no match found in provided text."}
 
 
 def _unusable(gist: str) -> str:
-    """Why this card is not worth keeping, or "" if it is.
-
-    Each shape here was found in the real store on 2026-09-09, not imagined.
-    """
+    """Why this card could never be looked up, or "" if it could."""
     g = " ".join(str(gist or "").split())
-    if len(g) < MIN_CARD_CHARS:
-        return "too thin to recognise later"
-    if re.match(r"^(User|Merge)\s*:\s*\S{0,12}$", g):
-        return "a fragment, not a summary"
-    if re.match(r"^[\d.,%$\s]+$", g):
-        return "just a number"
-    if "TEST-MARKER" in g or g.lower().startswith(("test ", "testing ")):
+    low = g.lower().strip(" .!?:")
+    if not low:
+        return "empty"
+    if "TEST-MARKER" in g.upper():
         return "a test artefact"
-    if g.endswith((":", "—", "-", ",")):
-        return "truncated mid-sentence"
+    if re.fullmatch(r"[\d.,%$+×x*/=\s-]+", g):
+        return "just an arithmetic result"
+    if re.fullmatch(r"(user|merge)\s*[:,]?\s*(" + "|".join(map(re.escape, _FILLER)) + r")\W*", low):
+        return "a greeting with nothing in it"
+    if low in _FILLER:
+        return "a filler word"
+    if re.fullmatch(r"```\w*", g):
+        return "a stray code fence"
+    # anything with a capitalised name, a path, a figure with units, or more
+    # than a handful of real words is worth keeping however short it is
+    if (re.search(r"[A-Z][a-z]{2,}", g) or "/" in g or re.search(r"\d", g)
+            or len(low.split()) >= 5):
+        return ""
+    # Deliberately NOT dropping short-but-possibly-meaningful lines. "plumbing
+    # connected" is two words and might mean something; after throwing away his
+    # address and his graphics card on a length rule, anything arguable stays.
     return ""
+
 
 def _distill(entry: dict) -> str | None:
     """One exchange → one line, via the little model.
