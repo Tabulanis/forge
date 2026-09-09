@@ -177,6 +177,29 @@ def _steps(p: dict) -> int:
     return int(draft_steps.get() or p["steps"])
 
 
+# How the continuation mask opens up after the pinned frames. 0 = held, 1 = free.
+#
+# OFF, and off on evidence. Borrowed 2026-09-09 from a MiniMax H3 workflow that
+# drives its continuation with a half-strength mask instead of a binary one, on
+# the reasoning that stepping from "locked" to "free" in a single frame gives
+# lighting and motion a cliff to fall off. The reasoning is fine. The clip did
+# not agree.
+#
+# Measured on the same tail, same seed, same prompt, 33 frames with 8 pinned:
+#   hard 0->1 : change at the seam 6.4 against a median of 10.5 for the rest
+#               of the clip — ratio 0.61
+#   with ramp : 8.3 against 12.2 — ratio 0.68
+# The seam is QUIETER than ordinary motion either way, so there was no cliff to
+# smooth, and the ramp was very slightly worse on the one thing it was meant to
+# improve. One clip and one seed is not proof of harm, but it is the absence of
+# any proof of benefit, and shipping an unproven change is the habit that keeps
+# costing us.
+#
+# Kept because it is one edit from live if a clip ever DOES show a hard seam:
+# set this to (0.25, 0.5, 0.75). The frame arithmetic is verified for pins of
+# 1, 4, 8 and 16, including the case where only one new frame remains.
+RAMP_VALUES: tuple[float, ...] = ()
+
 RESTYLE = {
     "unet": "Wan2.1_14B_VACE-Q6_K.gguf", "clip": "umt5_xxl_fp8_e4m3fn_scaled.safetensors", "vae": "wan_2.1_vae.safetensors",
     "lora": "Wan21_T2V_14B_lightx2v_cfg_step_distill_lora_rank64.safetensors",
@@ -664,7 +687,28 @@ def _vace_extend_workflow(prompt: str, seed: int, width: int, height: int, frame
         if pin:
             w["c0"] = {"class_type": "ImageBatch", "inputs": {"image1": pin, "image2": filler}}
             w["mb0"] = {"class_type": "RepeatImageBatch", "inputs": {"image": ["mk0", 0], "amount": n_pin}}
-            w["mc"] = {"class_type": "ImageBatch", "inputs": {"image1": ["mb0", 0], "image2": ["mb1", 0]}}
+            # 2026-09-09: the mask used to step straight from 0 (held) to 1
+            # (free) in a single frame, so the model was locked on one frame and
+            # unconstrained on the next — every seam was a hard edge for lighting
+            # and motion to jump across. Borrowed from a MiniMax H3 workflow,
+            # which drives its continuation with a HALF mask rather than a
+            # binary one: give the boundary a short ramp so the first few new
+            # frames are only partly free and can reconcile with what came
+            # before. Frame COUNT is unchanged — this only regrades the mask.
+            ramp = [v for v in RAMP_VALUES if 0.0 < v < 1.0][:max(0, n_new - 1)]
+            if ramp:
+                prev = ["mb0", 0]
+                for i, v in enumerate(ramp):
+                    w[f"mr{i}"] = {"class_type": "SolidMask",
+                                   "inputs": {"value": float(v), "width": width, "height": height}}
+                    w[f"mri{i}"] = {"class_type": "MaskToImage", "inputs": {"mask": [f"mr{i}", 0]}}
+                    w[f"mrb{i}"] = {"class_type": "ImageBatch",
+                                    "inputs": {"image1": prev, "image2": [f"mri{i}", 0]}}
+                    prev = [f"mrb{i}", 0]
+                w["mb1"]["inputs"]["amount"] = n_new - len(ramp)
+                w["mc"] = {"class_type": "ImageBatch", "inputs": {"image1": prev, "image2": ["mb1", 0]}}
+            else:
+                w["mc"] = {"class_type": "ImageBatch", "inputs": {"image1": ["mb0", 0], "image2": ["mb1", 0]}}
             control, masks = ["c0", 0], ["mc", 0]
         else:
             control, masks = filler, ["mb1", 0]
