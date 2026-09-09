@@ -705,6 +705,45 @@ def t_when_changed_is_anchored_to_her_workspace():
         os.chdir(here)
     return "the beta commit" in by_rel and "the beta commit" in by_none
 
+
+def t_path_tools_work_from_where_she_stands():
+    """The bulletproofing check, and the one that would have saved two runs.
+
+    Three broken versions of when_changed shipped in one day, each declared
+    done, because it was only ever tested the way I call things: the module
+    function, from my own directory, with an absolute path. She calls tools
+    through the Tool object, from HER workspace, with a RELATIVE path, from
+    whatever directory the process happens to be in. Different frame, and only
+    hers counts.
+
+    So this exercises every path-taking tool the way SHE uses it, from a
+    deliberately foreign cwd. A tool that cannot find a workspace-relative file
+    is worthless in her hands however well it works in mine."""
+    import os
+    from forge.tools import build_tools, Workspace
+    d = Path(tempfile.mkdtemp())
+    (d / "sub").mkdir()
+    (d / "sub" / "probe.txt").write_text("PROBE_CONTENT_MARKER\n" * 3)
+    T = {t.name: t for t in build_tools(Workspace(d))}
+    cases = [("read_file", {"path": "sub/probe.txt"}, "PROBE_CONTENT_MARKER"),
+             ("list_dir", {"path": "sub"}, "probe.txt"),
+             ("search", {"pattern": "PROBE_CONTENT_MARKER", "path": "sub"}, "probe.txt"),
+             ("write_file", {"path": "sub/made.txt", "content": "x"}, "made.txt")]
+    here = os.getcwd()
+    try:
+        os.chdir("/tmp")                      # deliberately not her workspace
+        for name, args, want in cases:
+            if name not in T:
+                continue
+            out = str(T[name].run(**args))
+            if want not in out:
+                return False
+            if "No such" in out or "outside the workspace" in out:
+                return False
+    finally:
+        os.chdir(here)
+    return True
+
 # ---------------------------------------------------------------- context
 def t_overhead_counted():
     """The bare 400: schemas + system prompt were invisible, so a turn read 19%
@@ -1017,6 +1056,7 @@ CHECKS = [
     ("bughunt: when_changed surfaces the missed commit", t_when_changed_surfaces_the_missed_commit, False),
     ("bughunt: when_changed finds the repo below", t_when_changed_finds_the_repo_below, False),
     ("bughunt: when_changed is anchored to her workspace", t_when_changed_is_anchored_to_her_workspace, False),
+    ("tools: path tools work from where SHE stands", t_path_tools_work_from_where_she_stands, False),
     ("record: she can see her own verdicts", t_she_can_see_her_own_record, False),
     ("record: a pattern reaches her unasked", t_a_standing_pattern_reaches_her_unasked, False),
     ("memory: junk never becomes a memory", t_junk_never_becomes_a_memory, False),
