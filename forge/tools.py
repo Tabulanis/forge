@@ -1991,6 +1991,14 @@ def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provi
                                 "description": "how many sources to look for, 2-8 (nmf only, default 4)"},
                             "method": {"type": "string",
                                 "description": "'nmf' (default) or 'hpss'"},
+                            "depth": {"type": "string",
+                                "description": "'fast' (default) or 'deep'. Fast answers in "
+                                               "seconds and is right for a first look or a "
+                                               "clean mixture; deep uses four times the time "
+                                               "resolution and three times the iterations, for "
+                                               "when sources overlap closely and the answer "
+                                               "matters more than the wait (measured: 11s vs "
+                                               "65s on five minutes of audio)."},
                             "max_sec": {"type": "number",
                                 "description": "seconds to analyse (default 60)"}},
                         "required": ["source"]},

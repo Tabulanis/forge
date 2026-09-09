@@ -224,6 +224,58 @@ def t_shelf_survived_the_move():
     dsets = len(json.loads(cat.read_text())) if cat.exists() else 0
     return sims >= 17 and dsets >= 4
 
+
+def t_separation_actually_separates():
+    """Ground truth, not eyeballing. A steady 440 Hz tone plus a click every
+    half second must come back as one tonal part and one bursty part. The first
+    NMF attempt passed inspection and failed this: from a random start every
+    component landed on the loud tone. A later 'fast' mode passed the LABELS and
+    returned noise, because with no window overlap the transform is not
+    invertible. Both are caught here."""
+    import numpy as np, wave, warnings
+    from forge import audio_nerve as AN
+    SR = AN.SR
+    d = Path(tempfile.mkdtemp())
+    t = np.arange(int(SR * 4)) / SR
+    tone = sum(np.sin(2 * np.pi * 440 * h * t) / h for h in (1, 2, 3)) * 0.35
+    clicks = np.zeros_like(t)
+    rng = np.random.default_rng(1)
+    for c in np.arange(0.25, 4.0, 0.5):
+        i = int(c * SR)
+        clicks[i:i + 180] += rng.standard_normal(180) * np.linspace(1, 0, 180)
+    mix = tone + clicks * 0.9
+    mix /= np.abs(mix).max()
+    src = d / "mix.wav"
+    with wave.open(str(src), "wb") as w:
+        w.setnchannels(1); w.setsampwidth(2); w.setframerate(SR)
+        w.writeframes((mix * 32767).astype("<i2").tobytes())
+
+    def read(p):
+        with wave.open(str(p), "rb") as w:
+            return np.frombuffer(w.readframes(w.getnframes()),
+                                 dtype="<i2").astype(np.float32) / 32768
+
+    for depth in ("fast", "deep"):
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", UserWarning)   # NOLA must not fire
+            out = AN.separate_sounds(str(src), voices=2, method="nmf", depth=depth)
+        paths = [Path(l.split("-> ")[1].strip()) for l in out.splitlines() if "-> " in l]
+        if len(paths) != 2:
+            return False
+        tonal = bursty = False
+        for p in paths:
+            x = read(p)
+            m = np.abs(np.fft.rfft(x * np.hanning(len(x))))
+            m = m / (m.sum() or 1)
+            if float(np.sort(m)[-40:].sum()) > 0.5:
+                tonal = True
+            e = np.abs(x[:len(x) // 256 * 256]).reshape(-1, 256).max(axis=1)
+            if float(e.std() / (e.mean() + 1e-9)) > 3:
+                bursty = True
+        if not (tonal and bursty):
+            return False
+    return True
+
 # ---------------------------------------------------------------- context
 def t_overhead_counted():
     """The bare 400: schemas + system prompt were invisible, so a turn read 19%
@@ -542,6 +594,7 @@ CHECKS = [
     ("data: card vectors stay row-aligned", t_card_vectors_stay_row_aligned, False),
     ("separation: shelf is not inside her source", t_shelf_is_not_in_her_source, False),
     ("separation: the shelf survived the move", t_shelf_survived_the_move, False),
+    ("ears: separation actually separates", t_separation_actually_separates, False),
     ("toolindex: cannot bypass privacy", t_load_cannot_bypass_privacy, False),
     ("toolindex: retrieval quality + junk refused", t_tool_search_quality, True),
     ("embedder: batches large inputs", t_embedder_batches, True),

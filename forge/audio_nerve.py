@@ -441,10 +441,11 @@ def _nmf(V, k: int, iters: int = 300):
     return W, H
 
 
-def _soft_mask_audio(Z, part, total):
+def _soft_mask_audio(Z, part, total, noverlap=None):
     """Rebuild one component's audio from the ORIGINAL complex STFT."""
+    noverlap = _SEP_NOVERLAP if noverlap is None else noverlap
     mask = part / (total + 1e-9)
-    _, x = istft(Z * mask, SR, nperseg=_SEP_NPERSEG, noverlap=_SEP_NOVERLAP)
+    _, x = istft(Z * mask, SR, nperseg=_SEP_NPERSEG, noverlap=noverlap)
     return np.asarray(x, dtype=np.float32)
 
 
@@ -453,7 +454,7 @@ _SEP_NOVERLAP = 1536
 
 
 def separate_sounds(source: str, voices: int = 4, max_sec: float = DEFAULT_MAX_SEC,
-                    method: str = "nmf") -> str:
+                    method: str = "nmf", depth: str = "fast") -> str:
     """Pull a mixture apart into separate sounds she can study one at a time.
 
     method 'nmf'  — find `voices` recurring spectral shapes and split by them.
@@ -469,7 +470,22 @@ def separate_sounds(source: str, voices: int = 4, max_sec: float = DEFAULT_MAX_S
     heard = len(sig) / SR
     sig = sig / (np.abs(sig).max() or 1)
 
-    f, tt, Z = stft(sig, SR, nperseg=_SEP_NPERSEG, noverlap=_SEP_NOVERLAP)
+    # Fast vs deep. Measured on this machine: every other ear tool answers in
+    # well under two seconds, so only this one earns a knob. Factorisation is
+    # the cost — 43s on five minutes of audio at full resolution. Fast steps the
+    # window along in bigger strides and iterates less; it finds the same
+    # sources, it just draws them more coarsely. Deep is for when the answer
+    # matters more than the wait.
+    deep = str(depth).lower().startswith("d")
+    # Overlap is not optional: with none at all the transform is not invertible
+    # (scipy says so, NOLA), and the rebuilt audio came back as noise while the
+    # LABELS still looked right — a fast mode that quietly returns broken files
+    # is worse than no fast mode. Half-overlap is the cheapest setting that
+    # still inverts cleanly.
+    hop = _SEP_NPERSEG // (4 if deep else 2)
+    iters = 300 if deep else 90
+    f, tt, Z = stft(sig, SR, nperseg=_SEP_NPERSEG,
+                    noverlap=_SEP_NPERSEG - hop)
     V = np.abs(Z).astype(np.float32)
 
     parts, names = [], []
@@ -483,7 +499,7 @@ def separate_sounds(source: str, voices: int = 4, max_sec: float = DEFAULT_MAX_S
         # Factor the SQUARE ROOT of the magnitudes. On the linear magnitude a
         # loud tone dwarfs a quiet click and takes every component with it;
         # compressing first lets a quiet broadband source compete for one.
-        W, H = _nmf(np.sqrt(V), k)
+        W, H = _nmf(np.sqrt(V), k, iters=iters)
         order = np.argsort(-(W.sum(axis=0) * H.sum(axis=1)))    # loudest first
         for n, i in enumerate(order, 1):
             comp = np.outer(W[:, i], H[i, :]) ** 2              # back to magnitude
@@ -502,7 +518,7 @@ def separate_sounds(source: str, voices: int = 4, max_sec: float = DEFAULT_MAX_S
     safe = re.sub(r"[^A-Za-z0-9_-]+", "_", label)[:34]
     written = []
     for i, part in enumerate(parts, 1):
-        x = _soft_mask_audio(Z, part, total)
+        x = _soft_mask_audio(Z, part, total, noverlap=_SEP_NPERSEG - hop)
         x = x / (np.abs(x).max() or 1)
         wav = RENDERS / f"{safe}-part{i}.wav"
         _write_wav(wav, x)
@@ -511,7 +527,8 @@ def separate_sounds(source: str, voices: int = 4, max_sec: float = DEFAULT_MAX_S
     pic = _separation_picture(V, parts, names, heard, RENDERS / f"{safe}-separated.png")
 
     lines = [f"Pulled {label} apart into {len(parts)} part(s) "
-             f"({heard:.1f}s analysed, method={method}).", str(pic)]
+             f"({heard:.1f}s analysed, method={method}, depth={'deep' if deep else 'fast'}).",
+             str(pic)]
     for n, (nm, w) in enumerate(zip(names, written), 1):
         lines.append(f"  {n}. {nm} -> {w}")
     lines.append("look_at_image the picture to SEE the split; each .wav is real "
