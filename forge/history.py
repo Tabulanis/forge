@@ -248,7 +248,52 @@ def survey(repo: str = ".", since: str = "", until: str = "", limit: int = 200) 
         lines.append(f"  {c['d']}  {c['h']}  [{tag:<28}] {c['s'][:62]}")
     lines.append("")
     lines.append("  by kind: " + ", ".join(f"{k} {v}" for k, v in sorted(tally.items())))
-    lines.append("  Read the WHOLE diff of anything build/packaging or manifest/config "
-                 "before trusting a source-level theory — and before trusting the "
-                 "documentation, which describes what someone INTENDED.")
+
+    # A closing paragraph of advice is not enough. Measured across four runs
+    # (2026-09-09): she opens with this survey, reads the advice, then reads
+    # twelve source files and names a cause anyway — `when_changed` used ZERO
+    # times, `rule_out` ZERO times, and run 4 ended by EDITING the repo to
+    # apply a confidently wrong fix. Her own code already carries the lesson
+    # from an earlier round: a rule in the system prompt does not reach the
+    # moment of action. So the survey now does the shortlisting itself and
+    # hands back the literal next commands instead of describing them.
+    shortlist = [c for c in commits
+                 if any(_kind_of(f) in ("build/packaging", "manifest/config")
+                        for f in c["files"])]
+    lines.append("")
+    if shortlist:
+        lines.append(f"  THE SHORT LIST — {len(shortlist)} commit(s) touched how this is "
+                     f"BUILT, STAMPED or PACKAGED. A fault that survives a clean rebuild "
+                     f"lives here, and these are the files everyone scrolls past:")
+        # Print the WHOLE short list. The first version of this capped the
+        # display at 12 — and on the very repository this was built for, the
+        # guilty commit sits at position 13 of 19. A helper that looks right
+        # and silently hides the answer is worse than no helper. Only a truly
+        # unwieldy list gets cut, and then it says so loudly.
+        for c in shortlist[:60]:
+            lines.append(f"    {c['d']}  {c['h']}  {c['s'][:64]}")
+        if len(shortlist) > 60:
+            lines.append(f"    … {len(shortlist) - 60} MORE NOT SHOWN — narrow with "
+                         f"since=/until= and run this again; do not assume the cause "
+                         f"is in the part you can see.")
+        lines.append("")
+        lines.append("  DO THESE NEXT, IN THIS ORDER. Do not read source files first —")
+        lines.append("  that is the move that has failed this job four times running.")
+        # NOT show_commit — no such tool. She does this with run_command, and
+        # naming a tool that does not exist is the exact mistake that burned
+        # two 45-minute runs earlier today.
+        lines.append(f"    1. run_command('git show {shortlist[0]['h']}')   "
+                     f"— and every other hash on the short list. The WHOLE diff.")
+        lines.append("    2. when_changed(text='<a literal string from the BROKEN "
+                     "BEHAVIOUR>') — the error text, the setting name, the symptom. "
+                     "This dates the break. You have not run it yet.")
+        lines.append("    3. rule_out('<theory>', because='<the evidence that killed "
+                     "it>') — starting with whatever THE DOCUMENTATION claims, which "
+                     "is the least-tested theory in any repository.")
+        lines.append("    Name no cause until at least TWO theories are struck off. "
+                     "'I don't know, here is what I eliminated' scores ABOVE a "
+                     "confident wrong cause, and costs nobody a wrong fix.")
+    else:
+        lines.append("  No build/packaging or manifest commit in this range — widen it "
+                     "before falling back to a source-level theory.")
     return "\n".join(lines)

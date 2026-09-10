@@ -1150,8 +1150,53 @@ def t_superego_retries_an_empty_verdict():
     return superego_ask(m, "ACTIONS: (none)\nANSWER: x") == "" and m.calls == 2
 
 
+def t_survey_hides_no_candidate():
+    """The commit survey must not hide a build/manifest commit behind a cap.
+
+    Measured 2026-09-09 on the printer-bug repo the tool was written for: the
+    first version capped the short list display at 12 rows, and the guilty
+    commit sits at position 13 of 19. It would have hidden the answer while
+    looking like it was helping.
+
+    Synthetic repo here, so the position is one I chose and the check does not
+    depend on a repository outside this one.
+    """
+    import os, subprocess, tempfile
+    from pathlib import Path
+    from forge import history
+
+    d = Path(tempfile.mkdtemp())
+
+    def git(*a):
+        subprocess.run(["git", *a], cwd=d, capture_output=True,
+                       env={"PATH": os.environ.get("PATH", ""),
+                            "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
+                            "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t",
+                            "HOME": str(d)})
+
+    git("init", "-q")
+    # 20 manifest commits; the one that matters is deliberately late.
+    target = None
+    for i in range(20):
+        (d / f"conf{i}.yaml").write_text(f"k: {i}\n")
+        git("add", "-A")
+        git("commit", "-q", "-m", f"config change {i}")
+        if i == 15:
+            target = subprocess.run(["git", "rev-parse", "--short", "HEAD"],
+                                    cwd=d, capture_output=True, text=True).stdout.strip()
+    out = history.survey(str(d), limit=200)
+    if "THE SHORT LIST" not in out:
+        return False
+    short = out[out.index("THE SHORT LIST"):]
+    # the late commit must be visible, and nothing may be silently dropped
+    return bool(target) and target in short and "NOT SHOWN" not in short
+
+
 # ------------------------------------------------------------------- main
 CHECKS = [
+    ("history: the survey hides no candidate commit",
+     t_survey_hides_no_candidate, False),
+
     ("superego: an empty verdict gets one nudged retry",
      t_superego_retries_an_empty_verdict, False),
 
