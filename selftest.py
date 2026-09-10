@@ -1099,8 +1099,62 @@ def t_forensic_redacts():
     return forensic._redact("hunter2", "password") == "[redacted]"
 
 
+def t_superego_retries_an_empty_verdict():
+    """An empty verdict must earn a second try before the gate fails open.
+
+    Measured 2026-09-09: the reviewer returned ZERO characters with
+    finish_reason "stop", five identical runs at temperature 0, and raising
+    max_tokens 80 -> 400 changed nothing. Not a content refusal — the same
+    shape of answer about a corporation did it too, one about a government did
+    not. Because the gate fails open, that answer shipped unreviewed and the
+    ledger only said "malformed". One trailing newline or a little temperature
+    breaks it, so nothing gets one nudged retry.
+
+    Stubbed on purpose: no model, so this runs in the ordinary suite.
+    """
+    from forge.agent import superego_ask
+
+    class Reply:
+        def __init__(self, text): self.text = text
+
+    class Flaky:
+        """Empty first, like the real one did. Answers when nudged."""
+        def __init__(self): self.calls = []
+
+        def complete(self, system, messages, tools, **kw):
+            self.calls.append((messages[0]["content"], kw.get("extra_body", {})))
+            return Reply("" if len(self.calls) == 1 else "VERDICT: pass")
+
+    class Mute:
+        """Never answers. Must give up, not loop, and not raise."""
+        def __init__(self): self.calls = 0
+
+        def complete(self, system, messages, tools, **kw):
+            self.calls += 1
+            return Reply("")
+
+    f = Flaky()
+    if superego_ask(f, "ACTIONS: (none)\nANSWER: x") != "VERDICT: pass":
+        return False
+    if len(f.calls) != 2:
+        return False
+    # the retry must actually differ, or it is just the same greedy decode again
+    first_digest, first_body = f.calls[0]
+    retry_digest, retry_body = f.calls[1]
+    if retry_digest == first_digest or "temperature" not in retry_body:
+        return False
+    if "temperature" in first_body:
+        return False            # the first pass stays deterministic
+
+    m = Mute()
+    return superego_ask(m, "ACTIONS: (none)\nANSWER: x") == "" and m.calls == 2
+
+
 # ------------------------------------------------------------------- main
 CHECKS = [
+    ("superego: an empty verdict gets one nudged retry",
+     t_superego_retries_an_empty_verdict, False),
+
     ("context: schema+prompt counted", t_overhead_counted, False),
     ("context: force-compaction shrinks the big turn", t_force_compaction_shrinks, False),
     ("superego: evidence not starved", t_evidence_not_starved, False),

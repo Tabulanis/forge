@@ -216,9 +216,73 @@ respectfully, in its own terms, is never the error.
 Bounce when a belief, a story or a popularity is presented AS reality. Pass when
 it is reported as what it is.
 
+WHAT A BELIEF CLAIMS IS NOT A FACT. WHAT A BELIEF DID IS. Its effects in the
+world are historical, sociological and measurable, and those are checkable facts
+like any other. Being respectful about a belief never licenses being vague about
+its record.
+
+  · The failure to watch for is the NON-ANSWER: "it has been a force for both
+    good and ill in complex ways", "there are many perspectives", "it depends".
+    That is not neutrality. Refusing to be specific protects an institution
+    from its own record, and it is a bounce when the answer had the specifics
+    available and withheld them.
+  · Softening a documented harm and inflating an undocumented benefit are the
+    same bounce. So are the reverse: playing down a documented benefit, or
+    charging a harm that the evidence does not carry.
+  · The test is EQUAL SPECIFICITY, not equal airtime. If one side of a question
+    gets named events, dates and mechanisms and the other gets a shrug, that
+    asymmetry is the finding — whichever side got the detail. Naming the
+    Inquisition's trial of Galileo and then waving at "contributions to
+    learning" is the same fault as naming the monastic scriptoria and waving at
+    "some historical tensions".
+  · Equal specificity does NOT mean inventing a counterweight. If the evidence
+    genuinely runs one way, say so and say why. Manufacturing a balancing item
+    to make the shape look even is a fabrication and bounces as one.
+
+Pass an answer that reports what is documented, on every side, in the same
+detail it can support.
+
 Reply with EXACTLY one line, nothing else:
 VERDICT: pass
 VERDICT: bounce — <one short reason>"""
+
+def superego_ask(prov, digest: str) -> str:
+    """Put one evidence digest to the reviewer and return its raw verdict text.
+
+    Lives at module level so the regression suite runs the SAME call the agent
+    runs. The suite used to speak HTTP itself, which meant a fix here could
+    pass a test that no longer described the code.
+
+    A greedy decode can hit an immediate stop on an unlucky prompt and return
+    an EMPTY verdict — measured 2026-09-09: five identical runs at temperature
+    0, all zero characters, finish_reason "stop", and raising max_tokens from
+    80 to 400 changed nothing. It is not a content refusal; the same shape of
+    answer about a corporation did it too, and one about a government did not.
+    Because the gate fails open, an empty verdict is a whole answer shipping
+    unreviewed while the ledger only records "malformed". Two things break it:
+    one trailing newline on the digest, or a little temperature. So nothing
+    earns ONE nudged retry before we give up. ~3s, and only on that path.
+
+    Returns "" when both attempts come back empty — the caller decides, and it
+    fails open, because the gate must never take the whole agent down with it.
+    """
+    for attempt in (0, 1):
+        # Judging is a match-claim-to-evidence task, not a reasoning one — skip
+        # the reasoning phase (as with vision) so a review is ~5s, not ~40s, on
+        # a reasoning model. Harmless on models without thinking.
+        body = {"chat_template_kwargs": {"enable_thinking": False}}
+        asked = digest
+        if attempt:
+            asked = digest + "\n\nGive your verdict now, on the one line."
+            body["temperature"] = 0.7
+        reply = prov.complete(SUPEREGO_PROMPT,
+                              [{"role": "user", "content": asked}], [],
+                              extra_body=body)
+        text = (reply.text or "").strip()
+        if text:
+            return text
+    return ""
+
 
 COMPACT_AT = 0.70          # start compacting at 70% full
 COMPACT_KEEP = 0.25        # after compacting, recent turns may fill 25%
@@ -1620,19 +1684,20 @@ class Agent:
                             digest=digest)
         except Exception:
             pass
+        # A greedy decode can hit an immediate stop on an unlucky prompt and
+        # return an EMPTY verdict — measured 2026-09-09: five identical runs at
+        # temperature 0, all zero characters, finish_reason "stop", and more
+        # max_tokens made no difference. Because the gate fails open, that is a
+        # whole answer shipping unreviewed while the ledger just records
+        # "malformed". Two things break it: one trailing newline on the digest,
+        # or a little temperature. So a nothing-answer gets ONE nudged retry
+        # before we give up and pass the work. ~3s, and only on that path.
         try:
-            # Judging is a match-claim-to-evidence task, not a reasoning one —
-            # skip the reasoning phase (as with vision) so a review is ~5s, not
-            # ~40s, on a reasoning model. Harmless on models without thinking.
-            reply = self.superego.complete(
-                SUPEREGO_PROMPT,
-                [{"role": "user", "content": digest}],
-                [],
-                extra_body={"chat_template_kwargs": {"enable_thinking": False}},
-            )
-            text = (reply.text or "").strip()
+            text = superego_ask(self.superego, digest)
         except Exception as e:
             return "error", f"{type(e).__name__}"
+        if not text:
+            return "malformed", "(empty verdict, twice)"
         low = text.lower()
         if "verdict: bounce" in low or low.startswith("bounce"):
             # The reason is everything AFTER the bounce keyword. (The old
