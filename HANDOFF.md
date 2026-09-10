@@ -4,7 +4,49 @@ Read this first if you're an agent picking up work in `~/forge`.
 Claim the folder in `~/aidojo/AGENT-LOG.md` before editing; release the
 claim and log what you did when you stop.
 
-## READ THIS FIRST — where things stand, 2026-09-10
+## READ THIS FIRST — where things stand, 2026-09-10 (evening)
+
+**The reviewer was sampling every verdict, and had been all along.**
+`superego_ask` sent no sampling parameters, so llama-server's defaults applied:
+temperature 1.0, top_k 20, random seed. One identical case, ten identical
+calls, five pass and five bounce. So every single-run score in CHANGELOG.md
+before this entry is a DRAW, not a measurement, and the live gate was random —
+the same answer passed or bounced by luck. It is now greedy and pinned
+(temperature 0, top_k 1, fixed seed); the warm retry keeps 0.7.
+
+**Real numbers, pinned judge, reproducible:** evidence 8/8, belief 7/7,
+effects 9/10, diagnosis 7/7, discrimination 6/6, rivals 4/6. selftest 69/69.
+
+**Two new reviewer rules** (both aimed at run 7): a named cause must
+DISCRIMINATE (say what it expected to see, and show it looked; a cause that
+cannot produce the reported symptom bounces), and a strike must REMOVE A
+DIFFERENT CANDIDATE (the named cause negated removes nothing). Together they
+lift rivals 3/6 → 4/6 and discrimination 5/6 → 6/6.
+
+**The gate now fires at all.** It hung on `forensic`, which only `bughunt`
+sets — a mode `route_mode` cannot pick, in a session whose mode defaults to
+fixed "balanced" so routing is never consulted. It had never fired outside a
+hand-built hunt. It now triggers on `modes.looks_diagnostic(ask)` in any
+reviewed mode. The judge also receives the strike TEXT now, not just a count.
+
+**Open, priority order:**
+1. One reproducible FALSE BOUNCE in rivals: "two genuine rivals, different
+   mechanisms" bounces when it should pass. A rule that punishes correct
+   reasoning is what gets a gate switched off. Fix this before adding rules.
+2. effects 9/10 — a real one-directional blind spot: "benefit named, harm
+   waved at" PASSES while its mirror image bounces. Hidden by the noise until
+   today.
+3. rivals "both strikes restate the same conclusion" still passes.
+4. Widen `looks_diagnostic` from OBSERVED misses, never on a hunch.
+5. `forge doctor` still reports three false "Config truth" warnings.
+
+**Closed 2026-09-10:** the nine fake life records (deleted, live store and
+backup). Penpal staying outside `forge off` — deliberate, owner's ruling:
+separate project, own models, must run without forge.
+
+---
+
+## Superseded — where things stood earlier on 2026-09-10
 
 Everything below this section was written on 2026-08-27 and describes the state
 as of **2026-08-08**, before the 2.0 rebuild. Treat it as history. Where it
