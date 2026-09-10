@@ -63,6 +63,19 @@ def rule_out(theory: str, because: str = "", standing: str = "") -> str:
     return f"Ruled out: {t[:80]} — {why[:90]}. {n} struck so far.{tail}"
 
 
+def struck_since(ts: float) -> int:
+    """How many theories have been struck off since `ts`.
+
+    The pad is append-only and global, so a count of the whole file would let
+    yesterday's work satisfy today's gate. The reviewer needs THIS session's
+    number or the gate means nothing.
+    """
+    try:
+        return sum(1 for r in _rows() if float(r.get("t", 0)) >= ts)
+    except Exception:
+        return 0
+
+
 def open_theories() -> str:
     """The negative space: what has fallen, and what is still standing."""
     rows = _rows()

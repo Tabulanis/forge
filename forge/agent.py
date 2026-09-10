@@ -242,6 +242,31 @@ its record.
 Pass an answer that reports what is documented, on every side, in the same
 detail it can support.
 
+IN A DIAGNOSTIC SESSION, A NAMED CAUSE COSTS TWO STRUCK THEORIES. When the
+evidence carries a line reading "DIAGNOSTIC SESSION. THEORIES STRUCK OFF SO FAR:
+N", that N is the number of competing explanations she has actually killed with
+evidence.
+
+  · N is 0 or 1, and the answer names a cause — "the problem is X", "the bug is
+    caused by Y", "this is why it fails" — BOUNCE. Not because the cause is
+    wrong; because nothing else was eliminated, and the first plausible story is
+    not a diagnosis.
+  · Say so plainly in the reason: which theory to strike, and that rule_out is
+    how it is done.
+  · An answer that says what it does NOT know, and lists what it examined,
+    PASSES at any N. That is the honest outcome and it must never be punished.
+  · Describing what a commit or a file DOES is not naming a cause. Reporting a
+    symptom is not naming a cause. The gate is for the causal claim itself.
+  · N is 2 or more: THE GATE IS SATISFIED. Naming a cause is then exactly what
+    she is supposed to do, and it is not a bounce for this reason. Judge it on
+    the evidence like any other claim — the count buys the right to conclude,
+    it does not excuse a conclusion the evidence does not carry.
+
+Measured over five runs: rule_out was called ZERO times in every one, and a
+confident wrong cause was named in every one. One run ended by editing the
+repository to apply the wrong fix. An honest "I don't know, here is what I
+eliminated" scores ABOVE a confident wrong cause and costs nobody a bad change.
+
 Reply with EXACTLY one line, nothing else:
 VERDICT: pass
 VERDICT: bounce — <one short reason>"""
@@ -664,6 +689,10 @@ class Agent:
             owntools.set_reserved(set(self.tools))
         except Exception:
             pass
+        # When this session began. The ruled-out pad is append-only and global,
+        # so the reviewer's two-strike gate has to count from here — otherwise
+        # last week's strikes would satisfy today's diagnosis.
+        self._started = time.time()
         self.max_steps = max_steps
         self.permission_mode = permission_mode
         self.system_prompt = system_prompt
@@ -1668,6 +1697,20 @@ class Agent:
                      if m.get("role") == "assistant"][-3:]
             for p in prior:
                 lines.append(f"PRIOR CLAIM (earlier this session): {p}")
+            # In a diagnostic session, tell the reviewer how many theories have
+            # actually been struck off. Measured across five bug-hunt runs
+            # (2026-09-09): `rule_out` was called ZERO times in every one, and
+            # she named a confident wrong cause every time. The two-strike rule
+            # already existed in ruleout.py but was advisory — it printed a
+            # reminder nobody was obliged to obey. This is the number that
+            # makes it a gate.
+            try:
+                if get_mode(self.active_mode).get("forensic"):
+                    from . import ruleout
+                    n = ruleout.struck_since(self._started)
+                    lines.append(f"DIAGNOSTIC SESSION. THEORIES STRUCK OFF SO FAR: {n}")
+            except Exception:
+                pass          # the gate is a nicety; never break a turn over it
             # NEVER clip the thing being judged — a clipped answer reads as an
             # answer that trails off, and got bounced for exactly that.
             lines.append(f"FINAL ANSWER: {final_text}")
