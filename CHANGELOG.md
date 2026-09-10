@@ -353,3 +353,8 @@ See `git log` before `2026-09-05` for the detail.
   in `~/.forge/backup-2026-09-08-cortex/`. Owner ruled: lose them. The three
   cortex files in that backup were deleted; the memory-card copy beside them was
   kept. Handoff item closed.
+- **2026-09-10** — **Penpal is not forge's to switch off — ruled, not assumed.**
+  The open question of whether `forge off` should manage `penpal-model.service`
+  is closed: Penpal is a separate project with its own models and must run
+  without forge. No code change; the roster check only covers `forge-model-*`
+  units, which is correct.

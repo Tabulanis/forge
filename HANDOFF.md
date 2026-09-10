@@ -45,14 +45,18 @@ after touching `SUPEREGO_PROMPT`. Currently evidence 8/8, belief 7/7, effects
    said she leans secular; two more leaned the other way and then even. Do not
    act on the single-run result. Six runs a side before anyone concludes
    anything. The prompt block written off the bad number was pulled back out.
-3. `forge off` does not manage `penpal-model.service` (port 8092). Deliberate or
-   an oversight — undecided. Explained to the owner 2026-09-10; his ruling pending.
+3. (closed, see below)
 
 **Closed 2026-09-10:** the nine FAKE life-archive records are gone. The live
 store was already empty (wiped 2026-09-08 16:40); the last copy sat in
 `~/.forge/backup-2026-09-08-cortex/` and was deleted on the owner's ruling.
 The memory-card backup in that folder was left alone. The archive stays empty
 until he provides a Takeout export.
+
+**Closed 2026-09-10, owner's ruling:** `forge off` leaving `penpal-model.service`
+alone is DELIBERATE. Penpal is a separate project with its own models and must
+run without forge. Its unit is not named `forge-model-*`, so the roster check
+does not and should not cover it.
 
 **The lesson that cost the most yesterday, twice:** a check that measures the
 wrong quantity reads as a finding. A test criterion said "must NOT state a
