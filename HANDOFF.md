@@ -45,10 +45,14 @@ after touching `SUPEREGO_PROMPT`. Currently evidence 8/8, belief 7/7, effects
    said she leans secular; two more leaned the other way and then even. Do not
    act on the single-run result. Six runs a side before anyone concludes
    anything. The prompt block written off the bad number was pulled back out.
-3. Blocked on the owner: the life archive holds nine FAKE records from an August
-   demo. He chose Takeout over a wipe, so it needs his export.
-4. `forge off` does not manage `penpal-model.service` (port 8092). Deliberate or
-   an oversight — undecided.
+3. `forge off` does not manage `penpal-model.service` (port 8092). Deliberate or
+   an oversight — undecided. Explained to the owner 2026-09-10; his ruling pending.
+
+**Closed 2026-09-10:** the nine FAKE life-archive records are gone. The live
+store was already empty (wiped 2026-09-08 16:40); the last copy sat in
+`~/.forge/backup-2026-09-08-cortex/` and was deleted on the owner's ruling.
+The memory-card backup in that folder was left alone. The archive stays empty
+until he provides a Takeout export.
 
 **The lesson that cost the most yesterday, twice:** a check that measures the
 wrong quantity reads as a finding. A test criterion said "must NOT state a

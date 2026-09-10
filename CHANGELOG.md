@@ -346,3 +346,10 @@ Merge on the old box: a 27B and a 30B trading places on one 24 GB card, a
 separate vision model, and a 16k–32k context. Almost every constraint the 2.0
 rebuild is lifting was written during this period, and was correct at the time.
 See `git log` before `2026-09-05` for the detail.
+
+## 2026-09-10
+- **2026-09-10** — **The fake life records are gone for good.** The live archive
+  had been empty since 2026-09-08 16:40, but the nine fixture records still sat
+  in `~/.forge/backup-2026-09-08-cortex/`. Owner ruled: lose them. The three
+  cortex files in that backup were deleted; the memory-card copy beside them was
+  kept. Handoff item closed.
