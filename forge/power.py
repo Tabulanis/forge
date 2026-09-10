@@ -14,9 +14,17 @@ import subprocess
 import time
 
 # The stack as it actually runs since the 2026-09-05 cutover: her brain (which
-# is also her eyes), the little model that distils memory cards, and the
-# embedder that makes those cards searchable. All three are enabled and up.
-LIVE_UNITS = ("forge-model-big122", "forge-model-little", "forge-model-embed")
+# is also her eyes), the little model that distils memory cards, the embedder
+# that makes those cards searchable, and the sealed reviewer that judges every
+# answer. All four are enabled and up.
+#
+# The judge was added on 2026-09-08 and NOT added here, which is the same fault
+# the embedder had until the day before: live, enabled, holding graphics memory,
+# and invisible to the switch meant to stop it. Caught 2026-09-09 when `forge
+# off` reported the GPU freed while the judge still held 21.4 of 96 GB. If you
+# add a model service, add it here in the same commit.
+LIVE_UNITS = ("forge-model-big122", "forge-model-little", "forge-model-embed",
+              "forge-model-judge")
 
 # Retired 2026-09-05, units still on disk but disabled. Kept in the roster for
 # one reason only: `forge off` must still be able to stop one if somebody
@@ -26,7 +34,7 @@ LEGACY_UNITS = ("forge-model-big", "forge-model-merge",
 
 MODEL_UNITS = LIVE_UNITS + LEGACY_UNITS
 
-PORTS = {"big122": 8087, "little": 8083, "embed": 8086,
+PORTS = {"big122": 8087, "little": 8083, "embed": 8086, "judge": 8088,
          # retired
          "big": 8084, "merge": 8085, "vision": 8090, "tiny": 8081}
 

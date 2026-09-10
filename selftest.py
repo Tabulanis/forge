@@ -31,6 +31,13 @@ def check(name: str, fn, needs_server: bool = False):
         return
     try:
         ok = fn()
+        # None means "could not run here" — a service is down, a file is
+        # absent. That is a SKIP, not a pass and not a failure. Returning True
+        # would hide a check that never ran; returning False cries wolf, and a
+        # suite that cries wolf teaches you to ignore it.
+        if ok is None:
+            SKIP.append(name)
+            return
         (PASS if ok else FAIL).append(name if ok else (name, "returned False"))
     except Exception as e:
         FAIL.append((name, f"{type(e).__name__}: {e}"))
@@ -969,7 +976,10 @@ def t_tool_search_quality():
     """Keyword-only retrieval put verify_case top for 'change how funny you
     are'. Semantic retrieval fixed it; junk must still return nothing."""
     from forge import tools as T, toolindex
+    from forge.embed import available
     from forge.session import Workspace
+    if not available():
+        return None      # embedder is down (e.g. after `forge off`) — skip
     T.build_tools(Workspace(tempfile.mkdtemp())); reg = T._INDEX_REGISTRY
     pairs = [("search my old emails", "search_life"), ("design a 3d part", "design_part"),
              ("is this drug real", "verify_drug"), ("change how funny you are", "set_personality"),
@@ -1216,8 +1226,38 @@ def t_empty_reply_retries_warmer():
             and "\"temperature\": _temp" in src)
 
 
+def t_power_switch_knows_every_model():
+    """Every model service on disk must be known to the power switch.
+
+    Twice now a model has been live, enabled, holding graphics memory, and
+    invisible to `forge off`: the embedder until 2026-09-08, then the judge,
+    added 2026-09-08 and caught 2026-09-09 when the switch reported the GPU
+    freed while the judge still held 21.4 of 96 GB. A roster maintained by
+    hand drifts the moment someone adds a service; this makes the drift fail
+    a test instead of a shutdown.
+
+    Skips where there are no unit files, so it does not fail on a machine that
+    runs the models some other way.
+    """
+    from pathlib import Path as _P
+    from forge.power import MODEL_UNITS
+
+    unit_dir = _P.home() / ".config" / "systemd" / "user"
+    on_disk = {f.stem for f in unit_dir.glob("forge-model-*.service")}
+    if not on_disk:
+        return True                     # nothing to check on this machine
+    missing = sorted(on_disk - set(MODEL_UNITS))
+    if missing:
+        print(f"         not in the power roster: {', '.join(missing)}")
+        return False
+    return True
+
+
 # ------------------------------------------------------------------- main
 CHECKS = [
+    ("power: the switch knows every model service",
+     t_power_switch_knows_every_model, False),
+
     ("agent: an empty reply retries warmer, not identically",
      t_empty_reply_retries_warmer, False),
 
