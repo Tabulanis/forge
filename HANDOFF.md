@@ -4,6 +4,60 @@ Read this first if you're an agent picking up work in `~/forge`.
 Claim the folder in `~/aidojo/AGENT-LOG.md` before editing; release the
 claim and log what you did when you stop.
 
+## READ THIS FIRST — where things stand, 2026-09-10
+
+Everything below this section was written on 2026-08-27 and describes the state
+as of **2026-08-08**, before the 2.0 rebuild. Treat it as history. Where it
+disagrees with this section or with `CHANGELOG.md`, it is wrong.
+
+`CHANGELOG.md` is the authority on what changed and when. It carries the
+2026-09-08 rebuild and the 2026-09-09 honesty pass, including the mistakes.
+
+**The stack as it actually runs.** Brain `big122` (Qwen3.5-122B-A10B abliterated,
+port 8087, 131,072 context, its own eyes). Reviewer `judge` (Qwen3.8-27B, 8088).
+`little` (Qwen2.5-3B, 8083) distils memory cards. `embed` (nomic, 8086) makes
+them searchable. Dashboard 8770, Maker Studio 8840. Renders live on the OTHER
+box at 10.42.0.1:8189. All six are systemd --user units; `forge off` / `forge on`
+is the switch.
+
+**State at handoff:** working tree clean, 22 commits on 2026-09-09, selftest 65
+checks (one skips when the embedder is down — that is a skip, not a failure),
+90 core tools. Every service is STOPPED — the owner needed his RAM back.
+
+**The reviewer's regression suite is `bench/reviewer.py`.** It holds every rule
+the superego has been taught, as data, reads the prompt live from `forge.agent`,
+and calls it through the same `superego_ask()` the agent uses. Run it before and
+after touching `SUPEREGO_PROMPT`. Currently evidence 8/8, belief 7/7, effects
+9-10/10 (one case is genuinely unstable at ~9/10), diagnosis 7/7.
+
+**Two numbers that are real:**
+- Factual honesty through her FULL pipeline: **14/16**. The raw brain scores
+  11/16. The old "5/8" measured the model, not her, and bypassed her tools.
+- Bug hunt: still **0 for 7** on the answer. But run 7 was the first ever to use
+  `rule_out` and `when_changed`, because the reviewer's two-strike gate bounced
+  her and she went and did it.
+
+**Open, in priority order:**
+1. The two-strike gate is necessary but NOT sufficient. Of run 7's two strikes,
+   only one killed a rival theory; the other argued FOR her own answer. The next
+   lever is requiring the struck theories to be genuine alternatives.
+2. Belief neutrality is UNRESOLVED and the measurement did not replicate. One run
+   said she leans secular; two more leaned the other way and then even. Do not
+   act on the single-run result. Six runs a side before anyone concludes
+   anything. The prompt block written off the bad number was pulled back out.
+3. Blocked on the owner: the life archive holds nine FAKE records from an August
+   demo. He chose Takeout over a wipe, so it needs his export.
+4. `forge off` does not manage `penpal-model.service` (port 8092). Deliberate or
+   an oversight — undecided.
+
+**The lesson that cost the most yesterday, twice:** a check that measures the
+wrong quantity reads as a finding. A test criterion said "must NOT state a
+precise figure" and failed the best answer she gave. A survey helper capped its
+list at 12 rows when the answer sat at row 13. Build checks around ground truth
+you constructed, and confirm a KNOWN-BAD input fails before believing a pass.
+
+---
+
 ## What Forge is
 
 A terminal coding agent (like Claude Code) plus a web control panel, pointed
