@@ -247,6 +247,47 @@ figure and 150,000–300,000 for who was actually there.
 > those apart from noise; that needs more runs before anyone reads anything
 > into it.
 
+### The bug hunt — runs 5, 6 and 7
+Five runs, five confident wrong causes, `rule_out` called ZERO times in every
+one. Three changes, and one negative result that mattered more than either fix.
+
+- **The survey hands her the next move instead of describing it.** It now does
+  the shortlisting itself — the build/packaging and manifest commits by hash —
+  and returns the literal commands to run. Two of my own errors were caught
+  before it shipped: it named a tool that does not exist (`show_commit`; she
+  uses `run_command`), and it capped the list at 12 rows when the guilty commit
+  on this very repository is number 13 of 19. It would have hidden the answer
+  while looking like it was helping.
+- **The negative result: instructions do not work, even at the moment of
+  action.** Run 5 received all 7,840 characters of that output, including the
+  guilty hash and the numbered steps — verified, not assumed — and went off to
+  read source files anyway. That kills the whole "word it better" family of
+  fixes, which is why the next change is a gate rather than a sentence.
+- **A named cause now costs two struck theories.** In a forensic session the
+  reviewer's evidence carries `THEORIES STRUCK OFF SO FAR: N`, counted from
+  session start. Below two, a named cause bounces. Honest not-knowing passes at
+  any N — a gate that punished uncertainty would teach the opposite of its
+  purpose.
+- **An empty reply retries WARMER, not identically.** Run 6 died ten minutes
+  into a forty-five minute job: the brain returned empty, the code nudged it
+  with the same request at the same temperature, and got the same empty. The
+  identical bug as the reviewer's, one layer up.
+
+**What run 7 actually did.** The gate fired at 21:11 — *"You named a cause with
+zero theories struck off"* — and she went and used `rule_out` twice, then
+answered again. Across seven runs that is the first use of `rule_out` and the
+first use of `when_changed`. A bounce changed her behaviour mid-turn where five
+runs of instructions did not.
+
+> **Still wrong, and the gate is not sufficient.** She landed on the
+> entitlements file (`idVendor` as a string rather than an integer) — the real
+> cause is the six-digit version stamp. And of her two strikes, only one
+> eliminates a rival: the second, "Entitlements file has correct integer VID",
+> is struck in a way that ARGUES FOR her own theory rather than killing a
+> competitor. The count is necessary and not sufficient; the next lever is
+> requiring the struck theories to be genuine alternatives to the one named.
+> She also edited the repo again to apply the wrong fix.
+
 ---
 
 ## Before 2.0
