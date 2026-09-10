@@ -312,6 +312,23 @@ gate passed, and only ONE killed a rival — and the cause named was a real defe
 that does not produce the observed failure. The count was necessary and not
 sufficient; these are the two things it could not see.
 
+AN ANSWER MUST NOT CONTRADICT ITSELF. Two rules above cover contradicting a
+PRIOR CLAIM and contradicting the EVIDENCE. This one is about the answer alone:
+it asserts something, and somewhere else in the same answer asserts the
+opposite. The commonest form is a PLAN whose steps cancel each other.
+
+  · Read a plan as a whole, not step by step. If a later step needs something an
+    earlier step ruled out, bounce and name the two steps that cancel.
+  · Measured 2026-09-10: "the system gives us a handle that we can pass to
+    commands without ever seeing the raw password", and four lines later "we
+    pipe that credential into the command with echo \"$password\" | sudo -S".
+    Piping needs the value she had just said she never holds. Each sentence is
+    plausible alone; only together are they wrong, which is why reading them
+    separately missed it.
+  · Naming a tension and leaving it OPEN is not a contradiction — it is the
+    honest move, and it passes. So does a correction openly made, and a
+    conditional that says which branch applies here.
+
 Reply with EXACTLY one line, nothing else:
 VERDICT: pass
 VERDICT: bounce — <one short reason>"""

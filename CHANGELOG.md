@@ -485,3 +485,37 @@ See `git log` before `2026-09-05` for the detail.
   > answer is prominent. The real failure was a bad claim BURIED in a mostly
   > supported one. Only a faithful reproduction discriminated. Third time today
   > that inventing the test shape produced a number that meant nothing.
+- **2026-09-10** — **An answer may now not contradict ITSELF.** Two rules already
+  covered contradicting a PRIOR CLAIM and contradicting the EVIDENCE. Nothing
+  covered a plan whose own steps cancel. From a real session: "the system gives
+  us a handle that we can pass to commands without ever seeing the raw
+  password", and four lines later "we pipe that credential into the command with
+  `echo "$password" | sudo -S`". Piping needs the value the earlier step said she
+  never holds. Each sentence is plausible alone; only together are they wrong,
+  which is exactly why reading them one at a time missed it. The rule says to
+  read a plan whole and name the two steps that cancel. Naming a tension and
+  leaving it OPEN passes, as do an openly-made correction and a conditional that
+  says which branch applies. Verified: her answer at full length PASSES without
+  the rule and BOUNCES with it, three runs, identical. No regression — evidence
+  8/8, belief 7/7, effects 10/10, diagnosis 7/7, followthrough 5/5, rivals 5/6,
+  discrimination 4/6, selftest 69/69.
+  > **My first battery for this scored 6/6 against NO RULE, and was worthless.**
+  > I had compressed her answer and capitalised the key phrase, which makes the
+  > fault salient and stops the case measuring anything. The faithful,
+  > full-length version passes the reviewer, which is what made it a test. Fourth
+  > time today that inventing the shape produced a number that meant nothing —
+  > this time it was caught before it shipped, by baselining the battery against
+  > no rule BEFORE writing one.
+- **2026-09-10** — **Correction to the record, and it was mine.** Reviewing that
+  session I reported to the owner that she had invented the handle
+  `cred:sudo_pass` and had made an unverified safety claim. Both wrong.
+  `vault.py` builds handles as `cred:` + slug, so the format was exactly right,
+  and the vault is RAM-only with a scrubber wired into the session log, memory
+  and the ledger, so "the password never appears in the chat history" is the
+  actual design. Her real error was the contradiction above. Checking the claim
+  before building on it is what caught this.
+  > **Found, not fixed — the vault is half-wired.** `vault.get()`, the function
+  > that turns a handle back into a secret, has NO CALLERS. Nothing on her belt
+  > can spend a credential. She can collect a password perfectly safely and then
+  > nothing can use it, so the sudo flow she proposed could not have worked for a
+  > reason neither of us had spotted. Reported to the owner; not touched.
