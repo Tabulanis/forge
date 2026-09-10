@@ -1219,10 +1219,24 @@ def t_superego_retries_an_empty_verdict():
     # the retry must actually differ, or it is just the same greedy decode again
     first_digest, first_body = f.calls[0]
     retry_digest, retry_body = f.calls[1]
-    if retry_digest == first_digest or "temperature" not in retry_body:
+    if retry_digest == first_digest:
         return False
-    if "temperature" in first_body:
-        return False            # the first pass stays deterministic
+    # The retry must be WARMER than the first pass, or it is the same decode
+    # again. And the first pass must be pinned COLD.
+    #
+    # This check used to read "temperature" not in first_body, meaning it took
+    # an absent parameter as proof of determinism. It is the opposite: with
+    # nothing sent, llama-server applied its own defaults — temperature 1.0,
+    # top_k 20, random seed — so the pass this test called deterministic was
+    # the one sampling every verdict (2026-09-10: one case, ten calls, five
+    # pass and five bounce). The test measured the wrong quantity and read as
+    # a pass for a month. Assert the property, not a proxy for it.
+    if first_body.get("temperature") != 0.0 or first_body.get("top_k") != 1:
+        return False
+    if "seed" not in first_body:
+        return False
+    if not retry_body.get("temperature", 0) > first_body.get("temperature", 0):
+        return False
 
     m = Mute()
     return superego_ask(m, "ACTIONS: (none)\nANSWER: x") == "" and m.calls == 2

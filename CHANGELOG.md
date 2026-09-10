@@ -433,3 +433,12 @@ See `git log` before `2026-09-05` for the detail.
   > rivals, different mechanisms" bounces when it should pass. A rule that
   > punishes correct reasoning is the failure that gets a gate switched off, so
   > this is the next thing to fix, and it is now measurable.
+- **2026-09-10** — **The test that guarded the reviewer's determinism was
+  measuring the wrong quantity, and had read as a pass for a month.** It
+  asserted "the first pass stays deterministic" by checking that no
+  `temperature` key was sent. An absent parameter is the opposite of proof: with
+  nothing sent, llama-server applied temperature 1.0 and a random seed, so the
+  pass this test certified as deterministic was precisely the one sampling every
+  verdict. It now asserts the property itself — first pass temperature 0, top_k
+  1, a fixed seed, and a retry strictly warmer than it — and was confirmed to
+  FAIL against the unpinned build. selftest 69 passed, 0 failed, 0 skipped.
