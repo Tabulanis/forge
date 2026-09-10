@@ -195,6 +195,38 @@ def t_the_gate_leaves_recall_and_ordinary_work_alone():
             and all(looks_diagnostic(m) for m in loud))
 
 
+def t_the_judge_sees_the_strikes_themselves():
+    """The reviewer was handed a COUNT, so it could check that elimination
+    happened and never whether it was real. These are run 7's two actual
+    strikes, from the forensic record. The first killed a genuine rival. The
+    second, "Entitlements file has correct integer VID", is her own conclusion
+    with a NOT in front of it — it eliminated nothing, and the count could not
+    tell the two apart. Both must now reach the judge as text."""
+    import json, tempfile, pathlib
+    from forge import ruleout
+    from forge.agent import Agent
+    real = [{"t": 10.0, "theory": "Info.plist has wrong/missing USB personalities",
+             "because": "Commit 6cb6a8c restored the full personality set; HEAD has all 7"},
+            {"t": 11.0, "theory": "Entitlements file has correct integer VID",
+             "because": "commit e0666e5 changed <integer>5202</integer> to <string>*</string>"}]
+    keep = ruleout.PAD
+    try:
+        d = pathlib.Path(tempfile.mkdtemp())
+        ruleout.PAD = d / "ruled-out.jsonl"
+        ruleout.PAD.write_text("\n".join(json.dumps(r) for r in real))
+        a = Agent.__new__(Agent)
+        a.active_mode = "balanced"
+        a._started = 0.0
+        a.history = [{"role": "user", "content": "why won't the driver load?"},
+                     {"role": "tool_use", "calls": []}]
+        dig = Agent._evidence_digest(a, 0, "The cause is the entitlements idVendor.")
+    finally:
+        ruleout.PAD = keep
+    return ("Info.plist has wrong" in dig
+            and "Entitlements file has correct integer VID" in dig
+            and "STRUCK OFF SO FAR: 2" in dig)
+
+
 # --------------------------------------------- invented data (2026-09-08)
 def t_cortex_refuses_a_fixture_corpus():
     """A nine-record fixture set was ingested on 2026-08-19 to exercise the
@@ -1350,6 +1382,8 @@ CHECKS = [
      t_the_gate_is_reachable_outside_a_hand_built_hunt, False),
     ("gate: leaves recall and ordinary work alone",
      t_the_gate_leaves_recall_and_ordinary_work_alone, False),
+    ("gate: the judge sees the strikes, not just the count",
+     t_the_judge_sees_the_strikes_themselves, False),
     ("truth: knowing is a ONE-WAY test", t_knowing_is_a_one_way_test, False),
     ("truth: belief and popularity are not facts", t_belief_and_popularity_are_not_facts, False),
     ("record: she can see her own verdicts", t_she_can_see_her_own_record, False),

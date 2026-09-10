@@ -1725,8 +1725,17 @@ class Agent:
             try:
                 if get_mode(self.active_mode).get("forensic") or looks_diagnostic(_ask):
                     from . import ruleout
-                    n = ruleout.struck_since(self._started)
-                    lines.append(f"DIAGNOSTIC SESSION. THEORIES STRUCK OFF SO FAR: {n}")
+                    struck = ruleout.strikes_since(self._started)
+                    lines.append("DIAGNOSTIC SESSION. THEORIES STRUCK OFF SO "
+                                 f"FAR: {len(struck)}")
+                    # The judge was given the number and not the strikes, so it
+                    # could check THAT elimination happened and never WHETHER it
+                    # was real. Run 7's second strike was the answer negated —
+                    # it eliminated nothing — and a count cannot see that.
+                    for r in struck:
+                        lines.append(
+                            f"  STRUCK: {_cut(r.get('theory', ''), 160)}"
+                            f"  — because {_cut(r.get('because', ''), 200)}")
             except Exception:
                 pass          # the gate is a nicety; never break a turn over it
             # NEVER clip the thing being judged — a clipped answer reads as an

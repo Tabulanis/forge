@@ -374,3 +374,18 @@ See `git log` before `2026-09-05` for the detail.
   Checked against a 32-case ground-truth table, 16 of them negatives; both new
   selftests were confirmed to FAIL on a known-bad build before being trusted.
   selftest 67 passed, 1 skipped.
+- **2026-09-10** — **The judge was handed a number, so it could never see a
+  fake strike.** The evidence carried `THEORIES STRUCK OFF SO FAR: N` and
+  nothing else, which checks THAT elimination happened and never WHETHER it was
+  real. Run 7's two strikes, from the forensic record: the first killed a
+  genuine rival (Info.plist personalities, struck by finding the commit that
+  restored all seven); the second was "Entitlements file has correct integer
+  VID", which is her own conclusion with a NOT in front of it. Striking the
+  negation of your own answer eliminates nothing — the field of surviving
+  causes is exactly as wide afterwards — and a count cannot tell the two apart.
+  `ruleout.strikes_since()` now returns the strikes themselves and the digest
+  carries their text. This is the precondition for any quality rule, not the
+  rule itself: the judge can now SEE the difference. Making it ACT on the
+  difference is a SUPEREGO_PROMPT change and needs `bench/reviewer.py` run
+  before and after, which needs the judge model up. Not done yet, deliberately.
+  selftest 68 passed, 1 skipped.

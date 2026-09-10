@@ -76,6 +76,25 @@ def struck_since(ts: float) -> int:
         return 0
 
 
+def strikes_since(ts: float) -> list[dict]:
+    """The strikes themselves, not just how many.
+
+    The reviewer was given only a COUNT, so it could check that elimination
+    happened and never that it was real. Measured on run 7 (2026-09-09): of two
+    strikes, one killed a genuine rival — "Info.plist has wrong/missing USB
+    personalities", struck by finding the commit that restored all seven — and
+    the other was "Entitlements file has correct integer VID", which is her own
+    conclusion with a NOT in front of it. Striking the negation of your own
+    answer eliminates nothing: the field of surviving causes is exactly as wide
+    afterwards as it was before. A count cannot see that difference. The text
+    can, so the text has to reach the judge.
+    """
+    try:
+        return [r for r in _rows() if float(r.get("t", 0)) >= ts]
+    except Exception:
+        return []
+
+
 def open_theories() -> str:
     """The negative space: what has fallen, and what is still standing."""
     rows = _rows()
