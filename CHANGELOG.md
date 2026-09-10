@@ -172,8 +172,8 @@ finds out. But knowing she doesnt know is the bigest part."*
 ### Her memory, and her record
 - **17% of her memory could never have been recalled** — gated, then cleaned.
 - **The clean-up was then rewritten, because the first version was throwing away
-  his life.** It filtered on LENGTH as a proxy for value, which deleted "Riverton
-  AZ 40881", "It's the Riverton unit, not the spare", a project codename, a budget cap, and
+  real life.** It filtered on LENGTH as a proxy for value, which deleted "Riverton
+  NT 40881", "It's the Riverton unit, not the spare", a project codename, a budget cap, and
   both of two contradictory statements of his height — where the contradiction
   was the useful part. All 810 cards restored from backup, every candidate
   printed and read, 30 removed instead of 143.

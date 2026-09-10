@@ -307,7 +307,7 @@ def remember_turn(user_text: str, answer_text: str,
 # The first version of this filtered on LENGTH — under forty characters, bin it
 # — and that was a category error caught within the hour. Short is not
 # worthless. It threw away "Riverton NT 40881" (an address), "Card: RTX 4090",
-# "Logan is six feet tall" and a second card saying 5 foot 10 (a contradiction
+# "Marek is six feet tall" and a second card saying 5 foot 10 (a contradiction
 # in the story canon, which is exactly the kind of thing you want to find
 # later), "Project codename: GREEN-HERON-4", "Hard budget cap set at $2,300",
 # and "User: Keep calling it the workshop, not the lab."

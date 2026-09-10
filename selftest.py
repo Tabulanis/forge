@@ -719,7 +719,7 @@ def t_junk_never_becomes_a_memory():
     bin it — and was caught within the hour, because short is not worthless. It
     would have deleted his address, his graphics card, a budget cap, a project
     codename, two conflicting heights for a story character (the contradiction
-    being exactly what you want to find later), and "Keep calling it the workshop, not the lab."
+    being exactly what you want to find later), and "Keep calling it the workshop."
     Content is the test, not size: 30 of 810 go, not 143."""
     from forge.recall import _unusable
     junk = ["123.45", "TEST-MARKER: TEA-NOW", "coffee", "done", "ready",
@@ -728,11 +728,11 @@ def t_junk_never_becomes_a_memory():
     # these within the hour: his address, his graphics card, two conflicting
     # heights for a character (the contradiction is the useful part), a budget,
     # a codename, and something he said that he would not want deleted.
-    real = ["Riverton NT 40881", "Card: RTX 4090", "Logan is six feet tall.",
-            "Logan is 5 feet 10 inches tall.", "Project codename: GREEN-HERON-4",
+    real = ["Riverton NT 40881", "Card: RTX 4090", "Marek is six feet tall.",
+            "Marek is 5 feet 10 inches tall.", "Project codename: GREEN-HERON-4",
             "Hard budget cap set at $2,300.", "User: Keep calling it the workshop, not the lab.",
             "User: Morning — how did the overnight run go?", "dahlia. It's more recognizable.",
-            "Render box took 5m37s, created a 3s video self_filling_coffee.mp4."]
+            "Render box took 5m37s, created a 3s video spinning_top.mp4."]
     return (all(_unusable(g) for g in junk)
             and not any(_unusable(g) for g in real))
 
