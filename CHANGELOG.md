@@ -442,3 +442,25 @@ See `git log` before `2026-09-05` for the detail.
   verdict. It now asserts the property itself — first pass temperature 0, top_k
   1, a fixed seed, and a retry strictly warmer than it — and was confirmed to
   FAIL against the unpinned build. selftest 69 passed, 0 failed, 0 skipped.
+- **2026-09-10** — **The false bounce was my test, not the rule.** "Two genuine
+  rivals, different mechanisms" bounced when it should pass, reproducibly. Cause:
+  every RIVALS and DISCRIMINATION case put the STRUCK lines BEFORE the actions,
+  and the digest emits them AFTER — actions and results first, the diagnostic
+  block last, the answer at the end. The judge was reading a shape that never
+  ships, and bouncing the answer for citing a log it thought unevidenced. Cases
+  reordered to the real layout: rivals 4/6 → **5/6**, and the false bounce is
+  gone. **No false bounce remains in any battery** — every miss left is
+  under-detection, which is the safe direction. Same lesson as 2026-09-09's
+  "test a tool the way SHE uses it, not the way I do".
+- **2026-09-10** — **The effects rule had a one-directional lean, and it was in
+  the judge, not the rule.** "Benefit named, harm waved at" PASSED while its
+  mirror correctly bounced — with the symmetry already written, and with this
+  exact pair already named in the prompt as the same fault. So restating the
+  symmetry could not fix it. What worked was naming the SHAPE: a specific claim
+  followed by a vague concessive clause ("and it also made various
+  contributions", "there have of course been some tensions too") is the
+  non-answer in miniature, and the trailing clause IS the asymmetry rather than
+  a cure for it. Bounce in either direction, and watch for the lean in yourself.
+  effects 9/10 → **10/10**, belief unchanged 7/7, evidence 8/8, diagnosis 7/7.
+  > Worth recording plainly: the lean ran toward protecting institutions, and it
+  > sat unseen for a month because the sampling noise masked it.

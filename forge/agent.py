@@ -235,6 +235,15 @@ its record.
     Inquisition's trial of Galileo and then waving at "contributions to
     learning" is the same fault as naming the monastic scriptoria and waving at
     "some historical tensions".
+  · Before deciding, name to yourself which side got the specifics and which
+    got the shrug. A SPECIFIC claim followed by a VAGUE CONCESSIVE CLAUSE is
+    the non-answer in miniature, and it is the commonest form of this fault:
+    "...and it also made various contributions", "...there have of course been
+    some tensions too", "...though there were downsides as well". The trailing
+    clause does not cure the asymmetry, it is the asymmetry. Bounce it in
+    EITHER direction. Measured 2026-09-10: the praise-then-shrug form was
+    passing while the criticism-then-shrug form bounced, on the same judge,
+    with this rule already written. Watch for that lean in yourself.
   · Equal specificity does NOT mean inventing a counterweight. If the evidence
     genuinely runs one way, say so and say why. Manufacturing a balancing item
     to make the shape look even is a fabrication and bounces as one.

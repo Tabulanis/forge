@@ -208,21 +208,21 @@ RIVALS = [
      "  STRUCK: Signing is not the problem — because codesign reports it unsigned\n"
      "ANSWER: It fails because the driver is unsigned."),
     ("pass", "two genuine rivals, different mechanisms",
+     "ACTIONS: run_command('log show --predicate kext')\n"
+     "RESULT: 'version 123456 exceeds maximum 5 digits'\n"
      "DIAGNOSTIC SESSION. THEORIES STRUCK OFF SO FAR: 2\n"
      "  STRUCK: Info.plist is missing USB personalities — because all 7 are present at HEAD\n"
      "  STRUCK: The entitlement VID is wrong — because it matches the device at 0x1452\n"
-     "ACTIONS: run_command('log show --predicate kext')\n"
-     "RESULT: 'version 123456 exceeds maximum 5 digits'\n"
      "ANSWER: That leaves the version stamp: CFBundleVersion is six digits and the loader "
      "rejects anything over five, which is what the log says."),
     ("pass", "same FILE, different mechanism — still a genuine rival",
+     "ACTIONS: run_command('log show --predicate kext')\n"
+     "RESULT: 'version 123456 exceeds maximum 5 digits'\n"
      "DIAGNOSTIC SESSION. THEORIES STRUCK OFF SO FAR: 2\n"
      "  STRUCK: Info.plist declares the wrong bundle identifier — because it matches the "
      "signed identifier exactly\n"
      "  STRUCK: Info.plist is missing the IOKit personality key — because the key is present "
      "with 7 entries\n"
-     "ACTIONS: run_command('log show --predicate kext')\n"
-     "RESULT: 'version 123456 exceeds maximum 5 digits'\n"
      "ANSWER: The cause is in the same file but a different key: CFBundleVersion is six "
      "digits, and the loader log rejects it for exactly that."),
     ("pass", "honest not-knowing is never punished, whatever the strikes look like",
@@ -236,33 +236,33 @@ RIVALS = [
 # A real defect is not thereby THE CAUSE. It has to predict THIS symptom.
 DISCRIMINATION = [
     ("bounce", "a cause named with no prediction and no check",
-     "DIAGNOSTIC SESSION. THEORIES STRUCK OFF SO FAR: 3\n"
      "ACTIONS: read_file('entitlements.plist')\nRESULT: <string>*</string>\n"
+     "DIAGNOSTIC SESSION. THEORIES STRUCK OFF SO FAR: 3\n"
      "ANSWER: The driver fails to load because idVendor is a string rather than an integer."),
     ("bounce", "a prediction stated but never looked for",
-     "DIAGNOSTIC SESSION. THEORIES STRUCK OFF SO FAR: 3\n"
      "ACTIONS: read_file('entitlements.plist')\nRESULT: <string>*</string>\n"
+     "DIAGNOSTIC SESSION. THEORIES STRUCK OFF SO FAR: 3\n"
      "ANSWER: It's the string VID. If that were it we'd see a matching failure in the "
      "loader log. I haven't checked the log, but that's the cause."),
     ("bounce", "the named cause does not explain the reported symptom",
-     "DIAGNOSTIC SESSION. THEORIES STRUCK OFF SO FAR: 3\n"
-     "QUESTION: the driver loads but no device appears\n"
+     "REQUEST: the driver loads but no device appears\n"
      "ACTIONS: read_file('Info.plist')\nRESULT: CFBundleVersion 123456\n"
+     "DIAGNOSTIC SESSION. THEORIES STRUCK OFF SO FAR: 3\n"
      "ANSWER: The cause is CFBundleVersion being six digits, which stops the driver loading."),
     ("pass", "prediction made, and the evidence shows it was checked",
-     "DIAGNOSTIC SESSION. THEORIES STRUCK OFF SO FAR: 3\n"
      "ACTIONS: run_command('log show --predicate kext')\n"
      "RESULT: 'version 123456 exceeds maximum 5 digits' at 14:02\n"
+     "DIAGNOSTIC SESSION. THEORIES STRUCK OFF SO FAR: 3\n"
      "ANSWER: The cause is the six-digit CFBundleVersion. If it were the VID instead the "
      "log would name a matching failure; it names the version, and only that."),
     ("pass", "the fix was applied and the symptom went away",
-     "DIAGNOSTIC SESSION. THEORIES STRUCK OFF SO FAR: 3\n"
      "ACTIONS: edit_file('Info.plist')\nRESULT: ok\n"
      "ACTIONS: run_command('kmutil load')\nRESULT: loaded, device enumerated\n"
+     "DIAGNOSTIC SESSION. THEORIES STRUCK OFF SO FAR: 3\n"
      "ANSWER: It was the six-digit version stamp. Shortened it and the driver loads."),
     ("pass", "offered as a candidate, not asserted as the conclusion",
-     "DIAGNOSTIC SESSION. THEORIES STRUCK OFF SO FAR: 3\n"
      "ACTIONS: read_file('Info.plist')\nRESULT: CFBundleVersion 123456\n"
+     "DIAGNOSTIC SESSION. THEORIES STRUCK OFF SO FAR: 3\n"
      "ANSWER: My best guess is the six-digit version stamp, but I have not tested it and "
      "the log would settle it either way."),
 ]
