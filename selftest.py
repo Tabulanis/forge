@@ -159,6 +159,42 @@ def t_everyday_mode_is_reviewed():
     return all(get_mode(m)["superego"] for m in ("balanced", "precise", "deep"))
 
 
+# ----------------------------------------- the diagnostic gate (2026-09-10)
+def t_the_gate_is_reachable_outside_a_hand_built_hunt():
+    """The two-strike gate hung on the `forensic` flag, which only `bughunt`
+    sets. route_mode can never choose bughunt, and self.mode defaults to
+    "balanced" — a FIXED mode, so route_mode is not even consulted. The gate
+    had therefore never fired outside a hunt someone configured by hand. It
+    now triggers on the shape of the ask, in any mode the reviewer runs in."""
+    from forge.agent import Agent
+    a = Agent.__new__(Agent)
+    a.active_mode = "balanced"
+    a._started = 0.0
+    a.history = [{"role": "user", "content": "why is the render failing?"},
+                 {"role": "tool_use", "calls": []}]
+    d = Agent._evidence_digest(a, 0, "The cause is the version stamp.")
+    return "THEORIES STRUCK OFF SO FAR" in d
+
+
+def t_the_gate_leaves_recall_and_ordinary_work_alone():
+    """A trigger that fires on ordinary talk gets switched off, and a gate that
+    is off is worse than no gate because it still costs the reading. "Why is
+    the sky blue" is a causal question that needs no elimination: the answer is
+    knowledge, not an investigation. Ordinary coding work is not a diagnosis
+    either. These are the cases that decide whether the gate survives use."""
+    from forge.modes import looks_diagnostic
+    quiet = ["why is the sky blue", "how does the gate work",
+             "fix the header spacing", "refactor this function",
+             "write a test for this", "why do we use tabs here",
+             "summarise the changelog", "why did you choose that colour",
+             "commit that and push"]
+    loud = ["why is the render failing?", "debug this", "diagnose the crash",
+            "what's causing the slowdown", "why won't it enumerate",
+            "this used to work, now it doesn't", "track down the memory leak"]
+    return (not any(looks_diagnostic(m) for m in quiet)
+            and all(looks_diagnostic(m) for m in loud))
+
+
 # --------------------------------------------- invented data (2026-09-08)
 def t_cortex_refuses_a_fixture_corpus():
     """A nine-record fixture set was ingested on 2026-08-19 to exercise the
@@ -1310,6 +1346,10 @@ CHECKS = [
     ("tools: path tools work from where SHE stands", t_path_tools_work_from_where_she_stands, False),
     ("bughunt: survey flags the build commit", t_history_survey_flags_the_build_commit, False),
     ("bughunt: no striking a theory without evidence", t_a_theory_cannot_be_struck_without_evidence, False),
+    ("gate: fires outside a hand-built hunt",
+     t_the_gate_is_reachable_outside_a_hand_built_hunt, False),
+    ("gate: leaves recall and ordinary work alone",
+     t_the_gate_leaves_recall_and_ordinary_work_alone, False),
     ("truth: knowing is a ONE-WAY test", t_knowing_is_a_one_way_test, False),
     ("truth: belief and popularity are not facts", t_belief_and_popularity_are_not_facts, False),
     ("record: she can see her own verdicts", t_she_can_see_her_own_record, False),

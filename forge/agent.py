@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import Any, Iterator
 
 from . import datasets, sims
-from .modes import get_mode, get_privacy, route_mode
+from .modes import get_mode, get_privacy, looks_diagnostic, route_mode
 from .providers import Provider, ToolCall
 from .tools import Tool
 
@@ -1681,10 +1681,15 @@ class Agent:
             text = str(text)
             return text if len(text) <= n else text[:n] + f" …[+{len(text)-n} chars not shown]"
 
-        lines = []
+        lines, _ask = [], ""
         for m in self.history[turn_start:]:
             role = m.get("role")
             if role == "user" and not lines:
+                # Context blocks are prepended to the stored message; the ask
+                # itself is what follows the last separator. The trigger reads
+                # the ASK, so injected context cannot make a turn diagnostic.
+                _raw = str(m.get("content") or "")
+                _ask = _raw.rsplit("\n\n---\n\n", 1)[-1]
                 lines.append(f"REQUEST: {_cut(m.get('content'), 400)}")
             elif role == "tool_use":
                 for c in (m.get("calls") or []):
@@ -1712,8 +1717,13 @@ class Agent:
             # already existed in ruleout.py but was advisory — it printed a
             # reminder nobody was obliged to obey. This is the number that
             # makes it a gate.
+            # The gate hung on `forensic`, which is set by ONE mode that
+            # route_mode can never pick and that the default is not — so it had
+            # never fired outside a hand-built hunt (measured 2026-09-10). It now
+            # fires on the shape of the ask as well, in any mode the reviewer
+            # runs in, which is what makes it general instead of ceremonial.
             try:
-                if get_mode(self.active_mode).get("forensic"):
+                if get_mode(self.active_mode).get("forensic") or looks_diagnostic(_ask):
                     from . import ruleout
                     n = ruleout.struck_since(self._started)
                     lines.append(f"DIAGNOSTIC SESSION. THEORIES STRUCK OFF SO FAR: {n}")

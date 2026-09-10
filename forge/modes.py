@@ -263,6 +263,48 @@ _ROUTE_RULES = [
 ]
 
 
+# The two-strike gate used to fire only when this flag was set, which meant it
+# fired only in `bughunt`, which `route_mode` can never choose and which the
+# default mode is not. Measured 2026-09-10: self.mode defaults to "balanced", a
+# FIXED mode, so route_mode is not even consulted unless someone sets "auto" by
+# hand. The gate had therefore never fired outside a deliberately configured
+# hunt. A guard that only works in a lab someone remembers to build is not a
+# guard, so the trigger now hangs on the SHAPE OF THE ASK instead of the mode.
+#
+# Deliberately narrow on the first pass. A trigger that fires on ordinary talk
+# gets switched off, and a gate that is off is worse than no gate because it
+# still costs the reading. Widen it by adding cases here once misses are
+# observed, not by loosening it on a hunch. Domain-free on purpose: a render
+# that failed, a number that is wrong and a printer that will not enumerate are
+# the same shape as a bug, and none of them are git.
+_DIAGNOSTIC = _re.compile(
+    r"\b(debug|debugging|diagnose|diagnosing|troubleshoot|root[ -]?cause)\b"
+    r"|\bwhy\s+(is\s?n.?t|does\s?n.?t|did\s?n.?t|wo\s?n.?t|ca\s?n.?t|are\s?n.?t"
+    r"|was\s?n.?t|is it not|does it not)\b"
+    r"|\bwhy\b[^?.!]{0,60}\b(fail|fails|failing|failed|break|breaks|breaking|broke"
+    r"|broken|crash|crashes|crashing|crashed|error|errors|erroring|hang|hangs|hanging"
+    r"|hung|stuck|stopped|slow|wrong|empty|missing|blank|garbled|nan|null|off by"
+    r"|not work|not working|not loading|not showing)\b"
+    r"|\b(fail|fails|failing|failed|broke|broken|wrong|crash|crashed|crashing"
+    r"|hang|hangs|hung|stuck|slow|empty|blank|missing)\b[^?.!]{0,25}\bwhy\b"
+    r"|\bwhat.?s\s+(causing|going wrong|breaking|wrong with)\b"
+    r"|\b(figure|work|find) (out|it out) why\b|\btrack down\b"
+    r"|\b(used to work|worked (yesterday|before|fine)|no longer works"
+    r"|stopped working)\b",
+    _re.I)
+
+
+def looks_diagnostic(message: str) -> bool:
+    """Is this asking why a PARTICULAR thing behaves the way it does?
+
+    The separator that keeps this from being a nuisance is recall versus
+    diagnosis. "Why is the sky blue" is a causal question and needs no
+    elimination, because the answer is knowledge, not an investigation. The
+    cases below all describe something that is not doing what it should.
+    """
+    return bool(_DIAGNOSTIC.search(message or ""))
+
+
 def route_mode(message: str) -> str:
     """Pick a mode from the message's intent. Instant heuristics; defaults to
     balanced when nothing clearly fits."""

@@ -358,3 +358,19 @@ See `git log` before `2026-09-05` for the detail.
   is closed: Penpal is a separate project with its own models and must run
   without forge. No code change; the roster check only covers `forge-model-*`
   units, which is correct.
+- **2026-09-10** — **The two-strike gate had never fired outside a hand-built
+  hunt.** It hung on the `forensic` flag, which only `bughunt` mode sets.
+  `route_mode` can never choose bughunt — it is absent from the routing table,
+  and the rule that catches the word "debug" sends her to `balanced` instead.
+  Worse, `self.mode` defaults to "balanced", a FIXED mode, so `route_mode` is
+  not consulted at all unless someone sets "auto" by hand. A guard that only
+  works in a lab someone remembers to build is not a guard. The trigger now
+  hangs on the SHAPE OF THE ASK (`modes.looks_diagnostic`) in any mode the
+  reviewer runs in. Deliberately narrow on the first pass and widened from
+  observed misses, not on a hunch: the recall/diagnosis line is what keeps it
+  from becoming a nuisance, and a gate that gets switched off is worse than no
+  gate. Domain-free on purpose — a failed render, a wrong number and a printer
+  that will not enumerate are the same shape, and none of them are git.
+  Checked against a 32-case ground-truth table, 16 of them negatives; both new
+  selftests were confirmed to FAIL on a known-bad build before being trusted.
+  selftest 67 passed, 1 skipped.
