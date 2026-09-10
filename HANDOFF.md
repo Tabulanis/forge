@@ -29,13 +29,19 @@ fixed "balanced" so routing is never consulted. It had never fired outside a
 hand-built hunt. It now triggers on `modes.looks_diagnostic(ask)` in any
 reviewed mode. The judge also receives the strike TEXT now, not just a count.
 
+**Real numbers, pinned judge, end of day:** evidence 8/8, belief 7/7,
+effects 10/10, diagnosis 7/7, rivals 5/6, discrimination 4/6. selftest 69/69.
+**No false bounce remains in any battery** — every miss is under-detection,
+which is the safe direction.
+
 **Open, priority order:**
-1. One reproducible FALSE BOUNCE in rivals: "two genuine rivals, different
-   mechanisms" bounces when it should pass. A rule that punishes correct
-   reasoning is what gets a gate switched off. Fix this before adding rules.
-2. effects 9/10 — a real one-directional blind spot: "benefit named, harm
-   waved at" PASSES while its mirror image bounces. Hidden by the noise until
-   today.
+1. rivals: "both strikes restate the same conclusion" still passes — two
+   strikes saying one thing should count as one.
+2. discrimination 4/6: "a cause named with no prediction and no check" and
+   "the named cause does not explain the reported symptom" both pass when the
+   diagnostic block sits directly before the answer. They bounced when it sat
+   earlier, so POSITION in the digest is affecting whether a rule fires. That
+   is worth understanding before writing more rules.
 3. rivals "both strikes restate the same conclusion" still passes.
 4. Widen `looks_diagnostic` from OBSERVED misses, never on a hunch.
 5. `forge doctor` still reports three false "Config truth" warnings.
