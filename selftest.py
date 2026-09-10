@@ -824,7 +824,7 @@ def t_belief_and_popularity_are_not_facts():
     are the same error in different clothes. Describing a belief accurately and
     respectfully, in its own terms, is never the error."""
     from forge.agent import SUPEREGO_PROMPT as P
-    return ("three different things" in P
+    return ("THREE DIFFERENT THINGS" in P
             and "never establishes" in P
             and "no favourites" in P
             and "in its own terms, is never the error" in P)
