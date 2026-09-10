@@ -121,6 +121,107 @@ the morning of 2026-09-08, before any of this.
 
 ---
 
+## 2026-09-09 — the honesty pass
+
+The premise for the day, in his words: *"we just need in the end that she
+doesnt lies or halucinate. we fix that... if we cant fix it any other way then
+checks and determanistic tools to keep her on track. And if she doesnt know she
+finds out. But knowing she doesnt know is the bigest part."*
+
+### Truth, and knowing the difference
+- **She can now measure not-knowing instead of feeling it.** `do_i_know` samples
+  the same question several times: answers that disagree with each other are a
+  CERTAIN negative, not a guess. It says so plainly, and it is equally plain
+  about the limit — consistency rules out one error, inventing it fresh, and
+  nothing else. A memorised mistake is perfectly consistent. 4.0s for five
+  samples, against 6.2s for one ordinary reply.
+- **True, believed and popular are three different things,** and the reviewer
+  now bounces one stated as another. A scripture, a myth or a legend can be
+  reported as what it says; asserting its content as fact about the world is a
+  bounce. What people believe, and how many, is a fact about PEOPLE. It has no
+  favourites: a religious claim asserted as established fact and a claim that a
+  belief has been disproven are the same error in different clothes. Describing
+  a belief accurately and respectfully, in its own terms, is never the error.
+  Battery 13/15 before, 15/15 after.
+- **What a belief CLAIMS is not a fact. What a belief DID is.** Effects in the
+  world are historical and measurable, and respect for a belief never licenses
+  vagueness about its record. The failure named in the rule is the NON-ANSWER —
+  "a force for both good and ill in complex ways" — which protects an
+  institution by refusing to be specific. The test is EQUAL SPECIFICITY, not
+  equal airtime, and it cuts both ways. Manufacturing a counterweight to make
+  the shape look even is a fabrication and bounces as one.
+
+  Measured before the rule was written, five matched pairs, blind judge:
+  **she is not shilling.** She leans the other way — more specific about harms
+  in 4 of 5 pairs. Pushed for named cases she fills both sides, so the gap is
+  emphasis, not a gap in what she knows.
+
+### The bug hunt
+- **`when_changed`** gives her the move she never makes: ask git when a line of
+  code actually changed, instead of reading the current file and guessing.
+  `history_survey` and `rule_out` came with it — a theory needs evidence to be
+  struck off, and two strikes before anything is called a cause.
+- The same tool was then broken three ways in one day, each a variant of one
+  mistake: a default that failed when the repo sat one level down, a path that
+  stopped resolving once the repo was found below, and registration that
+  resolved relative paths against the process directory rather than her
+  workspace. She wrote "the tool says no git repo but I see .git" and then
+  typed 46 `git show` commands by hand. Now `t_path_tools_work_from_where_she_stands`
+  exercises all 21 path-taking tools from a foreign directory.
+
+### Her memory, and her record
+- **17% of her memory could never have been recalled** — gated, then cleaned.
+- **The clean-up was then rewritten, because the first version was throwing away
+  his life.** It filtered on LENGTH as a proxy for value, which deleted "Riverton
+  AZ 40881", "It's the Riverton unit, not the spare", a project codename, a budget cap, and
+  both of two contradictory statements of his height — where the contradiction
+  was the useful part. All 810 cards restored from backup, every candidate
+  printed and read, 30 removed instead of 143.
+
+  > The vector store is row-aligned to the card file, 768 floats per card.
+  > Pruning cards without their vector rows would have silently mis-attributed
+  > her entire history. Alignment is asserted before and after, and guarded.
+
+- **She can read what the reviewer says about her,** and a pattern that repeats
+  reaches her unasked rather than waiting to be requested.
+
+### Her ears
+- **44.1 kHz**, up from 22.05, and that exposed a spectrogram bug that had
+  always been there: each row was drawn from a single frequency bin instead of
+  the maximum across its band, so a 15 kHz tone rendered at brightness 6 out of
+  255. Source separation landed with it, with ground-truth verification.
+
+### The reviewer's own failure
+- **An empty verdict now earns one nudged retry.** Found while testing the
+  effects rule: the reviewer returned ZERO characters with finish_reason
+  "stop", five identical runs at temperature 0, and raising max_tokens from 80
+  to 400 changed nothing. It is not a content refusal — the same shape of
+  answer about a corporation did it too, and one about a government did not.
+  Because the gate fails open, that answer shipped UNREVIEWED while the ledger
+  recorded only "malformed", which nobody would ever look at. One trailing
+  newline or a little temperature breaks it.
+- **The regression suite now runs the code that ships.** `bench/reviewer.py`
+  holds every rule the superego has been taught, reads the prompt live from
+  `forge.agent`, and calls the reviewer through the same `superego_ask()` the
+  agent uses. It used to speak HTTP itself, which is exactly how the retry
+  above could have been "fixed" while the test went on grading a path that no
+  longer existed. evidence 8/8, belief 7/7, effects 10/10.
+
+> **My own errors today, since they belong in the record too:** one battery
+> MISS was my test case rather than her reviewer — the evidence named a study
+> without carrying its finding, so the answer asserted an unsupported result
+> and the bounce was correct. Two numbers in the effects work were my
+> measurement bugs: a regex that counted "1088" but not "16th century", and a
+> prompt that forced "name an event with a date" onto a question about what
+> people self-report.
+
+> **Found, not fixed — 2026-09-09:** the factual suite's 5/8 was measured
+> against the RAW brain on its own port. It bypassed her tools, her guards and
+> her reviewer entirely, so it is a score for the model and not for her. Needs
+> re-running through the full pipeline before it means anything.
+
+---
+
 ## Before 2.0
 
 ### 2026-09-08 — browser tools, and bulletproofing
