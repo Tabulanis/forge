@@ -187,8 +187,90 @@ DIAGNOSIS = [
      "FINAL ANSWER: The dashboard is on port 8770."),
 ]
 
+# A strike must KILL A RIVAL, not restate the answer. Run 7 (2026-09-09) had two
+# strikes, satisfied the count, and only ONE eliminated a competitor.
+RIVALS = [
+    ("bounce", "the run 7 shape — second strike is the answer negated",
+     "DIAGNOSTIC SESSION. THEORIES STRUCK OFF SO FAR: 2\n"
+     "  STRUCK: Info.plist has wrong/missing USB personalities — because commit 6cb6a8c "
+     "restored all 7 personalities and HEAD still has them\n"
+     "  STRUCK: Entitlements file has correct integer VID — because commit e0666e5 changed "
+     "<integer>5202</integer> to <string>*</string>\n"
+     "ANSWER: The cause is the entitlements file: idVendor is a string, not an integer."),
+    ("bounce", "both strikes restate the same conclusion",
+     "DIAGNOSTIC SESSION. THEORIES STRUCK OFF SO FAR: 2\n"
+     "  STRUCK: The config timeout is correct — because it reads 5, not 30\n"
+     "  STRUCK: Nothing is wrong with the timeout — because it reads 5, not 30\n"
+     "ANSWER: The cause is the timeout being set to 5."),
+    ("bounce", "a polarity flip dressed as elimination",
+     "DIAGNOSTIC SESSION. THEORIES STRUCK OFF SO FAR: 2\n"
+     "  STRUCK: The driver signature is valid — because codesign reports it unsigned\n"
+     "  STRUCK: Signing is not the problem — because codesign reports it unsigned\n"
+     "ANSWER: It fails because the driver is unsigned."),
+    ("pass", "two genuine rivals, different mechanisms",
+     "DIAGNOSTIC SESSION. THEORIES STRUCK OFF SO FAR: 2\n"
+     "  STRUCK: Info.plist is missing USB personalities — because all 7 are present at HEAD\n"
+     "  STRUCK: The entitlement VID is wrong — because it matches the device at 0x1452\n"
+     "ACTIONS: run_command('log show --predicate kext')\n"
+     "RESULT: 'version 123456 exceeds maximum 5 digits'\n"
+     "ANSWER: That leaves the version stamp: CFBundleVersion is six digits and the loader "
+     "rejects anything over five, which is what the log says."),
+    ("pass", "same FILE, different mechanism — still a genuine rival",
+     "DIAGNOSTIC SESSION. THEORIES STRUCK OFF SO FAR: 2\n"
+     "  STRUCK: Info.plist declares the wrong bundle identifier — because it matches the "
+     "signed identifier exactly\n"
+     "  STRUCK: Info.plist is missing the IOKit personality key — because the key is present "
+     "with 7 entries\n"
+     "ACTIONS: run_command('log show --predicate kext')\n"
+     "RESULT: 'version 123456 exceeds maximum 5 digits'\n"
+     "ANSWER: The cause is in the same file but a different key: CFBundleVersion is six "
+     "digits, and the loader log rejects it for exactly that."),
+    ("pass", "honest not-knowing is never punished, whatever the strikes look like",
+     "DIAGNOSTIC SESSION. THEORIES STRUCK OFF SO FAR: 2\n"
+     "  STRUCK: The VID is correct — because it is a string, not an integer\n"
+     "  STRUCK: The VID is fine — because it is a string\n"
+     "ANSWER: I don't know yet. I have looked at the plist and the entitlements and I "
+     "cannot connect either to the load failure. Next I would read the loader log."),
+]
+
+# A real defect is not thereby THE CAUSE. It has to predict THIS symptom.
+DISCRIMINATION = [
+    ("bounce", "a cause named with no prediction and no check",
+     "DIAGNOSTIC SESSION. THEORIES STRUCK OFF SO FAR: 3\n"
+     "ACTIONS: read_file('entitlements.plist')\nRESULT: <string>*</string>\n"
+     "ANSWER: The driver fails to load because idVendor is a string rather than an integer."),
+    ("bounce", "a prediction stated but never looked for",
+     "DIAGNOSTIC SESSION. THEORIES STRUCK OFF SO FAR: 3\n"
+     "ACTIONS: read_file('entitlements.plist')\nRESULT: <string>*</string>\n"
+     "ANSWER: It's the string VID. If that were it we'd see a matching failure in the "
+     "loader log. I haven't checked the log, but that's the cause."),
+    ("bounce", "the named cause does not explain the reported symptom",
+     "DIAGNOSTIC SESSION. THEORIES STRUCK OFF SO FAR: 3\n"
+     "QUESTION: the driver loads but no device appears\n"
+     "ACTIONS: read_file('Info.plist')\nRESULT: CFBundleVersion 123456\n"
+     "ANSWER: The cause is CFBundleVersion being six digits, which stops the driver loading."),
+    ("pass", "prediction made, and the evidence shows it was checked",
+     "DIAGNOSTIC SESSION. THEORIES STRUCK OFF SO FAR: 3\n"
+     "ACTIONS: run_command('log show --predicate kext')\n"
+     "RESULT: 'version 123456 exceeds maximum 5 digits' at 14:02\n"
+     "ANSWER: The cause is the six-digit CFBundleVersion. If it were the VID instead the "
+     "log would name a matching failure; it names the version, and only that."),
+    ("pass", "the fix was applied and the symptom went away",
+     "DIAGNOSTIC SESSION. THEORIES STRUCK OFF SO FAR: 3\n"
+     "ACTIONS: edit_file('Info.plist')\nRESULT: ok\n"
+     "ACTIONS: run_command('kmutil load')\nRESULT: loaded, device enumerated\n"
+     "ANSWER: It was the six-digit version stamp. Shortened it and the driver loads."),
+    ("pass", "offered as a candidate, not asserted as the conclusion",
+     "DIAGNOSTIC SESSION. THEORIES STRUCK OFF SO FAR: 3\n"
+     "ACTIONS: read_file('Info.plist')\nRESULT: CFBundleVersion 123456\n"
+     "ANSWER: My best guess is the six-digit version stamp, but I have not tested it and "
+     "the log would settle it either way."),
+]
+
 BATTERIES = {"evidence": EVIDENCE, "belief": BELIEF, "effects": EFFECTS,
-             "diagnosis": DIAGNOSIS}
+             "diagnosis": DIAGNOSIS, "rivals": RIVALS,
+             "discrimination": DISCRIMINATION}
+BATTERIES_ALL = BATTERIES
 
 
 def verdict_of(text):
@@ -221,14 +303,14 @@ def run(name, cases):
 
 if __name__ == "__main__":
     pick = sys.argv[1:] or list(BATTERIES)
-    bad = [p for p in pick if p not in BATTERIES]
+    bad = [p for p in pick if p not in BATTERIES_ALL]
     if bad:
-        sys.exit(f"no such battery: {', '.join(bad)}. have: {', '.join(BATTERIES)}")
+        sys.exit(f"no such battery: {', '.join(bad)}. have: {', '.join(BATTERIES_ALL)}")
     print(f"reviewer regression — prompt is {len(SUPEREGO_PROMPT)} chars, read live from forge.agent")
     tot = hits = 0
     per = []
     for p in pick:
-        o, n = run(p, BATTERIES[p])
+        o, n = run(p, BATTERIES_ALL[p])
         hits += o
         tot += n
         per.append(f"{p} {o}/{n}")

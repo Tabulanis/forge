@@ -408,3 +408,28 @@ See `git log` before `2026-09-05` for the detail.
   > one-directional blind spot: "benefit named, harm waved at" PASSES while its
   > mirror image correctly bounces. It was invisible while the instrument was a
   > coin. Not fixed here — found, and recorded.
+- **2026-09-10** — **Two new reviewer rules: a cause must DISCRIMINATE, and a
+  strike must remove a DIFFERENT candidate.** Both aimed at the two halves of
+  run 7's failure. *Discriminate:* a real defect is not thereby the cause. The
+  answer must say what it expected to see if the cause were true, and the
+  evidence must show it LOOKED; a check counts only if its result would have
+  differed had the cause been wrong (applying the fix and watching the symptom
+  go counts, re-reading the defect does not). A cause that cannot produce the
+  REPORTED symptom bounces. Honest not-knowing and an explicit "best guess,
+  untested" pass. *Rivals:* a strike whose theory is the named cause NEGATED
+  removes no candidate — the field is as wide after it as before. Two strikes
+  saying the same thing count as one. Same object with a different mechanism is
+  a genuine rival and counts.
+  Measured on the PINNED judge, which is the only reason these numbers mean
+  anything: rivals 3/6 without the rule → **4/6** with it, and discrimination
+  5/6 → **6/6** — the two rules hold each other up. diagnosis stays 7/7.
+  > **Retracted:** the rivals rule was declared a failure earlier the same day
+  > on scores of 3/6, 4/6, 3/6 and then 4/6, 4/6, 2/6, and pulled from the
+  > prompt. Those were six samples of a coin, not six measurements. It was
+  > restored and re-tried once the judge was pinned. The lesson is the same one
+  > that bit twice yesterday: a check that measures the wrong quantity reads as
+  > a finding.
+  > **Known limit:** one reproducible false bounce remains — "two genuine
+  > rivals, different mechanisms" bounces when it should pass. A rule that
+  > punishes correct reasoning is the failure that gets a gate switched off, so
+  > this is the next thing to fix, and it is now measurable.
