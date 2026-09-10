@@ -33,7 +33,7 @@ import httpx
 
 from . import (audio_nerve, bioacoustics, browser, business, cad, cortex,
                datasets, doolittle, frameworks, history, identity, law, markets,
-               medical, myrecord, news, owntools, persona, ruleout, sims,
+               knowing, medical, myrecord, news, owntools, persona, ruleout, sims,
                toolindex, vault)
 from .codetools import syntax_check
 from .config import load_config
@@ -2502,6 +2502,31 @@ def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provi
                                 "description": "how many headlines (default 25)"}},
                         "required": []},
             run=lambda sources=None, limit=25: news.feed(sources, limit, ws_root=ws.root),
+        ),
+        Tool(
+            name="do_i_know",
+            description=(
+                "DO I ACTUALLY KNOW THIS, or am I about to make it up? Ask it the "
+                "narrow thing you are about to assert — the name, the number, the "
+                "date — before it goes in an answer.\n"
+                "It asks your own brain the same question several times "
+                "independently. What you know comes back identical; what you are "
+                "inventing comes back different every time. Measured: the boiling "
+                "point of water gave one answer in five samples; the paperclip "
+                "inventor's middle name gave four different ones; an aircraft "
+                "registration gave five.\n"
+                "VARIED means you do not know — that result is certain, so go and "
+                "look it up or say you would have to. CONSISTENT is NOT "
+                "verification: it rules out inventing it fresh and nothing else, "
+                "because a memorised mistake is perfectly consistent."),
+            parameters={"type": "object",
+                        "properties": {
+                            "question": {"type": "string",
+                                "description": "the narrow fact you are about to assert"},
+                            "samples": {"type": "integer",
+                                "description": "how many times to ask yourself (3-9, default 5)"}},
+                        "required": ["question"]},
+            run=knowing.do_i_know,
         ),
         Tool(
             name="history_survey",

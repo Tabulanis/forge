@@ -786,6 +786,30 @@ def t_a_theory_cannot_be_struck_without_evidence():
     finally:
         ruleout.clear_theories()
 
+
+def t_knowing_is_a_one_way_test():
+    """Knowing that she does not know is the part that matters most: a confident
+    wrong answer costs more than "I'd have to look", and it costs whoever
+    believed it. She cannot feel the difference, so it is measured — ask the same
+    narrow question several times and compare. What she knows comes back
+    identical; what she invents varies. Measured 2026-09-09: boiling point of
+    water 1 distinct answer in 5, paperclip inventor's name 4, an aircraft
+    registration 5.
+
+    The guard is about the WORDING, because that is where this goes wrong.
+    Consistency must never be reported as verification — the 1923 FA Cup
+    attendance came back identical five times and is still wrong to state as
+    exact. Selling that as "verified" would trade a loud failure for a quiet
+    one."""
+    import inspect
+    from forge import knowing
+    src = inspect.getsource(knowing)
+    consistent_branch = src[src.find("Consistent across"):]
+    return ("NOT verification" in consistent_branch
+            and "memorised mistake" in consistent_branch
+            and "DO NOT KNOW THIS" in src
+            and "certain result" in src)
+
 # ---------------------------------------------------------------- context
 def t_overhead_counted():
     """The bare 400: schemas + system prompt were invisible, so a turn read 19%
@@ -1101,6 +1125,7 @@ CHECKS = [
     ("tools: path tools work from where SHE stands", t_path_tools_work_from_where_she_stands, False),
     ("bughunt: survey flags the build commit", t_history_survey_flags_the_build_commit, False),
     ("bughunt: no striking a theory without evidence", t_a_theory_cannot_be_struck_without_evidence, False),
+    ("truth: knowing is a ONE-WAY test", t_knowing_is_a_one_way_test, False),
     ("record: she can see her own verdicts", t_she_can_see_her_own_record, False),
     ("record: a pattern reaches her unasked", t_a_standing_pattern_reaches_her_unasked, False),
     ("memory: junk never becomes a memory", t_junk_never_becomes_a_memory, False),
