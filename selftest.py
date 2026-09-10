@@ -810,6 +810,25 @@ def t_knowing_is_a_one_way_test():
             and "DO NOT KNOW THIS" in src
             and "certain result" in src)
 
+
+def t_belief_and_popularity_are_not_facts():
+    """What is TRUE, what is BELIEVED, and what is POPULAR are three different
+    things, and stating one as another is a bounce. A story, a scripture or a
+    myth can be reported — "Genesis describes...", "in Norse myth..." — and that
+    is accurate. Asserting its content as fact about the world is not. Neither
+    is "most people think X" establishing X, nor "everyone knows", nor "studies
+    show" with no study.
+
+    It cuts BOTH ways by design and the guard checks that: a religious claim
+    asserted as established fact and a claim that a belief has been disproven
+    are the same error in different clothes. Describing a belief accurately and
+    respectfully, in its own terms, is never the error."""
+    from forge.agent import SUPEREGO_PROMPT as P
+    return ("three different things" in P
+            and "never establishes" in P
+            and "no favourites" in P
+            and "in its own terms, is never the error" in P)
+
 # ---------------------------------------------------------------- context
 def t_overhead_counted():
     """The bare 400: schemas + system prompt were invisible, so a turn read 19%
@@ -1126,6 +1145,7 @@ CHECKS = [
     ("bughunt: survey flags the build commit", t_history_survey_flags_the_build_commit, False),
     ("bughunt: no striking a theory without evidence", t_a_theory_cannot_be_struck_without_evidence, False),
     ("truth: knowing is a ONE-WAY test", t_knowing_is_a_one_way_test, False),
+    ("truth: belief and popularity are not facts", t_belief_and_popularity_are_not_facts, False),
     ("record: she can see her own verdicts", t_she_can_see_her_own_record, False),
     ("record: a pattern reaches her unasked", t_a_standing_pattern_reaches_her_unasked, False),
     ("memory: junk never becomes a memory", t_junk_never_becomes_a_memory, False),
