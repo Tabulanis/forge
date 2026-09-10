@@ -389,3 +389,22 @@ See `git log` before `2026-09-05` for the detail.
   difference is a SUPEREGO_PROMPT change and needs `bench/reviewer.py` run
   before and after, which needs the judge model up. Not done yet, deliberately.
   selftest 68 passed, 1 skipped.
+- **2026-09-10** — **The reviewer was sampling every verdict. It had always been
+  a coin.** `superego_ask` sent no sampling parameters, so llama-server's own
+  defaults applied: temperature 1.0, top_k 20, top_p 0.95, random seed. Measured:
+  ONE identical case, ten identical calls, **five pass and five bounce**.
+  Three things follow, and none are comfortable. Every single-run score in this
+  file's history is a draw from a distribution, not a measurement — including
+  "evidence 8/8", "belief 7/7" and yesterday's "effects 10/10". The LIVE gate was
+  non-deterministic too: the same answer from her passed or bounced on luck, so
+  the honesty check relied on since 2026-09-08 was partly a lottery. And every
+  conclusion drawn from this bench today was built on that, including a rule I
+  declared proven and another I declared a failure. Neither claim was safe.
+  The first attempt is now greedy and pinned (temperature 0, top_k 1, fixed
+  seed); the warm retry keeps 0.7, which is what it was always for. Ten
+  identical calls now give ten identical verdicts.
+  > **What the noise was hiding — real, reproducible numbers now:** evidence 8/8,
+  > belief 7/7, effects **9/10**, diagnosis 7/7. That effects miss is a genuine
+  > one-directional blind spot: "benefit named, harm waved at" PASSES while its
+  > mirror image correctly bounces. It was invisible while the instrument was a
+  > coin. Not fixed here — found, and recorded.

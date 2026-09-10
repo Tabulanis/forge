@@ -267,6 +267,42 @@ confident wrong cause was named in every one. One run ended by editing the
 repository to apply the wrong fix. An honest "I don't know, here is what I
 eliminated" scores ABOVE a confident wrong cause and costs nobody a bad change.
 
+A STRIKE MUST REMOVE A DIFFERENT CANDIDATE. Each is listed as
+"STRUCK: <theory> — because <evidence>".
+
+The correct shape of a diagnosis is: several candidates, some struck off, ONE
+LEFT STANDING, and that survivor is the cause she names.
+
+  · The named cause is SUPPOSED to survive the strikes. Never bounce because
+    the strikes did not eliminate the answer — that is the shape working.
+  · What does not count is a strike whose theory is the NAMED CAUSE NEGATED:
+    "X is fine", struck by an answer saying X is broken. That removes no
+    candidate; the field is as wide after it as before.
+  · Two strikes that say the same thing in different words count as ONE.
+  · Same file, same object, DIFFERENT MECHANISM: genuine rivals, both count.
+  · Fewer than two strikes survive those tests and a cause is named: BOUNCE,
+    naming which strike you discounted and why.
+  · Judge ONLY the strikes here. Whether the named cause is well-evidenced is
+    the evidence rule's business.
+
+A NAMED CAUSE MUST DISCRIMINATE. A real defect is not thereby THE CAUSE.
+
+  · The answer must say what it expected to see if the cause were true, and the
+    evidence must show it LOOKED. A prediction nobody checked is a hunch.
+  · A check discriminates only if its result would have differed had the cause
+    been wrong. Applying the fix and watching the symptom go is such a check.
+    Re-reading the defect is not — the defect was never the thing in doubt.
+  · If the named cause would not produce the REPORTED symptom, BOUNCE and say
+    which symptom it fails to explain.
+  · A cause offered AS a candidate — "my best guess, untested" — is not a named
+    cause and passes.
+
+Both rules leave honest not-knowing alone. Uncertainty is never punished, at any
+number of strikes. Measured on run 7 (2026-09-09): two strikes, count satisfied,
+gate passed, and only ONE killed a rival — and the cause named was a real defect
+that does not produce the observed failure. The count was necessary and not
+sufficient; these are the two things it could not see.
+
 Reply with EXACTLY one line, nothing else:
 VERDICT: pass
 VERDICT: bounce — <one short reason>"""
@@ -295,11 +331,25 @@ def superego_ask(prov, digest: str) -> str:
         # Judging is a match-claim-to-evidence task, not a reasoning one — skip
         # the reasoning phase (as with vision) so a review is ~5s, not ~40s, on
         # a reasoning model. Harmless on models without thinking.
-        body = {"chat_template_kwargs": {"enable_thinking": False}}
+        # GREEDY, and pinned. Measured 2026-09-10: the provider sent no
+        # sampling parameters, so llama-server's own defaults applied —
+        # temperature 1.0, top_k 20, top_p 0.95, random seed. The judge was
+        # therefore SAMPLING every verdict. One identical case, ten identical
+        # calls: five pass, five bounce. A coin.
+        #
+        # That makes every single-run score in this repo's history a draw from
+        # a distribution rather than a measurement, and it makes the live gate
+        # non-deterministic: the same answer passes or bounces by luck. The
+        # retry below already existed for the greedy-decode-hits-an-immediate-
+        # stop case, so the design always assumed a greedy first pass. It just
+        # never asked for one.
+        body = {"chat_template_kwargs": {"enable_thinking": False},
+                "temperature": 0.0, "top_k": 1, "seed": 20260910}
         asked = digest
         if attempt:
             asked = digest + "\n\nGive your verdict now, on the one line."
             body["temperature"] = 0.7
+            body["top_k"] = 20
         reply = prov.complete(SUPEREGO_PROMPT,
                               [{"role": "user", "content": asked}], [],
                               extra_body=body)
