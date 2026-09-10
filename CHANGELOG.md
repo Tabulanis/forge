@@ -464,3 +464,24 @@ See `git log` before `2026-09-05` for the detail.
   effects 9/10 → **10/10**, belief unchanged 7/7, evidence 8/8, diagnosis 7/7.
   > Worth recording plainly: the lean ran toward protecting institutions, and it
   > sat unseen for a month because the sampling noise masked it.
+- **2026-09-10** — **A bounce named two faults; she fixed one and got through.**
+  From a real session: the review sent an answer back for claiming BOTH that
+  `request_credentials` exists AND that `cred:sudo_pass` handles exist. She
+  verified the tool, restated the invented handle unchanged, and the re-review
+  PASSED her. Cause: the bounce reason was injected into HER history but never
+  into the JUDGE's evidence, so the re-review judged the new answer from
+  scratch and could not tell a fully corrected answer from a partly corrected
+  one. It now carries "THIS ANSWER IS A SECOND ATTEMPT. THE REVIEW SENT THE
+  FIRST ONE BACK FOR: ..." Verified against a faithful reproduction of the real
+  turn: **without the line it PASSES, with it it BOUNCES.**
+  > **The rule written for this was deleted, because the wiring alone did the
+  > job.** A ~900-character prompt block was added to teach the judge to check
+  > each named fault; the reproduction bounces identically without it. Once the
+  > judge can see what it asked for, it does the rest by itself. Given that
+  > rules in this prompt were shown today to interact unpredictably with each
+  > other and with position in the digest, the smaller change is the better one.
+  > **My first test of this was worthless and nearly shipped.** The short cases
+  > I invented bounced with OR without the fix, because a bad claim in a short
+  > answer is prominent. The real failure was a bad claim BURIED in a mostly
+  > supported one. Only a faithful reproduction discriminated. Third time today
+  > that inventing the test shape produced a number that meant nothing.

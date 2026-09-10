@@ -1057,6 +1057,7 @@ class Agent:
         server_retried = False
         force_compacted = False
         superego_bounced = False
+        _prior_bounce_reason = ""
         grounding_nudged = False
         format_nudged = False      # tool call emitted as plain text
         repeat_nudged = False      # same passage generated repeatedly
@@ -1571,8 +1572,8 @@ class Agent:
                 # touches her prompt cache.
                 if self.superego and get_mode(self.active_mode)["superego"]:
                     t0 = time.time()
-                    verdict, reason = self._superego_review(turn_start,
-                                                            reply.text or "")
+                    verdict, reason = self._superego_review(
+                        turn_start, reply.text or "", _prior_bounce_reason)
                     # The review still runs (she stays honest), but an
                     # off-the-record chat records nothing — skip the ledger.
                     if not self.ephemeral:
@@ -1590,6 +1591,7 @@ class Agent:
                     # gets recorded, not acted on — no infinite arguments.
                     if verdict == "bounce" and not superego_bounced:
                         superego_bounced = True
+                        _prior_bounce_reason = reason
                         yield Event(kind="note",
                                     text=f"Superego review: {reason} — "
                                          f"sent back for another look.")
@@ -1726,7 +1728,8 @@ class Agent:
 
     # -- the superego gate --------------------------------------------
 
-    def _evidence_digest(self, turn_start: int, final_text: str | None) -> str:
+    def _evidence_digest(self, turn_start: int, final_text: str | None,
+                         prior_bounce: str = "") -> str:
         """Deterministic summary of what actually happened this turn.
         With final_text it's the reviewer's evidence file (plus the
         session's prior claims, so contradictions are visible); without,
@@ -1799,14 +1802,23 @@ class Agent:
                 pass          # the gate is a nicety; never break a turn over it
             # NEVER clip the thing being judged — a clipped answer reads as an
             # answer that trails off, and got bounced for exactly that.
+            # A bounce names specific faults. Without them here the judge
+            # re-judges from scratch and cannot tell a fully corrected answer
+            # from a partly corrected one. Measured live 2026-09-10: the
+            # reviewer named TWO unverified claims, she verified one and
+            # restated the other, and the re-review passed her.
+            if prior_bounce:
+                lines.append("THIS ANSWER IS A SECOND ATTEMPT. THE REVIEW SENT "
+                             f"THE FIRST ONE BACK FOR: {_cut(prior_bounce, 400)}")
             lines.append(f"FINAL ANSWER: {final_text}")
         return "\n".join(lines)
 
-    def _superego_review(self, turn_start: int, final_text: str) -> tuple[str, str]:
+    def _superego_review(self, turn_start: int, final_text: str,
+                         prior_bounce: str = "") -> tuple[str, str]:
         """Ask the sealed reviewer for a verdict. Fails OPEN: if the judge
         is unreachable or answers gibberish, the work passes — the gate
         must never take the whole agent down with it."""
-        digest = self._evidence_digest(turn_start, final_text)
+        digest = self._evidence_digest(turn_start, final_text, prior_bounce)
         try:
             from . import forensic
             forensic.record(getattr(self, "session_id", ""), "superego_evidence",
