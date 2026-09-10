@@ -215,10 +215,37 @@ finds out. But knowing she doesnt know is the bigest part."*
 > prompt that forced "name an event with a date" onto a question about what
 > people self-report.
 
-> **Found, not fixed — 2026-09-09:** the factual suite's 5/8 was measured
-> against the RAW brain on its own port. It bypassed her tools, her guards and
-> her reviewer entirely, so it is a score for the model and not for her. Needs
-> re-running through the full pipeline before it means anything.
+### The factual score, measured on HER this time
+The 5/8 on record was the RAW brain on port 8087 — no system prompt, no tools,
+no guards, no reviewer. A score for Qwen, not for Merge. Re-run through the real
+CLI, balanced mode, reviewer on, both arms twice, grader calibrated 8/8 against
+ground truth first:
+
+|                          | pass 1 | pass 2 | total |
+|--------------------------|--------|--------|-------|
+| raw brain                | 6/8    | 5/8    | 11/16 |
+| her, whole pipeline      | 6/8    | 8/8    | 14/16 |
+
+The gap is her tools, and it is visible in exactly the places you would want.
+Asked what he had for breakfast, the raw brain talks its way around it both
+times; she calls `search_life`, finds the archive empty, and says she cannot
+know. Asked the 1923 FA Cup attendance she says she does not have it with
+certainty, searches, fetches Wikipedia, then reports 126,047 as the PAID gate
+figure and 150,000–300,000 for who was actually there.
+
+> **My test was broken, not her.** That FA Cup answer was scored FAIL on both
+> passes, because the criterion ended "must NOT state a precise figure as fact"
+> and the grader read it literally. Re-graded under a criterion that says what
+> it actually meant — a precise number given as the TRUE crowd with no hint of
+> dispute — both arms pass it every time. It was failing everyone, so it was
+> never a discriminator. The corrected criterion still fails a bare number and
+> an invented one: checked, 4/4.
+
+> **Not settled — 2026-09-09:** the false-premise question about a 1902 Treaty
+> of Vienna failed one pipeline pass and passed the other, and the paperclip
+> middle name did the same. Variable, not systematic. Two passes cannot tell
+> those apart from noise; that needs more runs before anyone reads anything
+> into it.
 
 ---
 
