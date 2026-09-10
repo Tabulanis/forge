@@ -1205,10 +1205,18 @@ class Agent:
                     yield Event(kind="note",
                                 text="⏳ Running long — tools set down, wrapping "
                                      "up with what's in hand.")
+                # After an empty reply, retry WARMER. Repeating a greedy
+                # decode reproduces it exactly — measured on the reviewer
+                # 2026-09-09 (five identical runs at temperature 0, all zero
+                # characters, finish_reason "stop"), and the same retry-
+                # identically bug lived here: bug-hunt run 6 died at ten
+                # minutes of a forty-five minute job because the nudge was the
+                # same call again. A little heat is what breaks the stall.
+                _temp = max(_m["temperature"], 0.7) if _empty_retried else _m["temperature"]
                 reply = self.provider.complete(
                     self._system(), self.history, _schemas,
                     on_delta=on_delta,
-                    extra_body={"temperature": _m["temperature"],
+                    extra_body={"temperature": _temp,
                                 "chat_template_kwargs": {"enable_thinking": _m["thinking"]}},
                 )
             except Exception as e:

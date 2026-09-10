@@ -1192,8 +1192,35 @@ def t_survey_hides_no_candidate():
     return bool(target) and target in short and "NOT SHOWN" not in short
 
 
+def t_empty_reply_retries_warmer():
+    """After an empty reply the retry must not be the same greedy call again.
+
+    Bug-hunt run 6 (2026-09-09) died ten minutes into a forty-five minute job:
+    the main brain returned empty, the code nudged it with an IDENTICAL request
+    at the same temperature, got empty again, and ended the turn. Measured on
+    the reviewer the same day, a greedy decode reproduces an empty completion
+    exactly -- five for five. Heat is what breaks it.
+
+    Reads the source rather than driving a whole turn: what matters is that the
+    retry path raises the temperature, and a full agent loop needs a provider,
+    a workspace and a model.
+    """
+    import inspect
+    from forge.agent import Agent
+    src = inspect.getsource(Agent)
+    i = src.find("_empty_retried")
+    if i < 0:
+        return False
+    # the temperature handed to complete() must depend on _empty_retried
+    return ("max(_m[\"temperature\"], 0.7) if _empty_retried" in src
+            and "\"temperature\": _temp" in src)
+
+
 # ------------------------------------------------------------------- main
 CHECKS = [
+    ("agent: an empty reply retries warmer, not identically",
+     t_empty_reply_retries_warmer, False),
+
     ("history: the survey hides no candidate commit",
      t_survey_hides_no_candidate, False),
 
