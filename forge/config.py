@@ -113,6 +113,14 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "whisper_model": "~/whisper.cpp/models/ggml-small.en.bin",
         "tts_command": "spd-say",
         "piper_voice": "~/forge/models/voices/en_US-amy-medium.onnx",
+        # A TV she can cast to (forge.cast). Blank by default because it's
+        # particular to one house — put the TV's ADDRESS in your own
+        # config.yaml. Not its name: name lookup is an mDNS broadcast and a
+        # VPN eats it. cast_host blank = work out this machine's address from
+        # the routing table.
+        "cast_device": "",
+        "cast_host": "",
+        "cast_port": 8921,
     },
 }
 

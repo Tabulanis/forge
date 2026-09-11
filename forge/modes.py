@@ -54,6 +54,10 @@ _CORE = {
     "extract_pose",                                                 # a skeleton from any picture
     "finish_video",                                                 # refine + smooth an approved draft
     "storyboard", "story_video",                                    # plan as stills, fill as motion
+    # 2026-09-10: a screen in another room. Casting is three steps that each
+    # fail silently (convert, serve with byte ranges, point the TV at it), so
+    # it is a tool rather than something she assembles out of shell commands.
+    "cast_video", "cast_control", "cast_status",                    # her hands, in the living room
 }
 
 # 2026-09-08: every mode now advertises EVERY tool she has ("tools": None means
@@ -79,6 +83,9 @@ TOOL_SETS = {
     "browser": {"browse", "browser_js", "browser_view", "browser_console"},
     "pictures": {"generate_image", "look_at_image"},
     "video": {"generate_video", "finish_video", "look_at_video"},
+    # Starting something on a TV without being able to pause or stop it is the
+    # half-a-belt bug again, and worse here: it plays in a room full of people.
+    "casting": {"cast_video", "cast_control", "cast_status"},
     "loras": {"lora_search", "lora_install", "lora_list"},
     # Her ears: seeing a sound, pulling a mixture apart, and recalling one.
     # Half this set is a bug the same way half the browser set was.

@@ -31,7 +31,7 @@ from typing import Callable
 
 import httpx
 
-from . import (audio_nerve, bioacoustics, browser, business, cad, cortex,
+from . import (audio_nerve, bioacoustics, browser, business, cad, cast, cortex,
                datasets, doolittle, frameworks, history, identity, law, markets,
                knowing, medical, myrecord, news, owntools, persona, ruleout, sims,
                toolindex, vault)
@@ -3065,6 +3065,50 @@ def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provi
                       _generate_video(str(ws.root), prompt, image, seconds, filename, seed, quality, width=width, height=height, aspect=aspect, lock=lock, loras=loras, detail=detail)),
             needs_permission=True,
             summarize=lambda a: f"generate video: {a.get('prompt', '')[:60]}",
+        ),
+        Tool(
+            name="cast_video",
+            description="Put a video on the TV in another room. It converts the file first when the TV can't read it — that decoder only takes H.264 with AAC audio in an MP4, and nearly every rip carries a Dolby track it refuses — then serves it from this machine and starts it. If the picture stutters, the file is too big for the link: set fit_kbps to make the stream smaller. Do NOT go looking for a different machine to serve it from; that adds a hop and makes it worse.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "Workspace path of the video to play"},
+                    "fit_kbps": {"type": "integer", "description": "Cap the stream, e.g. 2500, when the picture stutters over wifi"},
+                },
+                "required": ["path"],
+            },
+            run=guard(lambda path, fit_kbps=None: cast.play(path, fit_kbps=fit_kbps, root=str(ws.root))),
+            needs_permission=True,
+            always_ask=True,
+            summarize=lambda a: f"play on the TV: {a.get('path', '')}",
+        ),
+        Tool(
+            name="cast_control",
+            description="Pause, resume, stop, or jump within what's on the TV. seek takes seconds from the start and lands there, because the share answers byte-range requests — a plain file server cannot, and then the TV quietly restarts from zero instead of moving.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string", "enum": ["pause", "resume", "stop", "seek"],
+                               "description": "What to do to the TV"},
+                    "seconds": {"type": "number", "description": "For seek: position in seconds from the start"},
+                },
+                "required": ["action"],
+            },
+            run=lambda action, seconds=None: (
+                cast.seek(seconds) if action == "seek" and seconds is not None
+                else "Error: seek needs `seconds`" if action == "seek"
+                else cast.pause() if action == "pause"
+                else cast.resume() if action == "resume"
+                else cast.stop() if action == "stop"
+                else f"Error: unknown action {action!r}"),
+            needs_permission=True,
+            summarize=lambda a: f"TV: {a.get('action', '')}",
+        ),
+        Tool(
+            name="cast_status",
+            description="What the TV is playing and how far in. Free to call — check it instead of assuming something started.",
+            parameters={"type": "object", "properties": {}},
+            run=lambda: cast.status(),
         ),
         Tool(
             name="storyboard",

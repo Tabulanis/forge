@@ -57,6 +57,15 @@ class MediaConfig:
     # When this file exists (and piper is installed), it wins over
     # tts_command; delete or rename it to fall back to the robot.
     piper_voice: str = str(Path.home() / "forge/models/voices/en_US-amy-medium.onnx")
+    # The TV she can put a video on (forge.cast). An ADDRESS, not a name: a name
+    # lookup is an mDNS broadcast and a VPN swallows it, so discovery reports
+    # "no such device" while the TV sits there answering perfectly well.
+    # cast_host is the address on THIS machine the TV should fetch from; blank
+    # means read it off the routing table, which is the only right answer on a
+    # box with a VPN, a direct cable and wifi all at once.
+    cast_device: str = ""
+    cast_host: str = ""
+    cast_port: int = 8921
 
 
 def load_media_config(cfg: dict) -> MediaConfig:

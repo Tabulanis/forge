@@ -22,6 +22,7 @@ dependencies = [
   "beautifulsoup4>=4.12", # fetch_url page-text extraction
   "piper-tts>=1.6",       # her human voice (pulls onnxruntime)
   "playwright>=1.60",     # headless browser she drives (also run: playwright install chromium)
+  "pychromecast>=14.0",   # casting a video to a TV (forge.cast)
 ]
 
 [project.scripts]
