@@ -33,7 +33,7 @@ import httpx
 
 from . import (audio_nerve, bioacoustics, browser, business, cad, cast, cortex,
                datasets, doolittle, frameworks, history, identity, law, markets,
-               knowing, medical, myrecord, news, owntools, persona, ruleout, sims,
+               godot, house, knowing, medical, myrecord, news, owntools, persona, ruleout, sims,
                toolindex, vault)
 from .codetools import syntax_check
 from .config import load_config
@@ -1385,24 +1385,45 @@ def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provi
                  .replace("“", '"').replace("”", '"').casefold())
 
     def search(pattern: str, path: str = ".", max_results: int = 60) -> str:
-        """Case-insensitive, quote-forgiving content search. One code path
-        on purpose — a previous ripgrep fast-path was case-sensitive while
-        this fallback wasn't, so the same query found different truths
-        depending on what was installed."""
+        """Case-insensitive, quote-forgiving content search of a directory
+        OR a single file. `a|b|c` finds any of the words. A pattern with real
+        regex constructs (\\. \\b [..] (a|b) ^ $ .*) is run as a case-
+        insensitive regex; anything else is plain text, parens included, so
+        `_hook(` finds `_hook(`. The result always
+        says how many files were searched and in which mode, so an empty
+        answer can be checked. One code path on purpose — a previous ripgrep
+        fast-path was case-sensitive while this fallback wasn't, so the same
+        query found different truths depending on what was installed."""
         d = ws.resolve(path)
         # A silent "(no matches)" for a directory that doesn't even exist
         # taught the model that entire real books "contain no mention" of
         # their own protagonist — it searched invented folders (src/,
         # novels/) and read the empty result as fact about the text.
         if not d.exists():
-            return (f"Error: no such directory: {ws.rel(d)} — use list_dir "
+            return (f"Error: no such path: {ws.rel(d)} — use list_dir "
                     f"to see what actually exists before searching in it.")
+        # 2026-09-18: path= pointed at a FILE, os.walk() of a file yields
+        # nothing, and "(no matches)" for `await` hid 22 real ones — the model
+        # reported the tool's silence as a fact about the code. A file is a
+        # perfectly good thing to search; and a regex handed to a substring
+        # search must not silently match nothing either.
+        _rx = None
+        # Real regex constructs only — a bare "(" in `_hook(` is code, not a group.
+        if re.search(r"\\[.bwsdBWSD(]|\[[^\]]+\]|\([^)]*\|[^)]*\)|\^|\$|\.\*|\.\+|\{\d", pattern):
+            try:
+                _rx = re.compile(pattern, re.I)
+            except re.error:
+                _rx = None          # not a usable regex after all: search it as text
         # "foot|tall|height" searches all three at once — one wide net
         # beats five guesses. The height that hid from three separate
         # sessions was always one synonym away from the query used.
         needles = [_canon(p) for p in pattern.split("|") if _canon(p.strip())]
-        if not needles:
+        if not needles and _rx is None:
             return "(empty pattern)"
+        _mode = "regex" if _rx is not None else "literal"
+        _matches = (lambda line: _rx.search(line) is not None) if _rx is not None \
+            else (lambda line: any(n in _canon(line) for n in needles))
+        _files = 0
         import time as _time
         _t0 = _time.time()
         _SKIP_DIRS = {"node_modules", "__pycache__", ".git", ".venv",
@@ -1414,7 +1435,9 @@ def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provi
         _MAX_FILE = 1_500_000        # bytes: bigger than this isn't source
         _BUDGET = 8.0                # seconds: never let a search hang
         hits, total, _timed_out = [], 0, False
-        for root, dirs, files in os.walk(d):
+        # a single file is walked as its own one-entry tree
+        _tree = [(str(d.parent), [], [d.name])] if d.is_file() else os.walk(d)
+        for root, dirs, files in _tree:
             dirs[:] = [x for x in dirs if not x.startswith(".") and x not in _SKIP_DIRS]
             if _time.time() - _t0 > _BUDGET:
                 _timed_out = True; break
@@ -1425,9 +1448,10 @@ def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provi
                 try:
                     if fp.stat().st_size > _MAX_FILE:      # skip data blobs
                         continue
+                    _files += 1
                     for i, line in enumerate(fp.read_text(encoding="utf-8",
                                                           errors="ignore").splitlines(), 1):
-                        if any(n in _canon(line) for n in needles):
+                        if _matches(line):
                             total += 1
                             if len(hits) < max_results:
                                 hits.append(f"{ws.rel(fp)}:{i}:{line.strip()[:200]}")
@@ -1448,7 +1472,10 @@ def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provi
                         f"{hits[-1].split(':')[1]}) — the answer may be in the "
                         f"later ones. Use a more specific pattern, or search "
                         f"again reading from higher line numbers.")
-        return "\n".join(hits) if hits else "(no matches)"
+        _footer = f"({_mode} search, {_files} file(s) read)"
+        if not hits:
+            return f"(no matches — {_mode} search, {_files} file(s) read)"
+        return "\n".join(hits) + "\n" + _footer
 
     def save_note(note: str) -> str:
         """Record one lesson in the project notebook.
@@ -2670,6 +2697,92 @@ def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provi
                         "properties": {"name": {"type": "string"}},
                         "required": ["name"]},
             run=owntools.test_tool,
+        ),
+        Tool(
+            name="godot_docs",
+            description=("The official Godot 4.7.2 class reference, from the XML on this box. "
+                         "Look up a class (CharacterBody3D) or one member "
+                         "(CharacterBody3D.move_and_slide) and get the real signature, "
+                         "properties, signals and defaults. Use it BEFORE writing any "
+                         "GDScript or .tscn — never write an API name from memory."),
+            parameters={"type": "object",
+                        "properties": {"query": {"type": "string",
+                                                 "description": "Class or Class.member"}},
+                        "required": ["query"]},
+            run=godot.godot_docs,
+        ),
+        Tool(
+            name="gd_lint",
+            description=("JS-habit linter for one GDScript file, instant, no engine: finds `x == false`, "
+                         "`(a or \"\")` as a value, dict(), .length, `a ? b : c`, await, `Rng.next() %`, "
+                         "glob match(), regex in replace(), lambdas without return, multi-line lambdas "
+                         "in dict literals, `-> String` returning null, int vars taking fractions, inner "
+                         "`class X:` wrappers — each as `file:line: found → write this instead`. "
+                         "godot_check runs it for you first; call it directly to re-check after edits. "
+                         "Absolute path (mount /home/tabulanis/titan-home/... or old-box /home/tabulanis/...)."),
+            parameters={"type": "object",
+                        "properties": {"script_path": {"type": "string"}},
+                        "required": ["script_path"]},
+            run=godot.gd_lint,
+        ),
+        Tool(
+            name="godot_check",
+            description=("Godot's own --check-only pass over one GDScript file on the old box, "
+                         "preceded by gd_lint (JS habits, all sites at once). Absolute path only "
+                         "(mount /home/tabulanis/titan-home/... or old-box /home/tabulanis/...). "
+                         "Returns lint findings, then the engine's parse errors, if any."),
+            parameters={"type": "object",
+                        "properties": {"script_path": {"type": "string"},
+                                       "project_dir": {"type": "string",
+                                                       "description": "optional; defaults to the script's folder"}},
+                        "required": ["script_path"]},
+            run=godot.godot_check,
+        ),
+        Tool(
+            name="godot_run",
+            description=("Run the real engine on a project on the old box and get the real output: "
+                         "action=import (first, once), run (headless; your _ready() prints show up), "
+                         "or export (Linux build into build/). Absolute project_dir only. "
+                         "A Godot job is not done until this has run clean."),
+            parameters={"type": "object",
+                        "properties": {"project_dir": {"type": "string"},
+                                       "action": {"type": "string",
+                                                  "description": "import | run | export (default run)"},
+                                       "quit_after": {"type": "integer",
+                                                      "description": "frames before quitting on run (default 30)"}},
+                        "required": ["project_dir"]},
+            run=godot.godot_run,
+        ),
+        Tool(
+            name="godot_test",
+            description=("Run one yardstick of a Godot project on the old box — tests/<test>_test.gd, "
+                         "a headless SceneTree script that prints a PASS n / n line — and get a "
+                         "reviewer's report: the PASS line, script errors grouped by message with "
+                         "the site, and the first failing cases with expected/got. A port is done "
+                         "when this prints FAIL 0 and you paste the PASS line. Absolute project_dir."),
+            parameters={"type": "object",
+                        "properties": {"project_dir": {"type": "string"},
+                                       "test": {"type": "string",
+                                                "description": "name only: intent | register | playbook | nav | harness"},
+                                       "timeout": {"type": "integer",
+                                                   "description": "seconds before the run is killed (default 120)"}},
+                        "required": ["project_dir", "test"]},
+            run=godot.godot_test,
+        ),
+        Tool(
+            name="machine_state",
+            description=("What hardware and software this house actually has, plus RAM, "
+                         "swap, GPU and disk right now on both boxes. Read this before "
+                         "starting anything heavy, or when you need a real spec instead "
+                         "of a guess — never ask him for numbers you can look up."),
+            parameters={"type": "object",
+                        "properties": {
+                            "live": {"type": "boolean",
+                                     "description": "include the live snapshot (default true)"},
+                            "box": {"type": "string",
+                                    "description": "both | void | old"}},
+                        "required": []},
+            run=house.machine_state,
         ),
         Tool(
             name="list_my_tools",

@@ -714,6 +714,57 @@ How to talk:
   failed and show the relevant part of the error.
 - Keep it conversational and short. No headers or bullet-point walls for
   simple answers.
+
+Know your own house. You run on two machines treated as one: Void (his main box,
+where you live) and the old box pop-os at 10.42.0.1 (headless engine room: Mote,
+ComfyUI, renders, and the game-dev box). The facts are written down and refreshed
+daily, so read them instead of guessing or asking him:
+- ~/aidojo/CLAUDE.md — the short version: what each box is, how they reach each other
+- ~/aidojo/shared/inventory/README.md — at-a-glance table; void.md and titan.md in full
+- ~/aidojo/shared/inventory/snapshot.md — RAM, swap, GPU and disk as of the last refresh
+- `bash ~/aidojo/shared/inventory.sh snapshot` — live state, one line, cheap
+The old box's filesystems are mounted on Void at ~/titan-home, ~/titan-big,
+~/titan-mid and ~/titan-wd, and `ssh 10.42.0.1` works without a password.
+Check RAM before starting anything heavy: Void has 30 GB and its swap is usually
+full, so his work comes first and you unload before anything of his is disturbed.
+Neither box has passwordless sudo — anything needing root is handed to him.
+
+Godot (4.7.2, on the old box at ~/bin/godot; projects under ~/gamedev). Rules learned
+the hard way on 2026-09-18, when a first pass guessed six API facts wrong:
+- Look it up before you write it. godot_docs("Class.member") is the 4.7.2 reference;
+  an API name from memory is a guess. RectangleShape2D is a 2D shape, not a mesh and
+  not a 3D collider; 3D wants BoxMesh/PlaneMesh + BoxShape3D/CapsuleShape3D.
+  CharacterBody3D: set velocity, then move_and_slide() with no arguments.
+  look_at() is a method, not a scene property. Never write a uid= by hand.
+- Absolute paths only. The mount is /home/tabulanis/titan-home/...; a relative
+  path lands inside your own workspace and the old box sees nothing.
+- Nothing is done until the engine says so: godot_check on each script, then
+  godot_run import, then godot_run run, and the real output pasted. A clean run
+  prints your _ready() line and no ERROR lines.
+- Do not invent endpoints or APIs for services you have not read. An empty
+  constant with a TODO is correct; a made-up URL is a lie in the code.
+
+Turn budget (learned 2026-09-18, when a whole turn went to reading and thinking,
+hit the time limit, and left nothing on disk). Every turn has a hard clock, so:
+- Write the first file within your first few tool calls. Read only the one spec
+  file that file needs, write it, godot_check it, then move to the next.
+- Never read everything before writing anything. A turn that ends with nothing
+  on disk is a failed turn, however good the thinking was.
+- One file per turn is fine. If a job lists several files, do them in order and
+  report after each one; the next message picks up where you stopped.
+- write_file takes exactly two arguments: path and content. Nothing else.
+
+Porting to GDScript (learned 2026-09-18, ~150 sites fixed by hand across one port):
+- The loop is yours: write → godot_check (it runs gd_lint first and lists EVERY
+  JS habit at once; Godot itself shows one parse error per run) → fix every listed
+  line → godot_check again until clean → godot_test(project, name) → fix the failing
+  cases → repeat. "Done" is the PASS line with FAIL 0, pasted. Nothing else is done.
+- Trust the tools over your memory of the file: search says how many files it read;
+  gd_lint says which lines. If a result surprises you, re-read the file, then decide.
+- The lint's fixes are the dialect: `not x` (never `== false`), `a if a else b`
+  (never `a or b` as a value), `.size()`/`.length()`, `b if a else c`, no await, a
+  float Rng, RegEx for regexes, `return` in one-line lambdas, named methods instead
+  of multi-line lambdas in dict literals, `-> Variant` when null can come back.
 """
 
 
@@ -1076,6 +1127,7 @@ class Agent:
         superego_bounced = False
         _prior_bounce_reason = ""
         grounding_nudged = False
+        godot_nudged = False        # wrote .gd/.tscn but never ran the engine on it
         format_nudged = False      # tool call emitted as plain text
         repeat_nudged = False      # same passage generated repeatedly
         _empty_retried = False
@@ -1570,6 +1622,38 @@ class Agent:
                                    + BOUNCE_TAIL,
                     })
                     continue
+                # The Godot gate (2026-09-18). Her first Godot job wrote four
+                # files with six wrong API facts and called it done; the fix
+                # list came from a human reading the class reference she had
+                # not opened. A .gd/.tscn/.godot written this message and no
+                # godot_check/godot_run result this message = not done.
+                if not godot_nudged:
+                    _g_wrote, _g_ran = False, False
+                    for m in self.history[turn_start:]:
+                        if m.get("role") != "tool_use":
+                            continue
+                        for c in (m.get("calls") or []):
+                            n = getattr(c, "name", "")
+                            if n in ("godot_check", "godot_run"):
+                                _g_ran = True
+                            elif n in ("write_file", "edit_file") and re.search(
+                                    r"\.(gd|tscn|tres|godot)\b", str(getattr(c, "args", ""))):
+                                _g_wrote = True
+                    if _g_wrote and not _g_ran:
+                        godot_nudged = True
+                        self.history.append({
+                            "role": "user", "synthetic": True,
+                            "content": "Automatic harness check: you wrote Godot "
+                                       "files this message but never ran the engine "
+                                       "on them. Guessed API names are how the last "
+                                       "job went wrong. Run godot_check on each "
+                                       "script and godot_run (import, then run) on "
+                                       "the project, paste the real output, fix what "
+                                       "it reports, and only then finish. If you "
+                                       "truly cannot run it, say exactly why."
+                                       + BOUNCE_TAIL,
+                        })
+                        continue
                 # The superego gate: last check before "done". Sealed judge,
                 # one bounce, every verdict logged.
                 #
@@ -2307,7 +2391,20 @@ class Agent:
                                          f"been running {_waited}s. (Stop cuts "
                                          "it loose if you'd rather move on.)")
         except TypeError as e:
-            result = f"Error: wrong arguments for {call.name}: {e}"
+            if isinstance(call.args, dict) and "_raw" in call.args:
+                # The model's argument JSON did not parse (providers.py wraps it
+                # as _raw). Nearly always the reply hit the token cap mid-file
+                # (seen 2026-09-18: a 26 kB write_file cut off mid-line). Say
+                # so, or she retries the identical call until the turn dies.
+                n = len(str(call.args.get("_raw") or ""))
+                result = (f"Error: your arguments for {call.name} were not valid "
+                          f"JSON — they were cut off after {n} characters. The "
+                          "content is too big for one call: write the file in "
+                          "parts — write_file the first half ending in a line "
+                          "`# ...CONTINUE`, then edit_file that marker into the "
+                          "next part — and keep each call well under that size.")
+            else:
+                result = f"Error: wrong arguments for {call.name}: {e}"
         except Exception as e:
             result = f"Error running {call.name}: {e}"
         finally:
