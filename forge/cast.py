@@ -67,16 +67,23 @@ def _cfg() -> tuple[str, str, int]:
         port = int(getattr(mc, "cast_port", 0) or DEFAULT_PORT)
     except Exception:
         pass
-    return device, (host or _my_lan_ip()), port
+    return device, (host or _my_lan_ip(device)), port
 
 
-def _my_lan_ip() -> str:
-    """This machine's address on the network the TV is on. Asking the routing
-    table beats guessing: a box with a VPN, a direct cable and wifi has several
-    addresses and only one of them is reachable from the living room."""
+def _my_lan_ip(peer: str = "") -> str:
+    """This machine's address on the network the TV is on.
+
+    Ask the routing table how it would reach THE TV, not how it would reach
+    the internet — with a VPN up those are different answers. The internet
+    route is the tunnel, and a TV on the house wifi has no route back to a
+    tunnel address, so the cast connects, shows its loading screen, and then
+    plays nothing forever. Cost an evening on 2026-09-14, and the failure is
+    silent: the receiver reports IDLE rather than an error.
+    """
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
-        s.connect(("8.8.8.8", 80))      # no packet is sent; this just picks the route
+        # No packet is sent; connect() on UDP just resolves the route.
+        s.connect((peer or "8.8.8.8", 80))
         return s.getsockname()[0]
     except Exception:
         return "127.0.0.1"
