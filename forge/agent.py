@@ -765,6 +765,21 @@ Porting to GDScript (learned 2026-09-18, ~150 sites fixed by hand across one por
   (never `a or b` as a value), `.size()`/`.length()`, `b if a else c`, no await, a
   float Rng, RegEx for regexes, `return` in one-line lambdas, named methods instead
   of multi-line lambdas in dict literals, `-> Variant` when null can come back.
+
+Two habits worth more than all of the above (measured over seven files, 2026-09-18):
+- NEVER write a Godot property or method name from memory. Every fix a human had to
+  make to your Godot code that day was a remembered name: `bounce.energy` (it is
+  `light_energy`), `mesh.set_surface_material` (that is MeshInstance3D's, not a
+  mesh's), `xf.xform(v)` (Godot 3; now `xf * v`), `camera.update_projection_matrix`
+  (three.js). An invented property ASSIGNMENT aborts the function it is in, so the
+  rest of that function silently never runs. gd_lint now checks every name against
+  the class it is used on; godot_docs("Class") lists what is really there. Looking
+  it up costs seconds; guessing costs a turn.
+- When a yardstick fails, READ ITS FAILING CASES before forming any theory. They
+  print as `[label] field: want X got Y`. At PASS 462/586 you once answered "the
+  failures are likely materials, tolerances, or node structure" — the tool had
+  listed every one of them, and the true cause was a single missing add_child.
+  Quote the lines you are working from, then fix what they actually say.
 """
 
 
@@ -1669,13 +1684,14 @@ class Agent:
                 # it, so the harness stamps the claim with the number instead —
                 # no bounce (a whole re-turn), just the correction, on the dash
                 # and in her history so the next turn starts from the truth.
-                _stamp = self._receipt_stamp(turn_start, reply.text or "")
+                _stamp = self._receipt_stamp(turn_start, reply.text or "") \
+                    or self._diagnosis_stamp(turn_start, reply.text or "")
                 if _stamp:
                     yield Event(kind="text", text=_stamp)
                     if self.history and self.history[-1].get("role") == "assistant":
                         self.history[-1]["content"] = (self.history[-1]["content"] or "") + _stamp
-                    self._turn_hiccups.append("receipts: claim did not match the yardstick")
-                    yield Event(kind="note", text="Receipts: her claim did not match the last yardstick — stamped with the real number.")
+                    self._turn_hiccups.append("receipts/diagnosis: stamped")
+                    yield Event(kind="note", text="Stamped: the answer did not match the yardstick, or skipped the failing cases it printed.")
                 # The superego gate: last check before "done". Sealed judge,
                 # one bounce, every verdict logged.
                 #
@@ -1852,6 +1868,43 @@ class Agent:
         if last_check is not None and not last_check.startswith("[exit 0]"):
             return "\n\n⚠ Receipts: the last godot_check this message failed — not done."
         return ""
+
+    _FAIL_CASE = re.compile(r"^\s{2,}\[([^\]]{3,120})\]", re.M)
+
+    def _diagnosis_stamp(self, turn_start: int, text: str) -> str:
+        """The stamp for answering a FAILING yardstick without quoting one of
+        the failing cases it printed. 2026-09-18: at PASS 462/586 she wrote
+        "the failures are likely materials / tolerances / node structure" while
+        the tool had listed every one of them, and the real cause was a single
+        missing add_child. Theorising is the expensive habit; the evidence is
+        already in the turn."""
+        names: dict = {}
+        for m in self.history[turn_start:]:
+            if m.get("role") == "tool_use":
+                for c in (m.get("calls") or []):
+                    names[getattr(c, "id", None)] = getattr(c, "name", "")
+        last = None
+        for m in self.history[turn_start:]:
+            if m.get("role") == "tool_result" and names.get(m.get("id")) == "godot_test":
+                last = str(m.get("content") or "")
+        if last is None:
+            return ""
+        pm = self._PASS_LINE.search(last)
+        if not pm or int(pm.group(3)) == 0:
+            return ""                      # nothing failing: nothing to read
+        cases = self._FAIL_CASE.findall(last)
+        if not cases:
+            return ""
+        t = (text or "")
+        for c in cases:
+            core = c.strip()
+            if core and (core in t or core[:40] in t):
+                return ""                  # she quoted one: good
+        shown = "; ".join(cases[:3])
+        return (f"\n\n⚠ Read the failures: godot_test listed {len(cases)} failing "
+                f"case(s) — {shown} — and this answer quotes none of them. Each "
+                "line says want X got Y. Start the next step from those lines, "
+                "not from a theory about what might be wrong.")
 
     # -- coherence guard ----------------------------------------------
     @staticmethod

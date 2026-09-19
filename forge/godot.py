@@ -9,8 +9,9 @@ Written 2026-09-18 after her first Godot pass guessed six API facts wrong while
                  Godot's own --check-only pass over a GDScript file.
   godot_run    — import / headless run / export of a project on the old box,
                  returning the real output and the ERROR lines.
-  gd_lint      — the JS-habit linter on its own (forge/gdlint.py), for
-                 re-checking after edits.
+  gd_lint      — the instant checks on their own: JS habits (forge/gdlint.py)
+                 and wrong-class API names (forge/gdapi.py), for re-checking
+                 after edits.
   godot_test   — run one yardstick (tests/<name>_test.gd) and report the
                  PASS line, script errors grouped, first failing cases.
                  Added 2026-09-18 so she can close the write→check→test→fix
@@ -220,16 +221,19 @@ def _mount_path(script_path: str):
 
 
 def gd_lint(script_path: str) -> str:
-    """JS-habit lint of one GDScript file (no engine): every site, line-numbered, with the fix."""
-    from . import gdlint
+    """Two instant checks on one GDScript file, no engine: JS habits (gdlint)
+    and API names that do not exist on the class they are used on (gdapi —
+    added 2026-09-18, because every human fix to her Godot code that day was a
+    name written from memory instead of looked up)."""
+    from . import gdlint, gdapi
     mp = _mount_path(script_path)
     if mp is None:
         return ("Give an absolute path under /home/tabulanis/titan-home/... (the mount) "
                 "or /home/tabulanis/... on the old box.")
     if not Path(mp).is_file():
         return f"No such file: {mp}"
-    r = gdlint.lint(mp)
-    return r if r else f"GDLINT {Path(mp).name}: clean"
+    parts = [x for x in (gdlint.lint(mp), gdapi.check(mp)) if x]
+    return "\n\n".join(parts) if parts else f"GDLINT {Path(mp).name}: clean"
 
 
 def godot_check(script_path: str, project_dir: str = "") -> str:
