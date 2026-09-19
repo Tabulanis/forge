@@ -1207,15 +1207,20 @@ class Agent:
                     "role": "user", "synthetic": True,
                     "content": f"Automatic time check: this turn has been running "
                                f"{int(_elapsed)} seconds and will be CUT OFF at "
-                               f"{int(_mode_wall)}s. Stop exploring NOW — consolidate "
-                               "what you already have into your answer, note anything "
-                               "unverified as unverified, and finish. FIRST: anything "
+                               f"{int(_mode_wall)}s. Stop exploring NOW. FIRST: anything "
                                "you are holding that must survive — a transcript, a "
                                "list, a finding, notes — write it to a file or "
                                "save_note NOW, before you answer. When this turn is "
-                               "cut, everything not on disk is gone. If real work "
-                               "remains, say exactly what's left so it can be a fresh "
-                               "message." + BOUNCE_TAIL,
+                               "cut, everything not on disk is gone. THEN answer in "
+                               "this form and nothing else:\n"
+                               "LAST RESULT: <the last tool result, pasted verbatim — "
+                               "a PASS line, an [exit n] line, an error>\n"
+                               "CHANGED: <files and what changed in them>\n"
+                               "REMAINING: <exactly what is left, so it can be a fresh "
+                               "message>\n"
+                               "No verdict: do not write done, complete, working or "
+                               "functional — the yardstick decides that, not the "
+                               "summary." + BOUNCE_TAIL,
                 })
             # Final-approach warning: burning the WHOLE step budget kills the
             # turn with nothing delivered ("stopped after 80 steps") — found
@@ -1232,11 +1237,14 @@ class Agent:
                     "content": f"Automatic step check: you have used {step} of "
                                f"{_mode_steps} steps for this message — the turn "
                                "will be CUT OFF at the limit with nothing "
-                               "delivered. Stop investigating NOW. Consolidate "
-                               "what you have found so far into your answer, "
-                               "note anything still unverified as unverified, "
-                               "and finish. If real work remains, say exactly "
-                               "what is left so it can be a fresh message."
+                               "delivered. Stop investigating NOW and answer in "
+                               "this form and nothing else:\n"
+                               "LAST RESULT: <the last tool result, pasted verbatim>\n"
+                               "CHANGED: <files and what changed in them>\n"
+                               "REMAINING: <exactly what is left, so it can be a fresh "
+                               "message>\n"
+                               "No verdict: do not write done, complete, working or "
+                               "functional — the yardstick decides that."
                                + BOUNCE_TAIL,
                 })
             # The pal tap: on a long grind, hand her back her own trail
@@ -1654,6 +1662,20 @@ class Agent:
                                        + BOUNCE_TAIL,
                         })
                         continue
+                # Receipts (2026-09-18). A completion claim has to match the
+                # last yardstick result of this message. She called world.gd
+                # "complete and functional" at PASS 462/586 and guessed at the
+                # causes; the brief had said not to. Instructions don't stop
+                # it, so the harness stamps the claim with the number instead —
+                # no bounce (a whole re-turn), just the correction, on the dash
+                # and in her history so the next turn starts from the truth.
+                _stamp = self._receipt_stamp(turn_start, reply.text or "")
+                if _stamp:
+                    yield Event(kind="text", text=_stamp)
+                    if self.history and self.history[-1].get("role") == "assistant":
+                        self.history[-1]["content"] = (self.history[-1]["content"] or "") + _stamp
+                    self._turn_hiccups.append("receipts: claim did not match the yardstick")
+                    yield Event(kind="note", text="Receipts: her claim did not match the last yardstick — stamped with the real number.")
                 # The superego gate: last check before "done". Sealed judge,
                 # one bounce, every verdict logged.
                 #
@@ -1781,6 +1803,55 @@ class Agent:
             text=f"Stopped after {self.max_steps} steps without finishing. "
                  f"The task may be too big for one message, or the model may be stuck.",
         )
+
+    # -- receipts -------------------------------------------------------
+    _CLAIM_DONE = re.compile(
+        r"\b(complete|completed|done|finished|functional|working|works|passes|passing|"
+        r"ready|all tests pass|fully ported|is correct)\b", re.I)
+    _CLAIM_NEG = re.compile(
+        r"\b(not|isn'?t|never|no longer|far from|still not|nowhere near|incomplete|"
+        r"un)[-\s]*(yet\s+)?(complete|completed|done|finished|functional|working|works|passing|ready)\b", re.I)
+    _PASS_LINE = re.compile(r"PASS (\d+) / (\d+)\s+FAIL (\d+)")
+
+    def _receipt_stamp(self, turn_start: int, text: str) -> str:
+        """The stamp to append when `text` claims completion but the last
+        yardstick / engine check of this message disagrees; '' otherwise.
+        A turn with no yardstick at all is left to the Godot gate."""
+        claim = self._CLAIM_NEG.sub("", text or "")
+        if not self._CLAIM_DONE.search(claim):
+            return ""
+        # Only results of REAL godot_test / godot_check calls count, paired by
+        # call id. 2026-09-18 18:20: the first version matched any tool result
+        # containing the runner's words — a read_file of tests/actor_test.gd —
+        # and stamped an accurate report as an overclaim. A false accusation
+        # is worse than a missed one.
+        names: dict = {}
+        for m in self.history[turn_start:]:
+            if m.get("role") == "tool_use":
+                for c in (m.get("calls") or []):
+                    names[getattr(c, "id", None)] = getattr(c, "name", "")
+        last_test, last_check = None, None
+        for m in self.history[turn_start:]:
+            if m.get("role") != "tool_result":
+                continue
+            n = names.get(m.get("id"))
+            c = str(m.get("content") or "")
+            if n == "godot_test":
+                last_test = c
+            elif n == "godot_check":
+                last_check = c
+        if last_test is not None:
+            pm = self._PASS_LINE.search(last_test)
+            if pm and int(pm.group(3)) > 0:
+                return (f"\n\n⚠ Receipts: the last yardstick this message says "
+                        f"PASS {pm.group(1)} / {pm.group(2)}, FAIL {pm.group(3)} — not done.")
+            if pm is None:
+                return ("\n\n⚠ Receipts: the last yardstick this message did not finish "
+                        "(no PASS line) — not done.")
+            return ""
+        if last_check is not None and not last_check.startswith("[exit 0]"):
+            return "\n\n⚠ Receipts: the last godot_check this message failed — not done."
+        return ""
 
     # -- coherence guard ----------------------------------------------
     @staticmethod
