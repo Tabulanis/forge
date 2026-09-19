@@ -12,6 +12,8 @@ Written 2026-09-18 after her first Godot pass guessed six API facts wrong while
   gd_lint      — the instant checks on their own: JS habits (forge/gdlint.py)
                  and wrong-class API names (forge/gdapi.py), for re-checking
                  after edits.
+  godot_bisect — which uncommitted hunk makes a yardstick fail; replays them
+                 one at a time against the real test (2026-09-19).
   godot_test   — run one yardstick (tests/<name>_test.gd) and report the
                  PASS line, script errors grouped, first failing cases.
                  Added 2026-09-18 so she can close the write→check→test→fix
@@ -251,6 +253,33 @@ def godot_check(script_path: str, project_dir: str = "") -> str:
     rc, out = _ssh(f"cd '{pd}' && {GODOT} --headless --check-only -s '{sp}' 2>&1", timeout=90)
     head = "" if lint_out.endswith(": clean") else lint_out + "\n\n"
     return head + f"[exit {rc}] check-only {Path(sp).name}\n" + _tidy(out)
+
+
+def godot_bisect(project_dir: str, test: str, script_path: str = "", timeout: int = 150) -> str:
+    """Which of my uncommitted edits makes this yardstick fail? Brute force:
+    the committed file is the baseline, each hunk is replayed alone, the real
+    test runs after each. No theory, so no wrong theory. The working file is
+    saved first and restored whatever happens."""
+    from . import gdbisect
+    pd = _old_box_path(project_dir)
+    mount = _mount_path(project_dir)
+    if pd is None or mount is None:
+        return ("project_dir must be absolute: /home/tabulanis/titan-home/gamedev/<name> "
+                "(mount) or /home/tabulanis/gamedev/<name> (old box).")
+    name = re.sub(r"[^a-z0-9_]", "", (test or "").lower().replace("_test.gd", "").replace(".gd", ""))
+    if not name:
+        return "test must be a name like world, actor, viewport (tests/<name>_test.gd)."
+    n = max(10, min(int(timeout or 150), 600))
+
+    def run_test(_project: str, t: str):
+        rc, out = _ssh(f"cd '{pd}' && timeout {n} {GODOT} --headless -s 'tests/{t}_test.gd' 2>&1",
+                       timeout=n + 30)
+        line = next((l for l in out.splitlines() if l.startswith("PASS ") or l.startswith("FATAL")),
+                    f"[exit {rc}] no PASS line")
+        m = re.search(r"FAIL (\d+)", line)
+        return (rc == 0 and m is not None and int(m.group(1)) == 0), line
+
+    return gdbisect.bisect(mount, name, script_path=script_path, run_test=run_test)[:MAX_OUT]
 
 
 def godot_test(project_dir: str, test: str, timeout: int = 120) -> str:

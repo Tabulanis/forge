@@ -2754,6 +2754,27 @@ def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provi
             run=godot.godot_run,
         ),
         Tool(
+            name="godot_bisect",
+            description=("Which of your uncommitted edits broke a yardstick? It takes the "
+                         "committed version of the changed .gd file as the baseline, replays "
+                         "your working-tree changes ONE HUNK AT A TIME, and runs the real test "
+                         "after each — then names the exact lines that flip it. No guessing, and "
+                         "your file is restored whatever happens. Use it instead of theorising "
+                         "about which change caused a regression. Absolute project_dir; test is "
+                         "a name (world, actor, viewport); script_path narrows it when several "
+                         "files changed."),
+            parameters={"type": "object",
+                        "properties": {"project_dir": {"type": "string"},
+                                       "test": {"type": "string",
+                                                "description": "name only: intent | playbook | harness | world | actor | camera | viewport | play"},
+                                       "script_path": {"type": "string",
+                                                       "description": "optional; the one .gd file to bisect"},
+                                       "timeout": {"type": "integer",
+                                                   "description": "seconds per test run (default 150)"}},
+                        "required": ["project_dir", "test"]},
+            run=godot.godot_bisect,
+        ),
+        Tool(
             name="godot_test",
             description=("Run one yardstick of a Godot project on the old box — tests/<test>_test.gd, "
                          "a headless SceneTree script that prints a PASS n / n line — and get a "
