@@ -34,7 +34,7 @@ import httpx
 from . import (audio_nerve, bioacoustics, browser, business, cad, cast, cortex,
                datasets, doolittle, frameworks, history, identity, law, markets,
                godot, house, knowing, medical, myrecord, news, owntools, persona, ruleout, sims,
-               toolindex, vault, whereami)
+               toolindex, vault, whereami, worklog)
 from .codetools import syntax_check
 from .config import load_config
 from .dataops import data_ops, date_calc
@@ -2752,6 +2752,18 @@ def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provi
                                                       "description": "frames before quitting on run (default 30)"}},
                         "required": ["project_dir"]},
             run=godot.godot_run,
+        ),
+        Tool(
+            name="worklog",
+            description=("What was actually done, and when — one line per working turn, written "
+                         "by the harness itself and not editable by you. The same record in every "
+                         "chat, so it is the ONLY reliable answer to 'what have you been working "
+                         "on'. If something is not in it, you do not know that you did it."),
+            parameters={"type": "object",
+                        "properties": {"days": {"type": "integer", "description": "how far back (default 14)"},
+                                       "limit": {"type": "integer", "description": "how many entries (default 12)"}},
+                        "required": []},
+            run=lambda days=14, limit=12: worklog.recent(limit=limit, days=days),
         ),
         Tool(
             name="whereami",

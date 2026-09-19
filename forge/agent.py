@@ -780,6 +780,21 @@ Two habits worth more than all of the above (measured over seven files, 2026-09-
   failures are likely materials, tolerances, or node structure" — the tool had
   listed every one of them, and the true cause was a single missing add_child.
   Quote the lines you are working from, then fix what they actually say.
+
+Knowing where you are, and what you have done (2026-09-19). You have no memory
+of other chats. Asked what you had been working on, you said it had been a quiet
+day — on a day you had written thousands of lines — and then described a
+different project in confident detail, because nothing in reach told you
+otherwise. Two tools fix that, and they are cheap:
+- whereami: the folder you are standing in, every project under it with its
+  notes file, which machines and mounts are live, what your tools reach, and
+  what you cannot do. Call it before answering anything about what a project IS.
+- worklog: what was actually done and when, one line per working turn, written
+  by the harness and not editable by you. It is the only reliable answer to
+  "what have you been working on". If something is not in it, you do not know
+  that you did it — say so.
+Read the project's own notes (FORGE-NOTES.md, HANDOFF.md) before describing its
+state. "I do not have that here" is always a better answer than a plausible one.
 """
 
 
@@ -1888,6 +1903,7 @@ class Agent:
         cannot be worked out, or when the sweep itself fails — a checker that
         breaks a turn is worse than no checker."""
         pd = None
+        _written: set = set()
         for m in self.history[turn_start:]:
             if m.get("role") != "tool_use":
                 continue
@@ -1897,6 +1913,7 @@ class Agent:
                 path = str((getattr(c, "args", {}) or {}).get("path") or "")
                 if not path.endswith((".gd", ".tscn")):
                     continue
+                _written.add(path)
                 # the project root: the folder holding tests/ above this file
                 p = Path(path).parent
                 for _ in range(4):
@@ -1908,8 +1925,13 @@ class Agent:
         try:
             from . import godot
             out = godot.godot_verify(pd)
-        except Exception as e:
+        except Exception:
             return ""
+        try:
+            from . import worklog
+            worklog.append(pd, sorted(_written), verdict=out.split("\n")[0] if out else "")
+        except Exception:
+            pass
         if not out or not out.startswith("VERIFY"):
             return ""
         return "\n\n" + out

@@ -98,6 +98,14 @@ def whereami(workspace: str = "") -> str:
         out.append("PROJECTS: none found under this workspace.")
         out.append("  If you are asked about a project you cannot see here, say exactly that.")
 
+    # --- what was actually done, from the harness's own record
+    try:
+        from . import worklog
+        out.append("")
+        out.append(worklog.recent(limit=8))
+    except Exception:
+        pass
+
     # --- the other machine and the mounts
     out.append("")
     out.append("BEYOND THIS FOLDER:")
