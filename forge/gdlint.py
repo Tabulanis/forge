@@ -58,6 +58,10 @@ _RETURN_NULL = re.compile(r"^\s*return\s*(null)?\s*(#.*)?$")
 _INT_INIT = re.compile(r"^\s*var\s+(\w+)\s*:=\s*-?\d+\s*(#.*)?$")
 _FLOAT_USE = re.compile(r"\b{name}\s*[+\-*/]=\s*[^#\n]*(\d\.\d|/\s)")
 _INNER_CLASS = re.compile(r"^class\s+\w+\s*(\([^)]*\))?\s*:")
+_NEW_FROM = re.compile(
+    r"^\s*(?:var\s+)?(\w+)\s*(?::\s*\w+\s*)?:?=\s*(?:load|preload)\(\s*[\"'](res://[^\"']+\.gd)[\"']\s*\)\s*\.new\(")
+_ADD_CHILD = re.compile(r"\badd_child\(\s*(\w+)\s*[,)]")
+_NOT_A_NODE = {"RefCounted", "Object", "Resource"}
 
 
 def _code_only(line: str) -> str:
@@ -127,6 +131,47 @@ def lint(path: str | Path) -> str:
                     f"`var {name} := 0` is an int; `{name} += ... * 0.5` truncates to int. Initialise with `0.0`.", i, lines[i - 1])
                 break
 
+    # add_child(x) where x was built from a script that is NOT a Node.
+    # 2026-09-19, chunk 5c-1: play.gd did `add_child(actor)`; game/actor.gd `extends
+    # RefCounted`, so the engine refused it ("Required object rp_child is null"). The
+    # checker can know this for certain: it reads the other script's `extends` line.
+    # It never guesses — a script it cannot find or read is simply not flagged.
+    root = p.resolve().parent
+    for _ in range(6):
+        if (root / "project.godot").is_file():
+            break
+        root = root.parent
+    built: dict[str, str] = {}
+    for raw, c in zip(lines, code):
+        if ".new(" not in c:        # code-only blanks string bodies, so match the raw
+            continue                # line — but only where real code calls .new()
+        m = _NEW_FROM.match(raw)
+        if m:
+            built[m.group(1)] = m.group(2)
+    for i, c in enumerate(code, 1):
+        m = _ADD_CHILD.search(c)
+        if not m or m.group(1) not in built:
+            continue
+        res = built[m.group(1)]
+        target = root / res[len("res://"):]
+        try:
+            head = target.read_text(encoding="utf-8")
+        except Exception:
+            continue                      # cannot read it -> say nothing
+        base = ""
+        for l in head.split("\n")[:40]:
+            if l.startswith("extends "):
+                base = l.split(None, 1)[1].strip()
+                break
+        if base and base not in _NOT_A_NODE:
+            continue                      # it IS a Node (or something derived) -> fine
+        what = f"`extends {base}`" if base else "no `extends` line, so RefCounted"
+        hit("add-child-not-a-node", "error",
+            f"add_child() on an object that is not a Node. {res} has {what}. "
+            "A RefCounted lives by reference alone — keep it in a `var`, do not put it in "
+            "the scene tree. Check what a script extends BEFORE writing add_child().",
+            i, lines[i - 1])
+
     # an inner `class X:` holding everything: the script itself should be the class
     top_funcs = sum(1 for c in code if re.match(r"^(static\s+)?func\s", c))
     for i, c in enumerate(code, 1):
@@ -136,7 +181,8 @@ def lint(path: str | Path) -> str:
 
     if not found:
         return ""
-    order = [r[0] for r in RULES] + ["typed-return-null", "int-truncates", "inner-class"]
+    order = [r[0] for r in RULES] + ["typed-return-null", "int-truncates",
+                                     "add-child-not-a-node", "inner-class"]
     out = []
     total = sum(len(v) for v in found.values())
     errors = sum(len(v) for k, v in found.items() if msgs[k][0] == "error")
