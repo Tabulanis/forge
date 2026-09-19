@@ -34,7 +34,7 @@ import httpx
 from . import (audio_nerve, bioacoustics, browser, business, cad, cast, cortex,
                datasets, doolittle, frameworks, history, identity, law, markets,
                godot, house, knowing, medical, myrecord, news, owntools, persona, ruleout, sims,
-               toolindex, vault)
+               toolindex, vault, whereami)
 from .codetools import syntax_check
 from .config import load_config
 from .dataops import data_ops, date_calc
@@ -2752,6 +2752,18 @@ def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provi
                                                       "description": "frames before quitting on run (default 30)"}},
                         "required": ["project_dir"]},
             run=godot.godot_run,
+        ),
+        Tool(
+            name="whereami",
+            description=("Where you are standing and what you can actually reach: the workspace "
+                         "folder, every project under it (newest first, with its notes file), "
+                         "whether the old box and its mounts are live, which of your tools reach "
+                         "outside this machine, and what you cannot do at all. Read at call time, "
+                         "never remembered. Call it before answering any question about what a "
+                         "project IS or what state it is in — you have no memory of other chats, "
+                         "so anything you 'recall' is invented."),
+            parameters={"type": "object", "properties": {}, "required": []},
+            run=lambda: whereami.whereami(str(ws.root)),
         ),
         Tool(
             name="godot_verify",

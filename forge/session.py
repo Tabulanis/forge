@@ -500,9 +500,13 @@ class SessionStore:
             if workspace:
                 ws = Path(workspace).expanduser()
                 if not ws.is_dir():
-                    ws = Path.home() / "Merge"
+                    ws = Path.home()
             else:
-                ws = Path.home() / "Merge"   # her home — a real space, not a scratch dir
+                # 2026-09-19, his call: the whole home. Asked about Penpal from
+                # ~/Merge she could not see the project, and instead of saying
+                # so she described a different one in confident detail. A fence
+                # she cannot see past turns "I don't have that" into invention.
+                ws = Path.home()
             if ws == Path.home() / "Merge":
                 ws.mkdir(exist_ok=True)
             s = Session(sid, ws, cfg)

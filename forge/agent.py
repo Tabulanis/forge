@@ -1697,7 +1697,8 @@ class Agent:
                         self._turn_hiccups.append("verify: RED")
                     yield Event(kind="note", text="Verify ran itself: " + _verdict.split("\n")[0][:120])
                 _stamp = self._receipt_stamp(turn_start, reply.text or "") \
-                    or self._diagnosis_stamp(turn_start, reply.text or "")
+                    or self._diagnosis_stamp(turn_start, reply.text or "") \
+                    or self._grounding_stamp(turn_start, reply.text or "")
                 if _stamp:
                     yield Event(kind="text", text=_stamp)
                     if self.history and self.history[-1].get("role") == "assistant":
@@ -1912,6 +1913,42 @@ class Agent:
         if not out or not out.startswith("VERIFY"):
             return ""
         return "\n\n" + out
+
+    # A claim about what a project IS, or what she DID, is a memory claim: she
+    # has no cross-session memory, so it is invented unless something was read
+    # this turn. 2026-09-19: asked to summarise Penpal in a workspace that does
+    # not contain it, she described a different project in confident detail and
+    # said "yesterday was quiet" on a day she had written thousands of lines.
+    # The right answer was "I do not have that here".
+    _PAST_WORK = re.compile(
+        r"\b(yesterday|last night|this (?:week|morning)|the last (?:day|few days)|so far)\b"
+        r"|\bI(?:'ve| have)? (?:been (?:working|keeping|holding)|worked|wrote|built|fixed|"
+        r"added|finished|didn'?t have|spent)\b", re.I)
+    _STATE_CLAIM = re.compile(
+        r"\b(?:here is|this is) the (?:summary|state|status)\b"
+        r"|\bthe (?:project|board|story|plot|workspace|repo) is (?:currently|sitting|at|in)\b"
+        r"|\b(?:we|it)(?:'re| are| is) (?:currently )?(?:at|sitting|still in)\b"
+        r"|\bas it stands (?:right )?now\b", re.I)
+    _HEDGED = re.compile(
+        r"\bI (?:don'?t|do not|cannot|can'?t) (?:know|have|see|find|tell)\b"
+        r"|\bnot in this workspace\b|\bI have no\b|\bnothing here\b", re.I)
+
+    def _grounding_stamp(self, turn_start: int, text: str) -> str:
+        """Stamp a factual claim about a project's state or her own past work
+        when NOTHING was read this turn to support it."""
+        t = text or ""
+        if not t.strip() or self._HEDGED.search(t):
+            return ""
+        if not (self._PAST_WORK.search(t) or self._STATE_CLAIM.search(t)):
+            return ""
+        for m in self.history[turn_start:]:
+            if m.get("role") == "tool_use" and (m.get("calls") or []):
+                return ""                      # she looked at something: fine
+        return ("\n\n⚠ Nothing was read this turn. You have no memory of other "
+                "sessions, so anything above about what this project IS or what you "
+                "DID is from pattern, not from the files. Read the workspace's notes "
+                "(FORGE-NOTES.md, list_dir, the handoff) and say it again — or say "
+                "plainly that you do not have it here.")
 
     _FAIL_CASE = re.compile(r"^\s{2,}\[([^\]]{3,120})\]", re.M)
 
