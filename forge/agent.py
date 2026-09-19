@@ -1684,6 +1684,18 @@ class Agent:
                 # it, so the harness stamps the claim with the number instead —
                 # no bounce (a whole re-turn), just the correction, on the dash
                 # and in her history so the next turn starts from the truth.
+                # The machine's verdict, stapled on (2026-09-19, his design:
+                # "if checking is cheap, make a super checker that is dumb and
+                # never screws up"). Every check she might skip runs here
+                # instead — she does not get to not call it. A few seconds.
+                _verdict = self._auto_verify(turn_start)
+                if _verdict:
+                    yield Event(kind="text", text=_verdict)
+                    if self.history and self.history[-1].get("role") == "assistant":
+                        self.history[-1]["content"] = (self.history[-1]["content"] or "") + _verdict
+                    if "RED" in _verdict.split("\n")[0]:
+                        self._turn_hiccups.append("verify: RED")
+                    yield Event(kind="note", text="Verify ran itself: " + _verdict.split("\n")[0][:120])
                 _stamp = self._receipt_stamp(turn_start, reply.text or "") \
                     or self._diagnosis_stamp(turn_start, reply.text or "")
                 if _stamp:
@@ -1868,6 +1880,38 @@ class Agent:
         if last_check is not None and not last_check.startswith("[exit 0]"):
             return "\n\n⚠ Receipts: the last godot_check this message failed — not done."
         return ""
+
+    def _auto_verify(self, turn_start: int) -> str:
+        """Run the whole sweep when this turn wrote GDScript, and return the
+        verdict to staple on. Silent when nothing was written, when the project
+        cannot be worked out, or when the sweep itself fails — a checker that
+        breaks a turn is worse than no checker."""
+        pd = None
+        for m in self.history[turn_start:]:
+            if m.get("role") != "tool_use":
+                continue
+            for c in (m.get("calls") or []):
+                if getattr(c, "name", "") not in ("write_file", "edit_file"):
+                    continue
+                path = str((getattr(c, "args", {}) or {}).get("path") or "")
+                if not path.endswith((".gd", ".tscn")):
+                    continue
+                # the project root: the folder holding tests/ above this file
+                p = Path(path).parent
+                for _ in range(4):
+                    if (p / "tests").is_dir() and (p / "project.godot").is_file():
+                        pd = str(p); break
+                    p = p.parent
+        if pd is None:
+            return ""
+        try:
+            from . import godot
+            out = godot.godot_verify(pd)
+        except Exception as e:
+            return ""
+        if not out or not out.startswith("VERIFY"):
+            return ""
+        return "\n\n" + out
 
     _FAIL_CASE = re.compile(r"^\s{2,}\[([^\]]{3,120})\]", re.M)
 

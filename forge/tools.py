@@ -2754,6 +2754,23 @@ def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provi
             run=godot.godot_run,
         ),
         Tool(
+            name="godot_verify",
+            description=("ONE verdict on a Godot project, from the machine rather than from "
+                         "you: the habit lint and the API-name check on every uncommitted .gd, "
+                         "the engine's parser on each, EVERY yardstick in tests/, and — when a "
+                         "yardstick fails and one file is uncommitted — godot_bisect, run for "
+                         "you. Comes back GREEN, AMBER or RED with the facts. The whole sweep "
+                         "costs a few seconds, so run it whenever you want to know where you "
+                         "stand; it also runs by itself at the end of any turn that wrote "
+                         "GDScript. Absolute project_dir."),
+            parameters={"type": "object",
+                        "properties": {"project_dir": {"type": "string"},
+                                       "timeout": {"type": "integer",
+                                                   "description": "seconds for the whole sweep (default 300)"}},
+                        "required": ["project_dir"]},
+            run=godot.godot_verify,
+        ),
+        Tool(
             name="godot_bisect",
             description=("Which of your uncommitted edits broke a yardstick? It takes the "
                          "committed version of the changed .gd file as the baseline, replays "

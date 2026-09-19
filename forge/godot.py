@@ -12,6 +12,11 @@ Written 2026-09-18 after her first Godot pass guessed six API facts wrong while
   gd_lint      — the instant checks on their own: JS habits (forge/gdlint.py)
                  and wrong-class API names (forge/gdapi.py), for re-checking
                  after edits.
+  godot_verify — ONE verdict: lint + API names + parser on every changed file,
+                 every yardstick, and the bisect when something fails. Runs
+                 itself at the end of any turn that wrote GDScript (2026-09-19:
+                 "if checking is cheap, make a super checker that is dumb and
+                 never screws up").
   godot_bisect — which uncommitted hunk makes a yardstick fail; replays them
                  one at a time against the real test (2026-09-19).
   godot_test   — run one yardstick (tests/<name>_test.gd) and report the
@@ -253,6 +258,21 @@ def godot_check(script_path: str, project_dir: str = "") -> str:
     rc, out = _ssh(f"cd '{pd}' && {GODOT} --headless --check-only -s '{sp}' 2>&1", timeout=90)
     head = "" if lint_out.endswith(": clean") else lint_out + "\n\n"
     return head + f"[exit {rc}] check-only {Path(sp).name}\n" + _tidy(out)
+
+
+def godot_verify(project_dir: str, timeout: int = 300) -> str:
+    """Everything the machine can check, in one verdict: the habit lint and the
+    API-name check on every uncommitted .gd, the engine's parser on each, every
+    yardstick in tests/, and — when one file is uncommitted and something fails
+    — the bisect, automatically. The harness runs this at the end of any turn
+    that wrote a .gd, so 'done' is never just an opinion."""
+    from . import verify as _verify
+
+    def _bisect(pd: str, test: str, script: str) -> str:
+        return godot_bisect(pd, test, script_path=script)
+
+    return _verify.verify(project_dir, _ssh, GODOT, _old_box_path, _mount_path,
+                          gd_lint, bisect_fn=_bisect, timeout=timeout)
 
 
 def godot_bisect(project_dir: str, test: str, script_path: str = "", timeout: int = 150) -> str:
