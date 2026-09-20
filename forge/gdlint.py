@@ -201,6 +201,26 @@ def lint(path: str | Path) -> str:
                 "(Awaiting a signal, or a coroutine in another script, is correct — only "
                 "this case is flagged.)", i, lines[i - 1])
 
+    # `x.set_anchor(...)` then `x.set_anchors_preset(...)` on the SAME node: the
+    # preset rewrites all four anchors and silently throws the earlier ones away.
+    # 2026-09-19/20, chunk 5c-2: the chat panel's left anchor was set to 0.6 and
+    # then wiped by PRESET_FULL_RECT two lines later, so the panel covered the
+    # whole window. Named verbatim in a correction; the line survived the rewrite.
+    # Nothing in the API is misused, so no API check can see it — only the picture.
+    anchored: dict[str, int] = {}
+    for i, c in enumerate(code, 1):
+        m = re.search(r"\b(\w+)\.set_anchor(?:_and_offset|_and_margin)?\s*\(", c)
+        if m:
+            anchored[m.group(1)] = i
+            continue
+        m = re.search(r"\b(\w+)\.set_anchors(?:_preset|_and_offsets_preset)\s*\(", c)
+        if m and m.group(1) in anchored:
+            hit("preset-wipes-anchor", "error",
+                f"`{m.group(1)}.set_anchors_preset(...)` rewrites ALL FOUR anchors, "
+                f"throwing away the `set_anchor` on line {anchored[m.group(1)]}. Call the "
+                "preset FIRST and then adjust the one anchor you want, or set all four "
+                "anchors by hand and drop the preset.", i, lines[i - 1])
+
     # an inner `class X:` holding everything: the script itself should be the class
     top_funcs = sum(1 for c in code if re.match(r"^(static\s+)?func\s", c))
     for i, c in enumerate(code, 1):
@@ -211,7 +231,7 @@ def lint(path: str | Path) -> str:
     if not found:
         return ""
     order = [r[0] for r in RULES] + ["typed-return-null", "int-truncates",
-                                     "await-does-nothing", "add-child-not-a-node", "inner-class"]
+                                     "await-does-nothing", "preset-wipes-anchor", "add-child-not-a-node", "inner-class"]
     out = []
     total = sum(len(v) for v in found.values())
     errors = sum(len(v) for k, v in found.items() if msgs[k][0] == "error")
