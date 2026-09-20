@@ -1335,8 +1335,72 @@ def t_power_switch_knows_every_model():
     return True
 
 
+
+def _auto_verify_root(written: str, notes_path):
+    """The exact walk Agent._auto_verify does, lifted so it can be tested."""
+    p = Path(written)
+    if not p.is_absolute() and notes_path:
+        p = Path(notes_path).parent / p
+    p = p.parent
+    for _ in range(5):
+        if (p / "tests").is_dir() and (p / "project.godot").is_file():
+            return str(p)
+        if p == p.parent:
+            break
+        p = p.parent
+    return None
+
+
+def _fake_godot_project():
+    root = Path(tempfile.mkdtemp()) / "penpal"
+    (root / "tests").mkdir(parents=True)
+    (root / "project.godot").write_text("[application]\n")
+    (root / "game").mkdir()
+    (root / "ui" / "panels").mkdir(parents=True)
+    (root / "FORGE-NOTES.md").write_text("# Project notebook\n")
+    return root
+
+
+def t_auto_verify_finds_the_project_from_a_relative_path():
+    """The gate we believed was non-optional had never run once. She writes
+    WORKSPACE-RELATIVE paths ("game/play.gd"); the walk for the project root
+    started at Path(path).parent and climbed "game" -> "." -> "." forever, so
+    it returned early every time. Auto-verify never fired, and neither did the
+    worklog beneath it — the record she reads when asked what she has been
+    doing. Found 2026-09-19 when its absence let four invented Control method
+    names reach a human."""
+    root = _fake_godot_project()
+    notes = root / "FORGE-NOTES.md"
+    return (
+        _auto_verify_root("game/play.gd", notes) == str(root)
+        and _auto_verify_root("ui/panels/thing.gd", notes) == str(root)
+        and _auto_verify_root(str(root / "game" / "play.gd"), notes) == str(root)
+        # and it must stay quiet where there is no Godot project, rather than guess
+        and _auto_verify_root("game/play.gd", None) is None
+    )
+
+
+def t_worklog_writes_a_line_and_reads_it_back():
+    """The worklog is the only thing that survives a session, so a silent
+    failure there is invisible by construction: she simply says the day was
+    quiet. It had never gained a harness-written line."""
+    from forge import worklog
+    d = Path(tempfile.mkdtemp())
+    old = worklog.LOG
+    try:
+        worklog.LOG = d / "worklog.md"
+        worklog.append(str(d / "penpal"), ["game/play.gd"], verdict="VERIFY penpal: GREEN")
+        out = worklog.recent(limit=5)
+        return "play.gd" in out and "penpal" in out
+    finally:
+        worklog.LOG = old
+
 # ------------------------------------------------------------------- main
 CHECKS = [
+    ("harness: auto-verify finds the project from a relative path",
+     t_auto_verify_finds_the_project_from_a_relative_path, False),
+    ("harness: the worklog writes a line and reads it back",
+     t_worklog_writes_a_line_and_reads_it_back, False),
     ("power: the switch knows every model service",
      t_power_switch_knows_every_model, False),
 

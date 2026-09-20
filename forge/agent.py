@@ -1914,11 +1914,21 @@ class Agent:
                 if not path.endswith((".gd", ".tscn")):
                     continue
                 _written.add(path)
+                # 2026-09-19: she writes WORKSPACE-RELATIVE paths ("game/play.gd").
+                # Path("game/play.gd").parent is "game", then ".", and Path(".").parent
+                # is "." forever — so this walk never found a project and BOTH the
+                # auto-verify and the worklog below silently never ran, for weeks.
+                # Anchor to the workspace before walking.
+                p = Path(path)
+                if not p.is_absolute() and self.notes_path:
+                    p = Path(self.notes_path).parent / p
                 # the project root: the folder holding tests/ above this file
-                p = Path(path).parent
-                for _ in range(4):
+                p = p.parent
+                for _ in range(5):
                     if (p / "tests").is_dir() and (p / "project.godot").is_file():
                         pd = str(p); break
+                    if p == p.parent:
+                        break
                     p = p.parent
         if pd is None:
             return ""
