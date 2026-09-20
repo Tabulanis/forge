@@ -1227,6 +1227,19 @@ class Agent:
                             text=f"⏱ Ending this turn cleanly — {_why} "
                                  f"({int(_elapsed)}s elapsed). Whatever she assembled is here; "
                                  "ask again or in smaller pieces to continue.")
+                # 2026-09-20: this path used to `return` straight past the gate, so a
+                # turn that ran out of clock — which on a real porting job is MOST of
+                # them — was never verified and never logged. The checker only fired on
+                # turns that ended naturally: the ones least likely to need it. A gate
+                # you can leave by the side door is not a gate.
+                _v = self._auto_verify(turn_start)
+                if _v:
+                    yield Event(kind="text", text=_v)
+                    if self.history and self.history[-1].get("role") == "assistant":
+                        self.history[-1]["content"] = (self.history[-1]["content"] or "") + _v
+                    if "RED" in _v.split("\n")[0]:
+                        self._turn_hiccups.append("verify: RED")
+                    yield Event(kind="note", text="Verify ran itself: " + _v.split("\n")[0][:120])
                 yield Event(kind="done")
                 return
             if not _wall_warned and _elapsed > _mode_wall * 0.7:
