@@ -28,8 +28,14 @@ RULES: list[tuple[str, str, re.Pattern, str]] = [
      "`.length` is JS. Strings: `.length()`; arrays/dictionaries: `.size()`."),
     ("ternary", "error", re.compile(r"[^?]\?\s+[^:?]+?\s+:\s+"),
      "JS `a ? b : c` is `b if a else c`."),
-    ("await", "warn", re.compile(r"\bawait\b"),
-     "`await` makes the function a coroutine that returns before it finishes; the brain is called synchronously. Drop it unless you really wait on a signal."),
+    # NOTE: the blanket `await` rule was removed 2026-09-19. It warned on EVERY
+    # await, with the message "the brain is called synchronously" — true in
+    # chunks 1-3, false from chunk 5a on, where harness.gd is a coroutine chain
+    # with 21 REQUIRED awaits. It fired on two correct awaits in play.gd
+    # (a timer signal, and a call into harness.say) and, obeyed, would have
+    # broken the port. A false accusation is worse than a missed one.
+    # The narrow, decidable case it was reaching for is checked below instead:
+    # awaiting a function in this same file that contains no await at all.
     ("rng-mod", "error", re.compile(r"Rng\.next\(\)\s*%"),
      "Rng.next() is a float in [0,1) like Math.random. Pick with `list[int(Rng.next() * list.size())]`, scale with `Rng.next() * n`."),
     ("match-glob", "warn", re.compile(r"\.match\(\s*[\"']"),
@@ -172,6 +178,29 @@ def lint(path: str | Path) -> str:
             "the scene tree. Check what a script extends BEFORE writing add_child().",
             i, lines[i - 1])
 
+    # `await f()` where f is defined in THIS file and has no await in it: the
+    # await does nothing. This is the decidable remnant of the old blanket rule.
+    fn_await: dict[str, bool] = {}
+    cur_fn, cur_has = None, False
+    for c in code:
+        m = re.match(r"^(?:static\s+)?func\s+(\w+)\s*\(", c)
+        if m:
+            if cur_fn is not None:
+                fn_await[cur_fn] = cur_has
+            cur_fn, cur_has = m.group(1), False
+        elif cur_fn is not None and re.search(r"\bawait\b", c):
+            cur_has = True
+    if cur_fn is not None:
+        fn_await[cur_fn] = cur_has
+    for i, c in enumerate(code, 1):
+        m = re.search(r"\bawait\s+(?:self\.)?(\w+)\s*\(", c)
+        if m and fn_await.get(m.group(1)) is False:
+            hit("await-does-nothing", "warn",
+                f"`await {m.group(1)}(...)` — {m.group(1)}() is defined in this file and "
+                "contains no await, so it is not a coroutine and the await does nothing. "
+                "(Awaiting a signal, or a coroutine in another script, is correct — only "
+                "this case is flagged.)", i, lines[i - 1])
+
     # an inner `class X:` holding everything: the script itself should be the class
     top_funcs = sum(1 for c in code if re.match(r"^(static\s+)?func\s", c))
     for i, c in enumerate(code, 1):
@@ -182,7 +211,7 @@ def lint(path: str | Path) -> str:
     if not found:
         return ""
     order = [r[0] for r in RULES] + ["typed-return-null", "int-truncates",
-                                     "add-child-not-a-node", "inner-class"]
+                                     "await-does-nothing", "add-child-not-a-node", "inner-class"]
     out = []
     total = sum(len(v) for v in found.values())
     errors = sum(len(v) for k, v in found.items() if msgs[k][0] == "error")
