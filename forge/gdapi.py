@@ -129,9 +129,17 @@ def _types_in(lines: list[str]) -> dict[str, str]:
     types: dict[str, str] = {}
     dropped: set[str] = set()
     for line in lines:
-        for rx in (_TYPED, _CTOR, _ASSIGN, _PARAM):
+        # A CONSTRUCTOR is exact: `x = Control.new()` is a Control and can never be a
+        # subclass, so the generic-base skip below must not apply to it. A DECLARATION
+        # is not: `var x: Control` may really hold a Button, and checking Button's names
+        # against Control would invent errors. 2026-09-19: four invented Control setters
+        # (set_offset_top/left/right/bottom) reached a human because Control is on that
+        # skip list and the constructor case was skipped with it.
+        for rx, exact in ((_CTOR, True), (_ASSIGN, True), (_TYPED, False), (_PARAM, False)):
             for name, cls in rx.findall(line):
-                if not known_class(cls) or cls in _DATA_TYPES or cls in _GENERIC_BASES:
+                if not known_class(cls) or cls in _DATA_TYPES:
+                    continue
+                if not exact and cls in _GENERIC_BASES:
                     continue
                 if name in types and types[name] != cls:
                     dropped.add(name)
