@@ -1449,8 +1449,29 @@ def t_diagnosis_stamp_catches_a_theory_over_printed_failures():
             and not _stamp("_diagnosis_stamp", hist,
                            "The wall_n position case wants (1,2,3) and got (1,2,4)."))
 
+
+def t_whereami_sees_the_project_it_is_standing_in():
+    """The tool that answers "where am I" only ever globbed BELOW the workspace,
+    so standing inside a project — the commonest case, and the one where she most
+    needs to know what she is in — reported "PROJECTS: none found under this
+    workspace". Built 2026-09-19 to stop her describing a project she could not
+    see; found the same evening to be blind in the ordinary case."""
+    from forge.whereami import whereami
+    root = Path(tempfile.mkdtemp()) / "penpal"
+    (root / "tests").mkdir(parents=True)
+    (root / "project.godot").write_text("[application]\n")
+    (root / "FORGE-NOTES.md").write_text("# Project notebook\n")
+    inside = whereami(str(root))
+    above = whereami(str(root.parent))
+    return ("none found" not in inside
+            and "penpal" in inside
+            and "YOU ARE IN THIS ONE" in inside
+            and "penpal" in above)          # and the old behaviour still works
+
 # ------------------------------------------------------------------- main
 CHECKS = [
+    ("harness: whereami sees the project it is standing in",
+     t_whereami_sees_the_project_it_is_standing_in, False),
     ("harness: receipts catch done over a failing yardstick",
      t_receipts_stamp_catches_done_over_a_failing_yardstick, False),
     ("harness: grounding catches a claim with nothing read",

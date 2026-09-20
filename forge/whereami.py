@@ -69,6 +69,12 @@ def whereami(workspace: str = "") -> str:
         seen: set[Path] = set()
         for marker in MARKERS:
             hits = []
+            # 2026-09-19: this only ever looked BELOW the workspace, so standing
+            # inside a project — the commonest case, and the one where she most
+            # needs to know what she is in — reported "PROJECTS: none found".
+            # The workspace itself is the first candidate.
+            if (ws / marker).exists():
+                hits.append(ws / marker)
             for depth in ("*", "*/*", "*/*/*"):
                 hits += list(ws.glob(f"{depth}/{marker}"))[:MAX_PROJECTS]
             for hit in hits:
@@ -82,7 +88,10 @@ def whereami(workspace: str = "") -> str:
                     age = d.stat().st_mtime
                 except Exception:
                     age = 0
-                found.append((age, f"  {d.relative_to(ws)}  [{', '.join(kinds)}]"
+                rel = d.relative_to(ws)
+                # "." tells her nothing; name the folder she is standing in.
+                where = f"{d.name}/  ← YOU ARE IN THIS ONE" if str(rel) == "." else str(rel)
+                found.append((age, f"  {where}  [{', '.join(kinds)}]"
                               + (f"  notes: {', '.join(notes)}" if notes else "  (no notes file)")))
         found.sort(reverse=True)            # most recently touched first: live work at the top
         found = [t for _, t in found]
