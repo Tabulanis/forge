@@ -221,6 +221,26 @@ def lint(path: str | Path) -> str:
                 "preset FIRST and then adjust the one anchor you want, or set all four "
                 "anchors by hand and drop the preset.", i, lines[i - 1])
 
+    # A bare integer where a Side goes. SIDE_LEFT=0, SIDE_TOP=1, SIDE_RIGHT=2,
+    # SIDE_BOTTOM=3 (confirmed in @GlobalScope.xml). 2026-09-20, chunk 5c-2:
+    # `set_anchor(1, 1)  # right anchor at 100%` — index 1 is TOP, so the panel's
+    # right edge was never set, and `set_anchor(0, 0.45); set_anchor(1, 0.75)`
+    # meant "left 45%, top 75%" instead of the intended vertical band. The chat
+    # log ended up in a corner and the input was pushed off the bottom of the
+    # window, so typing into the game did nothing. Every call is legal API, so
+    # only the rendered frame shows it — unless the constant is spelled out.
+    _SIDE_FN = re.compile(r"\.(set_anchor|set_offset|set_anchor_and_offset)\s*\(\s*(\d)\s*,")
+    for i, c in enumerate(code, 1):
+        m = _SIDE_FN.search(c)
+        if m:
+            names = {"0": "SIDE_LEFT", "1": "SIDE_TOP", "2": "SIDE_RIGHT", "3": "SIDE_BOTTOM"}
+            n = names.get(m.group(2), "?")
+            hit("bare-side-index", "error",
+                f"`{m.group(1)}({m.group(2)}, ...)` — a bare number where a Side goes. "
+                f"{m.group(2)} is {n}. The order is SIDE_LEFT=0, SIDE_TOP=1, SIDE_RIGHT=2, "
+                "SIDE_BOTTOM=3, which is NOT left/right/top/bottom. Write the constant, so "
+                "the code says which edge it means.", i, lines[i - 1])
+
     # an inner `class X:` holding everything: the script itself should be the class
     top_funcs = sum(1 for c in code if re.match(r"^(static\s+)?func\s", c))
     for i, c in enumerate(code, 1):
@@ -231,7 +251,7 @@ def lint(path: str | Path) -> str:
     if not found:
         return ""
     order = [r[0] for r in RULES] + ["typed-return-null", "int-truncates",
-                                     "await-does-nothing", "preset-wipes-anchor", "add-child-not-a-node", "inner-class"]
+                                     "await-does-nothing", "preset-wipes-anchor", "bare-side-index", "add-child-not-a-node", "inner-class"]
     out = []
     total = sum(len(v) for v in found.values())
     errors = sum(len(v) for k, v in found.items() if msgs[k][0] == "error")
