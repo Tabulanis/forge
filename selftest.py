@@ -1395,8 +1395,68 @@ def t_worklog_writes_a_line_and_reads_it_back():
     finally:
         worklog.LOG = old
 
+
+class _FakeCall:
+    """A tool call as the harness stores it: attributes, not dict keys."""
+    def __init__(self, name, cid):
+        self.name = name
+        self.args = {}
+        self.id = cid
+
+
+def _stamp(which, history, text):
+    """Drive the real stamp on a real Agent. Returns the stamp text, or ''."""
+    from forge.agent import Agent
+    a = Agent(provider=None, tools=[])
+    a.history = history
+    return getattr(a, which)(0, text) or ""
+
+
+def t_receipts_stamp_catches_done_over_a_failing_yardstick():
+    """"Done" while the turn's own yardstick says FAIL. The stamp must fire on
+    the failure and stay silent on a pass — a false accusation is worse than a
+    missed one, which is why it pairs results to real call ids."""
+    call = [{"role": "tool_use", "calls": [_FakeCall("godot_test", "c1")]}]
+    failing = call + [{"role": "tool_result", "id": "c1", "content": "PASS 400 / 500  FAIL 3"}]
+    passing = call + [{"role": "tool_result", "id": "c1", "content": "PASS 500 / 500  FAIL 0"}]
+    return (_stamp("_receipt_stamp", failing, "Everything passes now. Done.")
+            and not _stamp("_receipt_stamp", passing, "All yardsticks pass. Done."))
+
+
+def t_grounding_stamp_catches_a_claim_with_nothing_read():
+    """2026-09-19: asked what she had been working on after a day of writing
+    GDScript, she said the day was quiet — not dishonestly, but with nothing in
+    reach to tell her otherwise. The stamp fires on a claim about past work when
+    the turn opened no file, and must stay silent when something was read."""
+    read = [{"role": "tool_use", "calls": [_FakeCall("read_file", "c1")]},
+            {"role": "tool_result", "id": "c1", "content": "# notes"}]
+    claim = "Yesterday was quiet. I have been keeping things ticking over."
+    return (_stamp("_grounding_stamp", [], claim)
+            and not _stamp("_grounding_stamp", read, "Yesterday I wrote the world file."))
+
+
+def t_diagnosis_stamp_catches_a_theory_over_printed_failures():
+    """2026-09-18, at PASS 462/586: "likely materials, tolerances, or node
+    structure" — three theories, all wrong, while the tool had listed every
+    failing case and the cause was one missing add_child. Fires when the answer
+    quotes none of the printed cases; silent when it quotes one."""
+    res = ("PASS 462 / 586  FAIL 124\n"
+           "  [wall_n position] want (1,2,3) got (1,2,4)\n"
+           "  [door leaf yaw] want 1.57 got 0.0\n")
+    hist = [{"role": "tool_use", "calls": [_FakeCall("godot_test", "c1")]},
+            {"role": "tool_result", "id": "c1", "content": res}]
+    return (_stamp("_diagnosis_stamp", hist, "It is likely the materials or node structure.")
+            and not _stamp("_diagnosis_stamp", hist,
+                           "The wall_n position case wants (1,2,3) and got (1,2,4)."))
+
 # ------------------------------------------------------------------- main
 CHECKS = [
+    ("harness: receipts catch done over a failing yardstick",
+     t_receipts_stamp_catches_done_over_a_failing_yardstick, False),
+    ("harness: grounding catches a claim with nothing read",
+     t_grounding_stamp_catches_a_claim_with_nothing_read, False),
+    ("harness: diagnosis catches a theory over printed failures",
+     t_diagnosis_stamp_catches_a_theory_over_printed_failures, False),
     ("harness: auto-verify finds the project from a relative path",
      t_auto_verify_finds_the_project_from_a_relative_path, False),
     ("harness: the worklog writes a line and reads it back",
