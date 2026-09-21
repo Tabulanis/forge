@@ -1468,8 +1468,41 @@ def t_whereami_sees_the_project_it_is_standing_in():
             and "YOU ARE IN THIS ONE" in inside
             and "penpal" in above)          # and the old behaviour still works
 
+def t_gdapi_accepts_an_is_narrowed_subclass():
+    """The API checker judged every name against the DECLARED type, so the
+    commonest correct idiom in GDScript — `if event is InputEventMouseMotion:`
+    then reading `event.position` — was reported as an invented property.
+    2026-09-21 on the Penpal port: three such findings on plan.gd, all of them
+    code that ran perfectly, and the verdict sat at AMBER because of it. A
+    checker that calls correct code wrong is worse than no checker: it spends a
+    round telling her to break something that works."""
+    from forge import gdapi
+    if not gdapi._index():
+        return None                      # no class reference on this box
+    d = Path(tempfile.mkdtemp())
+    good = d / "good.gd"
+    good.write_text(
+        "extends Control\n\n"
+        "func _input(event: InputEvent) -> void:\n"
+        "\tif event is InputEventMouseMotion:\n"
+        "\t\tvar a = event.position\n"
+        "\telif event is InputEventMouseButton:\n"
+        "\t\tvar b = event.button_index\n")
+    bad = d / "bad.gd"
+    bad.write_text(
+        "extends Control\n\n"
+        "func _input(event: InputEvent) -> void:\n"
+        "\tif event is InputEventMouseMotion:\n"
+        "\t\tvar a = event.totally_invented\n")
+    # The narrowed reads are accepted; an invented name on the same receiver,
+    # in the same narrowed block, is still caught.
+    return gdapi.check(good) == "" and "totally_invented" in gdapi.check(bad)
+
+
 # ------------------------------------------------------------------- main
 CHECKS = [
+    ("gdapi: accepts a name proved by an `is` check",
+     t_gdapi_accepts_an_is_narrowed_subclass, False),
     ("harness: whereami sees the project it is standing in",
      t_whereami_sees_the_project_it_is_standing_in, False),
     ("harness: receipts catch done over a failing yardstick",

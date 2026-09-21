@@ -39,6 +39,11 @@ _CTOR = re.compile(rf"(?:^|\s)var\s+([a-z_]\w*)\s*:?=\s*({_CLASS})\.new\(")
 _ASSIGN = re.compile(rf"(?:^|\s)([a-z_]\w*)\s*=\s*({_CLASS})\.new\(")
 _PARAM = re.compile(rf"\b([a-z_]\w*)\s*:\s*({_CLASS})\b")
 _USE = re.compile(r"(?<![\w.])([a-z_]\w*)\.([a-zA-Z_]\w*)\b")
+# `if event is InputEventMouseMotion:` — GDScript does not narrow the static type,
+# but the human has PROVED the runtime type and the members of that subclass are
+# then legal. Without this, every correct `is` check invents findings: 2026-09-21,
+# three on plan.gd (event.position, event.button_index) that all ran fine.
+_NARROW = re.compile(rf"\b([a-z_]\w*)\s+is\s+({_CLASS})\b")
 
 # A dot on these is a KEY, not an API name (Dictionary), or an index error the
 # engine reports plainly (Array). Judging them here only produces noise; the
@@ -149,6 +154,17 @@ def _types_in(lines: list[str]) -> dict[str, str]:
     return types
 
 
+def _narrowed_in(lines: list[str]) -> dict[str, set[str]]:
+    """local name -> every class it is `is`-checked against in these lines.
+    A name the author has type-tested may legally use that subclass's members."""
+    out: dict[str, set[str]] = {}
+    for line in lines:
+        for name, cls in _NARROW.findall(line):
+            if known_class(cls) and cls not in _DATA_TYPES:
+                out.setdefault(name, set()).add(cls)
+    return out
+
+
 def check(path: str | Path, _project: str | Path | None = None) -> str:
     """'' when every name is real on its class; otherwise the findings."""
     p = Path(path)
@@ -166,21 +182,26 @@ def check(path: str | Path, _project: str | Path | None = None) -> str:
     # invents errors.
     bounds: list[int] = [i for i, l in enumerate(lines) if re.match(r"^(static\s+)?func\s", l)]
     bounds.append(len(lines))
-    scopes: list[tuple[int, int, dict]] = []
+    scopes: list[tuple[int, int, dict, dict]] = []
     head_end = bounds[0] if bounds else len(lines)
     members = _types_in(lines[:head_end])            # script members: visible everywhere
     for b in range(len(bounds) - 1):
         a0, a1 = bounds[b], bounds[b + 1]
         local = dict(members)
         local.update(_types_in(lines[a0:a1]))
-        scopes.append((a0, a1, local))
+        scopes.append((a0, a1, local, _narrowed_in(lines[a0:a1])))
     if not scopes:
-        scopes = [(0, len(lines), members)]
+        scopes = [(0, len(lines), members, _narrowed_in(lines))]
     def _types_at(idx: int) -> dict:
-        for a0, a1, t in scopes:
+        for a0, a1, t, _n in scopes:
             if a0 <= idx < a1:
                 return t
         return members
+    def _narrow_at(idx: int) -> dict:
+        for a0, a1, _t, n in scopes:
+            if a0 <= idx < a1:
+                return n
+        return {}
     hits: dict[str, list] = {}
     for i, line in enumerate(lines, 1):
         at = _types_at(i - 1)
@@ -190,6 +211,11 @@ def check(path: str | Path, _project: str | Path | None = None) -> str:
                 continue
             known = names_of(cls)
             if not known or name in known:
+                continue
+            # The author type-tested this name with `is`: accept the subclass's
+            # members too, or every correct narrowing reads as an invention.
+            if any(name in (names_of(sub) or ())
+                   for sub in _narrow_at(i - 1).get(recv, ())):
                 continue
             hits.setdefault(f"{recv}.{name}", [cls, []])[1].append(i)
     if not hits:
