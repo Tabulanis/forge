@@ -127,14 +127,28 @@ def t_ordinary_module_reads_whole():
 
 def t_superego_is_a_second_model():
     """It was reviewing itself: superego_model was blank, and blank means fall
-    back to the answering brain. The 122B marked its own homework."""
+    back to the answering brain. The 122B marked its own homework.
+    2026-09-28, his call: the Q6 brain now judges ITSELF on purpose — the Q4
+    judge was a worse copy of the same weights. What must still hold: the judge
+    is NAMED (never a blank fallback), and if it is the brain's own server, that
+    server runs at least two slots, so a review can never evict her context."""
+    import re, subprocess
     from forge.config import load_config
     cfg = load_config()
     name = (cfg["agent"].get("superego_model") or "").strip()
     if not name or name not in cfg.get("models", {}):
         return False
     judge = cfg["models"][name]; brain = cfg["models"][cfg["active_model"]]
-    return judge.get("base_url") and judge["base_url"] != brain.get("base_url")
+    if judge.get("base_url") and judge["base_url"] != brain.get("base_url"):
+        return True
+    unit = subprocess.run(["systemctl", "--user", "cat", f"forge-model-{cfg['active_model']}.service"],
+                          capture_output=True, text=True).stdout
+    m = re.search(r"ExecStart=.*start-model\.sh (\S+)", unit)
+    if not m:
+        return False
+    script = (Path.home() / "forge" / "start-model.sh").read_text()
+    case = re.search(rf"^  {re.escape(m.group(1))}\)\n(.*?);;", script, re.S | re.M)
+    return bool(case and re.search(r"-np\s+([2-9]|\d\d)", case.group(1)))
 
 
 def t_superego_reviews_a_toolless_turn():

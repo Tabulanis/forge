@@ -24,13 +24,14 @@ import time
 # off` reported the GPU freed while the judge still held 21.4 of 96 GB. If you
 # add a model service, add it here in the same commit.
 LIVE_UNITS = ("forge-model-big122", "forge-model-little", "forge-model-embed",
-              "forge-model-judge", "forge-model-advocate")
+              "forge-model-advocate")
 
 # Retired 2026-09-05, units still on disk but disabled. Kept in the roster for
 # one reason only: `forge off` must still be able to stop one if somebody
 # starts it by hand. Nothing here is part of the running stack.
+# forge-model-judge retired 2026-09-28: the brain judges itself on its second slot.
 LEGACY_UNITS = ("forge-model-big", "forge-model-merge",
-                "forge-model-vision", "forge-model-tiny")
+                "forge-model-vision", "forge-model-tiny", "forge-model-judge")
 
 MODEL_UNITS = LIVE_UNITS + LEGACY_UNITS
 

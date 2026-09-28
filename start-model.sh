@@ -123,10 +123,15 @@ case "${1:-big122}" in
     # Revert = unit ExecStart back to `start-model.sh big122`.
     MODEL=~/forge/models/Qwen3.8-27B-ABLITERATED-Q6_K.gguf
     MMPROJ=~/forge/models/mmproj-Qwen3.8-27B-ABLITERATED-F16.gguf
-    PORT=8087; CTX=131072; NGL=99
+    # -np 2 (2026-09-28, his call): slot 0 is hers, slot 1 is the JUDGE. The Q6
+    # judges itself (sealed prompt, thinking off per request) — the Q4 copy on
+    # :8088 was a worse copy of the same brain, kept only so a review would not
+    # evict her context. CTX is the TOTAL: llama-server splits it per slot, so
+    # 262144 = 131k each. Advocate (gpt-oss, :8093) stays separate on purpose.
+    PORT=8087; CTX=262144; NGL=99
     # CACHE 4096->1024 (2026-09-28): the host-RAM prompt cache grew the brain to 6.6 GB
     # of HIS 30 GB over one long run and tripped memguard. One user = little reuse.
-    EXTRA="-fa on -ctk q8_0 -ctv q8_0 --reasoning-budget 1024 --spec-type draft-mtp --spec-draft-n-max 3"; CACHE=1024 ;;
+    EXTRA="-fa on -ctk q8_0 -ctv q8_0 --reasoning-budget 1024 --spec-type draft-mtp --spec-draft-n-max 3 -np 2"; CACHE=1024 ;;
   big122)
     # 2026-09-05 (Void only): Qwen3.5-122B-A10B abliterated (huihui — same
     # lineage as her 27B), WITH its own eyes (mmproj). Mixture-of-experts:
