@@ -24,7 +24,7 @@ import time
 # off` reported the GPU freed while the judge still held 21.4 of 96 GB. If you
 # add a model service, add it here in the same commit.
 LIVE_UNITS = ("forge-model-big122", "forge-model-little", "forge-model-embed",
-              "forge-model-judge")
+              "forge-model-judge", "forge-model-advocate")
 
 # Retired 2026-09-05, units still on disk but disabled. Kept in the roster for
 # one reason only: `forge off` must still be able to stop one if somebody
@@ -34,13 +34,15 @@ LEGACY_UNITS = ("forge-model-big", "forge-model-merge",
 
 MODEL_UNITS = LIVE_UNITS + LEGACY_UNITS
 
-PORTS = {"big122": 8087, "little": 8083, "embed": 8086, "judge": 8088,
+PORTS = {"big122": 8087, "little": 8083, "embed": 8086, "judge": 8088, "advocate": 8093,
          # retired
          "big": 8084, "merge": 8085, "vision": 8090, "tiny": 8081}
 
 # How much GPU memory each model takes once loaded — measured. Only used to
 # draw the loading bar; if a model ever changes, the bar just runs fast or slow.
-EXPECTED_LOAD_MB = {"big122": 70000, "little": 2100, "embed": 700,
+# big122 is the brain SLOT: Qwen3.8-27B Q6 + vision + 131k context since
+# 2026-09-27, measured 36 GB (the 122B it replaced took ~70 GB).
+EXPECTED_LOAD_MB = {"big122": 36000, "little": 2100, "embed": 700,
                     "big": 17700, "merge": 17300}
 
 # Nothing competes for the card any more. This used to auto-stop a rival model

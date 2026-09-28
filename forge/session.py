@@ -167,6 +167,15 @@ class Session:
                 superego = build_provider(j_cfg)
             except Exception:
                 superego = None
+        # The devil's advocate (2026-09-28): a DIFFERENT model family from her
+        # brain, so it does not share her blind spots. Unset = the judge does it.
+        advocate = None
+        a_name = (cfg["agent"].get("advocate_model") or "").strip()
+        if a_name in cfg.get("models", {}):
+            try:
+                advocate = build_provider(cfg["models"][a_name])
+            except Exception:
+                advocate = None
         self.agent = Agent(
             provider=provider,
             # Her own tools, her eyes, and then whatever THIS project ships in
@@ -184,6 +193,7 @@ class Session:
             notes_path=ws.root / "FORGE-NOTES.md",
             summarizer=summarizer,
             superego=superego,
+            advocate=advocate,
             reads=ws.reads,
             read_mtimes=ws.read_mtimes,
         )

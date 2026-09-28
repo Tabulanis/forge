@@ -1515,7 +1515,17 @@ def t_advocate_sends_back_an_unaddressed_rival_only():
             and not adv("RIVAL: NONE\nADDRESSED: no")
             and not adv("RIVAL: the version stamp commit a1fe588 changed it\nADDRESSED: yes")
             and not adv("RIVAL: something else\nADDRESSED: no")
-            and not dead._advocate_review(0, "The root cause is the USB matching keys."))
+            and not dead._advocate_review(0, "The root cause is the USB matching keys.")
+            and _own_advocate_is_used())
+
+
+def _own_advocate_is_used():
+    """With advocate_model set, the separate model argues — not the judge."""
+    from forge.agent import Agent
+    a = Agent(provider=None, tools=[], superego=_FakeProv("RIVAL: NONE\nADDRESSED: no"),
+              advocate=_FakeProv("RIVAL: the version stamp commit a1fe588 changed CFBundleVersion\nADDRESSED: no"))
+    a.history = [_ASK]
+    return "a1fe588" in a._advocate_review(0, "The root cause is the USB matching keys.")
 
 
 def t_whereami_sees_the_project_it_is_standing_in():

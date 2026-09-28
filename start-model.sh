@@ -99,6 +99,16 @@ case "${1:-big122}" in
     MMPROJ=~/forge/models/mmproj-Qwen3.8-27B-ABLITERATED-F16.gguf
     PORT=8085; CTX=32768; NGL=99
     EXTRA="-fa on -ctk q8_0 -ctv q8_0 --reasoning-budget 1024"; CACHE=4096 ;;
+  advocate)
+    # 2026-09-28: the DEVIL'S ADVOCATE — argues the strongest other explanation
+    # before a diagnosis may stand (agent.ADVOCATE_PROMPT). Deliberately a
+    # DIFFERENT family from her Qwen brain (OpenAI gpt-oss-20b, Apache-2.0) so
+    # it does not share her blind spots: the Qwen judge, given her wrong
+    # printer-bug answer, argued a rival from inside the same trap.
+    # MoE: 21B total, ~3.6B active per token, ~12 GB — fast on Void.
+    MODEL=~/forge/models/gpt-oss-20b-MXFP4.gguf
+    PORT=8093; CTX=32768; NGL=99
+    EXTRA="-fa on"; CACHE=1024 ;;
   q6brain)
     # 2026-09-27: MERGE'S BRAIN (runs in the big122 slot — same port 8087,
     # same unit, so config/pipelines/memguard/power.py all follow unchanged).

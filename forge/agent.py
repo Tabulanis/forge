@@ -412,11 +412,18 @@ def advocate_ask(prov, digest: str) -> str:
     """Put the evidence to the advocate and return its raw reply. Thinking ON
     (this is a reasoning job, unlike the honesty check); greedy and pinned like
     the superego. Returns "" on nothing — the caller fails open."""
-    body = {"chat_template_kwargs": {"enable_thinking": True},
+    body = {"chat_template_kwargs": {"enable_thinking": True, "reasoning_effort": "medium"},
             "temperature": 0.0, "top_k": 1, "seed": 20260928, "max_tokens": 3000}
-    reply = prov.complete(ADVOCATE_PROMPT, [{"role": "user", "content": digest}], [],
-                          extra_body=body)
-    return (reply.text or "").strip()
+    # gpt-oss sometimes ends after its thinking with NO answer (measured
+    # 2026-09-28: 2 of 6 identical calls came back empty, finish "stop").
+    # Same cure as the superego: one nudged retry, then fail open.
+    for asked in (digest, digest + "\n\nAnswer now, in the two-line RIVAL / ADDRESSED shape."):
+        reply = prov.complete(ADVOCATE_PROMPT, [{"role": "user", "content": asked}], [],
+                              extra_body=body)
+        text = (reply.text or "").strip()
+        if text:
+            return text
+    return ""
 
 
 COMPACT_AT = 0.70          # start compacting at 70% full
@@ -854,6 +861,7 @@ class Agent:
                  notes_path: Path | None = None,
                  summarizer: Provider | None = None,
                  superego: Provider | None = None,
+                 advocate: Provider | None = None,
                  reads: set | None = None,
                  read_mtimes: dict | None = None):
         self.provider = provider
@@ -865,6 +873,9 @@ class Agent:
         # SUPEREGO_PROMPT and an evidence digest only — deliberately given
         # no notebook and no history, so it cannot drift with the agent.
         self.superego = superego
+        # The devil's advocate: a different model family, so it argues from a
+        # different angle. None = the superego's model takes that job too.
+        self.advocate = advocate
         # The workspace's live read-ledger (shared set of Paths). Lets the
         # harness ask "did you actually open the file you're describing?"
         self.reads = reads if reads is not None else set()
@@ -2040,10 +2051,11 @@ class Agent:
 
     def _advocate_review(self, turn_start: int, text: str) -> str:
         """The rival the advocate says she has not ruled out, or "". Fails OPEN."""
-        if not (self.superego and self._is_diagnosis(turn_start, text)):
+        prov = self.advocate or self.superego
+        if not (prov and self._is_diagnosis(turn_start, text)):
             return ""
         try:
-            raw = advocate_ask(self.superego, self._evidence_digest(turn_start, text))
+            raw = advocate_ask(prov, self._evidence_digest(turn_start, text))
         except Exception:
             return ""
         m = re.search(r"RIVAL:\s*(.+)", raw)
