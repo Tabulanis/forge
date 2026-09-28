@@ -385,6 +385,40 @@ def superego_ask(prov, digest: str) -> str:
     return ""
 
 
+# THE OTHER SIDE, ARGUED (2026-09-28, his design). The superego bounces on a
+# CONTRADICTION, never on something merely unproven — so "Cause (final): X",
+# backed by an hour of reading and contradicting nothing it can see, passed.
+# Measured on the printer bug: every hunt past ~30 minutes ended confidently
+# wrong, on the repo README's own theory. This is a second, separate job for
+# the same sealed judge: not "is it honest" but "what else fits this evidence".
+ADVOCATE_PROMPT = """You are the DEVIL'S ADVOCATE: a sealed, independent reviewer.
+An investigator has named a cause for a problem. Your one job: using ONLY the
+evidence below, argue for the strongest OTHER explanation that also fits it.
+
+Rules:
+- A rival must be concrete (a specific file, commit, setting or mechanism the
+  evidence shows), not "maybe something else".
+- The project's own README, docs and code comments are CLAIMS, not proof. If
+  the named cause rests on the project's own account of itself, say so.
+- If the investigator already ruled your rival out WITH EVIDENCE (a command
+  output, a diff, an external source — not just reasoning), it does not count.
+
+Answer in exactly this shape, nothing else:
+RIVAL: <the strongest other explanation, one or two sentences, or NONE>
+ADDRESSED: <yes if the answer already rules it out with evidence, otherwise no>"""
+
+
+def advocate_ask(prov, digest: str) -> str:
+    """Put the evidence to the advocate and return its raw reply. Thinking ON
+    (this is a reasoning job, unlike the honesty check); greedy and pinned like
+    the superego. Returns "" on nothing — the caller fails open."""
+    body = {"chat_template_kwargs": {"enable_thinking": True},
+            "temperature": 0.0, "top_k": 1, "seed": 20260928, "max_tokens": 3000}
+    reply = prov.complete(ADVOCATE_PROMPT, [{"role": "user", "content": digest}], [],
+                          extra_body=body)
+    return (reply.text or "").strip()
+
+
 COMPACT_AT = 0.70          # start compacting at 70% full
 COMPACT_KEEP = 0.25        # after compacting, recent turns may fill 25%
 # The summariser reads the whole compaction transcript in ONE pass. It was
@@ -1155,6 +1189,8 @@ class Agent:
         server_retried = False
         force_compacted = False
         superego_bounced = False
+        cause_bounced = False       # receipts-for-causes gate: one send-back
+        advocate_bounced = False    # the-other-side gate: one send-back
         _prior_bounce_reason = ""
         grounding_nudged = False
         godot_nudged = False        # wrote .gd/.tscn but never ran the engine on it
@@ -1733,6 +1769,49 @@ class Agent:
                         self.history[-1]["content"] = (self.history[-1]["content"] or "") + _stamp
                     self._turn_hiccups.append("receipts/diagnosis: stamped")
                     yield Event(kind="note", text="Stamped: the answer did not match the yardstick, or skipped the failing cases it printed.")
+                # Causes need receipts, then the other side gets argued
+                # (2026-09-28). Each may send the answer back ONCE; a second
+                # failure is stapled on visibly instead — never an endless loop.
+                _cause_reason = self._cause_gate(turn_start, reply.text or "")
+                if _cause_reason and not cause_bounced:
+                    cause_bounced = True
+                    yield Event(kind="note", text=f"Receipts check: {_cause_reason[:160]} — sent back.")
+                    self.history.append({
+                        "role": "user", "synthetic": True,
+                        "content": "Automatic check (receipts for causes): " + _cause_reason
+                                   + ". Lay the diagnosis out under four headings — Proven, "
+                                   "Believed, Ruled out, What would prove me wrong. Under "
+                                   "Proven, each item quotes in `backticks` the exact output "
+                                   "from this job that proves it; the project's own README "
+                                   "and docs are claims, not proof. If nothing is proven, say "
+                                   "'best guess', never 'final'. This check is internal "
+                                   "machinery — never mention it in your reply."
+                                   + BOUNCE_TAIL,
+                    })
+                    continue
+                if _cause_reason:
+                    _warn = ("\n\n⚠ Unproven: " + _cause_reason
+                             + ". Treat the cause above as a best guess.")
+                    yield Event(kind="text", text=_warn)
+                    if self.history and self.history[-1].get("role") == "assistant":
+                        self.history[-1]["content"] = (self.history[-1]["content"] or "") + _warn
+                    self._turn_hiccups.append("receipts for causes: stamped")
+                elif not advocate_bounced:
+                    _rival = self._advocate_review(turn_start, reply.text or "")
+                    if _rival:
+                        advocate_bounced = True
+                        yield Event(kind="note", text=f"Other side argued: {_rival[:160]} — sent back.")
+                        self.history.append({
+                            "role": "user", "synthetic": True,
+                            "content": "Automatic check (the other side, argued): this other "
+                                       f"explanation also fits your evidence — {_rival}. Either "
+                                       "rule it out WITH evidence (run the check, quote the "
+                                       "output, use rule_out), or list it under Believed next "
+                                       "to yours and lower your confidence. This check is "
+                                       "internal machinery — never mention it in your reply."
+                                       + BOUNCE_TAIL,
+                        })
+                        continue
                 # The superego gate: last check before "done". Sealed judge,
                 # one bounce, every verdict logged.
                 #
@@ -1860,6 +1939,119 @@ class Agent:
             text=f"Stopped after {self.max_steps} steps without finishing. "
                  f"The task may be too big for one message, or the model may be stuck.",
         )
+
+    # -- causes need receipts (2026-09-28) --------------------------------
+    # His rule: NEVER confidently wrong. A diagnosis is split into boxes she
+    # cannot blur — Proven / Believed / Ruled out / What would prove me wrong —
+    # and "Proven" must point at real output from THIS job. The project's own
+    # docs are a suspect, not a witness: a quote that only appears in a README
+    # or .md file she read does not count as proof. Nothing proven means no
+    # "final" and a SOLVE-REQUEST.md for him to send out. Deterministic — the
+    # dumb checker that never screws up; the advocate below does the thinking.
+    _CAUSE_CLAIM = re.compile(
+        r"\b(root cause|the cause is|final cause|caused by|the culprit|"
+        r"the bug is|cause[s]? of (the|this) (bug|failure|problem))\b|\bcause \(final\)", re.I)
+    _FINAL_WORDS = re.compile(r"\b(final|definitely|confirmed|certainly|the (root )?cause is)\b", re.I)
+    _BOX = {"proven": re.compile(r"^\W*proven\b", re.I | re.M),
+            "believed": re.compile(r"^\W*believed\b", re.I | re.M),
+            "ruled out": re.compile(r"^\W*ruled[ -]out\b", re.I | re.M),
+            "wrong": re.compile(r"^\W*what would prove (me|this|it) wrong\b", re.I | re.M)}
+    _PROJECT_DOC = re.compile(r"(readme|\.md$|\.markdown$|\.rst$|\.txt$|(^|/)docs?/)", re.I)
+
+    def _is_diagnosis(self, turn_start: int, text: str) -> bool:
+        ask = ""
+        for m in self.history[turn_start:]:
+            if m.get("role") == "user":
+                ask = str(m.get("content") or "").rsplit("\n\n---\n\n", 1)[-1]
+                break
+        diag = get_mode(self.active_mode).get("forensic") or looks_diagnostic(ask)
+        return bool(diag and self._CAUSE_CLAIM.search(text or ""))
+
+    def _evidence_pool(self, turn_start: int) -> tuple[str, str]:
+        """(everything this job actually produced, the part that came only from
+        the project's own docs). Tool results are matched to their calls by id."""
+        calls = {}
+        for m in self.history[turn_start:]:
+            if m.get("role") == "tool_use":
+                for c in (m.get("calls") or []):
+                    calls[getattr(c, "id", None)] = c
+        real, docs = [], []
+        for m in self.history[turn_start:]:
+            if m.get("role") == "tool_use":
+                for c in (m.get("calls") or []):
+                    real.append(str(getattr(c, "args", "")))
+            elif m.get("role") == "tool_result":
+                c = calls.get(m.get("id"))
+                path = str((getattr(c, "args", None) or {}).get("path", "")) if c else ""
+                if c and getattr(c, "name", "") == "read_file" and self._PROJECT_DOC.search(path):
+                    docs.append(str(m.get("content") or ""))
+                else:
+                    real.append(str(m.get("content") or ""))
+        return "\n".join(real), "\n".join(docs)
+
+    def _wrote_solve_request(self, turn_start: int) -> bool:
+        for m in self.history[turn_start:]:
+            if m.get("role") == "tool_use":
+                for c in (m.get("calls") or []):
+                    if "solve-request" in str(getattr(c, "args", "")).lower():
+                        return True
+        return False
+
+    def _cause_gate(self, turn_start: int, text: str) -> str:
+        """The reason to send a diagnosis back, or "" if it may stand."""
+        if not self._is_diagnosis(turn_start, text):
+            return ""
+        missing = [k for k, rx in self._BOX.items() if not rx.search(text)]
+        if missing:
+            return ("a diagnosis must be laid out in four boxes — Proven, Believed, "
+                    "Ruled out, What would prove me wrong — missing: " + ", ".join(missing))
+        # The Proven box: from its heading to the next box heading.
+        start = self._BOX["proven"].search(text).end()
+        ends = [rx.search(text, start) for k, rx in self._BOX.items() if k != "proven"]
+        end = min([e.start() for e in ends if e] or [len(text)])
+        items = [ln for ln in text[start:end].splitlines() if re.match(r"^\s*([-*•]|\d+[.)])\s+", ln)]
+        real, docs = self._evidence_pool(turn_start)
+        unbacked, docs_only, proven = [], [], 0
+        for ln in items:
+            quotes = [q.strip() for q in re.findall(r"`([^`]{6,})`", ln)]
+            if any(q in real for q in quotes):
+                proven += 1
+            elif any(q in docs for q in quotes):
+                docs_only.append(ln.strip()[:120])
+            else:
+                unbacked.append(ln.strip()[:120])
+        if docs_only:
+            return ("these 'Proven' items rest only on the project's own docs, which are "
+                    "claims, not proof — move them to Believed or prove them another way: "
+                    + " | ".join(docs_only[:3]))
+        if unbacked:
+            return ("every 'Proven' item must quote, in backticks, the exact output from "
+                    "this job that proves it — these don't: " + " | ".join(unbacked[:3]))
+        if not proven:
+            if self._FINAL_WORDS.search(text):
+                return ("nothing is Proven, so the cause cannot be called final or confirmed "
+                        "— call it your best guess and say how sure you are")
+            if not self._wrote_solve_request(turn_start):
+                return ("nothing is Proven, so write SOLVE-REQUEST.md for the owner to send "
+                        "out: the problem, what you know, what you believe and how sure, "
+                        "what you ruled out and how, and the exact question you need "
+                        "answered. Strip client names and private details")
+        return ""
+
+    def _advocate_review(self, turn_start: int, text: str) -> str:
+        """The rival the advocate says she has not ruled out, or "". Fails OPEN."""
+        if not (self.superego and self._is_diagnosis(turn_start, text)):
+            return ""
+        try:
+            raw = advocate_ask(self.superego, self._evidence_digest(turn_start, text))
+        except Exception:
+            return ""
+        m = re.search(r"RIVAL:\s*(.+)", raw)
+        rival = (m.group(1).strip() if m else "")
+        addressed = re.search(r"ADDRESSED:\s*yes", raw, re.I)
+        if not rival or rival.upper().startswith("NONE") or addressed or len(rival.split()) < 5:
+            return ""
+        return rival[:400]
 
     # -- receipts -------------------------------------------------------
     _CLAIM_DONE = re.compile(

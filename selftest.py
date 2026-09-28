@@ -1450,6 +1450,74 @@ def t_diagnosis_stamp_catches_a_theory_over_printed_failures():
                            "The wall_n position case wants (1,2,3) and got (1,2,4)."))
 
 
+_ASK = {"role": "user", "content": "The driver installs but never loads. Find out why and what the cause is."}
+
+
+def _cause_hist(extra_results):
+    """A diagnostic turn: the ask, a run whose output is real, a README read."""
+    run, doc = _FakeCall("run_command", "c1"), _FakeCall("read_file", "c2")
+    doc.args = {"path": "repo/README.md"}
+    return [_ASK,
+            {"role": "tool_use", "calls": [run, doc]},
+            {"role": "tool_result", "id": "c1", "content": "CFBundleVersion 1.0.20260821.1"},
+            {"role": "tool_result", "id": "c2", "content": "USB matching needs bInterfaceNumber"}] + extra_results
+
+
+_BOXES = ("## Proven\n- {p}\n## Believed\n- the version stamp is the root cause (70%)\n"
+          "## Ruled out\n- none yet\n## What would prove me wrong\n- a Start() log on hardware\n")
+
+
+def t_cause_gate_needs_receipts_and_never_trusts_docs():
+    """2026-09-28, printer bug: every hunt past ~30 min ended 'Cause (final)' on
+    the repo README's own theory. A diagnosis must come in four boxes; Proven
+    needs a quote from THIS job's real output; a quote found only in the
+    project's docs is not proof; nothing proven = no 'final' + a solve request."""
+    from forge.agent import Agent
+    def gate(hist, text):
+        a = Agent(provider=None, tools=[]); a.history = hist
+        return a._cause_gate(0, text)
+    h = _cause_hist([])
+    no_boxes = gate(h, "Cause (final): the USB matching keys.")
+    backed = gate(h, _BOXES.format(p="stamp reads `CFBundleVersion 1.0.20260821.1`"))
+    docs_only = gate(h, _BOXES.format(p="matching needs `USB matching needs bInterfaceNumber`"))
+    invented = gate(h, _BOXES.format(p="log says `DNPDriver: Start failed 0x1`"))
+    nothing = ("## Proven\n## Believed\n- the version stamp is the root cause (60%)\n"
+               "## Ruled out\n- none\n## What would prove me wrong\n- a hardware log\n")
+    final_word = gate(h, nothing.replace("(60%)", "(final)"))
+    no_request = gate(h, nothing)
+    wrote = _FakeCall("write_file", "c3"); wrote.args = {"path": "SOLVE-REQUEST.md"}
+    with_request = gate(h + [{"role": "tool_use", "calls": [wrote]}], nothing)
+    chat = Agent(provider=None, tools=[]); chat.history = [{"role": "user", "content": "hi"}]
+    return (bool(no_boxes) and not backed and "docs" in docs_only and bool(invented)
+            and "final" in final_word and "SOLVE-REQUEST" in no_request and not with_request
+            and not chat._cause_gate(0, "The root cause is usually DNS."))
+
+
+class _FakeProv:
+    def __init__(self, text): self.text = text
+    def complete(self, *a, **k):
+        class R: pass
+        r = R(); r.text = self.text; return r
+
+
+def t_advocate_sends_back_an_unaddressed_rival_only():
+    """The other side, argued: a concrete rival she has not ruled out sends the
+    answer back; NONE, an addressed rival, or a vague one lets it stand; a dead
+    judge fails open."""
+    from forge.agent import Agent
+    def adv(text):
+        a = Agent(provider=None, tools=[], superego=_FakeProv(text)); a.history = [_ASK]
+        return a._advocate_review(0, "The root cause is the USB matching keys.")
+    class _Dead:
+        def complete(self, *a, **k): raise RuntimeError("judge down")
+    dead = Agent(provider=None, tools=[], superego=_Dead()); dead.history = [_ASK]
+    return (adv("RIVAL: the version stamp commit a1fe588 changed CFBundleVersion format\nADDRESSED: no")
+            and not adv("RIVAL: NONE\nADDRESSED: no")
+            and not adv("RIVAL: the version stamp commit a1fe588 changed it\nADDRESSED: yes")
+            and not adv("RIVAL: something else\nADDRESSED: no")
+            and not dead._advocate_review(0, "The root cause is the USB matching keys."))
+
+
 def t_whereami_sees_the_project_it_is_standing_in():
     """The tool that answers "where am I" only ever globbed BELOW the workspace,
     so standing inside a project — the commonest case, and the one where she most
@@ -1511,6 +1579,10 @@ CHECKS = [
      t_grounding_stamp_catches_a_claim_with_nothing_read, False),
     ("harness: diagnosis catches a theory over printed failures",
      t_diagnosis_stamp_catches_a_theory_over_printed_failures, False),
+    ("harness: causes need receipts; docs are not proof",
+     t_cause_gate_needs_receipts_and_never_trusts_docs, False),
+    ("harness: the other side is argued; unaddressed rival sends back",
+     t_advocate_sends_back_an_unaddressed_rival_only, False),
     ("harness: auto-verify finds the project from a relative path",
      t_auto_verify_finds_the_project_from_a_relative_path, False),
     ("harness: the worklog writes a line and reads it back",

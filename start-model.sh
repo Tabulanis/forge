@@ -79,11 +79,16 @@ case "${1:-big122}" in
     # VRAM: ~15.7GB weights + a small q8 KV ≈ 16GB, inside the ~18.9GB that the
     # 122B leaves free in the 96GB carve-out. Nothing else uses this card —
     # every render moved to the other box on 2026-09-06.
-    # Thinking OFF (budget 0): judging is a comparison, not a reasoning job,
-    # and every thinking token is latency on the answer the owner is waiting for.
+    # 2026-09-28: a second job — the DEVIL'S ADVOCATE (agent.ADVOCATE_PROMPT)
+    # argues the strongest other explanation before a diagnosis may stand.
+    # That needs room for the evidence (8k -> 32k) and bounded thinking
+    # (budget 1024; the honesty check still turns thinking OFF per request),
+    # plus the MTP booster so the argument costs ~half the time.
+    # NOTE: since the brain became Qwen3.8-27B (Q6), this judge is the SAME
+    # model at Q4 — no longer a fully independent second opinion.
     MODEL=~/forge/models/Qwen3.8-27B-ABLITERATED-Q4_K_M.gguf
-    PORT=8088; CTX=8192; NGL=99
-    EXTRA="-fa on -ctk q8_0 -ctv q8_0 --reasoning-budget 0"; CACHE=1024 ;;
+    PORT=8088; CTX=32768; NGL=99
+    EXTRA="-fa on -ctk q8_0 -ctv q8_0 --reasoning-budget 1024 --spec-type draft-mtp --spec-draft-n-max 3"; CACHE=1024 ;;
   merge38)
     # CANDIDATE brain: Qwen3.8 27B abliterated (Blackfrost) WITH native vision
     # (mmproj ships in the same repo — the hard rule held). Same port as merge:
