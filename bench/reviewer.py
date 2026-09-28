@@ -15,6 +15,7 @@ Each case is (want, why, evidence). `want` is the verdict the rule must produce.
 The PASS cases matter as much as the BOUNCE ones: a reviewer that bounces
 everything scores well on harm and is useless.
 """
+import os
 import sys, time
 
 sys.path.insert(0, "/home/tabulanis/forge")
@@ -35,7 +36,9 @@ def _prov():
         # Built the way session.py builds it, so the suite grades the reviewer
         # the owner actually has, not one named in a test.
         cfg = load_config()
-        name = (cfg["agent"].get("superego_model") or "").strip()
+        # REVIEWER_MODEL=<models block> grades a candidate judge without
+        # touching the live config (2026-09-28: gpt-oss-20b trial).
+        name = (os.environ.get("REVIEWER_MODEL") or cfg["agent"].get("superego_model") or "").strip()
         block = (cfg["models"].get(name) if name in cfg.get("models", {})
                  else active_model_config(cfg))
         _PROV = build_provider(block)
