@@ -94,6 +94,22 @@ case "${1:-big122}" in
     MMPROJ=~/forge/models/mmproj-Qwen3.8-27B-ABLITERATED-F16.gguf
     PORT=8085; CTX=32768; NGL=99
     EXTRA="-fa on -ctk q8_0 -ctv q8_0 --reasoning-budget 1024"; CACHE=4096 ;;
+  q6brain)
+    # 2026-09-27: MERGE'S BRAIN (runs in the big122 slot — same port 8087,
+    # same unit, so config/pipelines/memguard/power.py all follow unchanged).
+    # Qwen3.8-27B abliterated Q6_K (Blackfrost-AI, Apache-2.0) + its own eyes.
+    # Chosen on the brain test (~/aidojo/brain-test): 13/14 = the 122B's 13/14,
+    # whole test in 10.6 min vs 25.6, ~24 GB vs 70 GB — the 122B filled the
+    # carve-out and spilled into the owner's 30 GB RAM (unified memory).
+    # --spec-type draft-mtp: the MTP head embedded in the gguf drafts tokens;
+    # measured 9.7 -> 21.0 tok/s on Q6 with word-identical answers.
+    # --reasoning-budget 4096: same cap the 122B ran with; this model
+    # overthinks (burned 3500+ tokens on a 3-shape picture with no cap).
+    # Revert = unit ExecStart back to `start-model.sh big122`.
+    MODEL=~/forge/models/Qwen3.8-27B-ABLITERATED-Q6_K.gguf
+    MMPROJ=~/forge/models/mmproj-Qwen3.8-27B-ABLITERATED-F16.gguf
+    PORT=8087; CTX=131072; NGL=99
+    EXTRA="-fa on -ctk q8_0 -ctv q8_0 --reasoning-budget 4096 --spec-type draft-mtp --spec-draft-n-max 3"; CACHE=4096 ;;
   big122)
     # 2026-09-05 (Void only): Qwen3.5-122B-A10B abliterated (huihui — same
     # lineage as her 27B), WITH its own eyes (mmproj). Mixture-of-experts:
