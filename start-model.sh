@@ -88,7 +88,7 @@ case "${1:-big122}" in
     # model at Q4 — no longer a fully independent second opinion.
     MODEL=~/forge/models/Qwen3.8-27B-ABLITERATED-Q4_K_M.gguf
     PORT=8088; CTX=32768; NGL=99
-    EXTRA="-fa on -ctk q8_0 -ctv q8_0 --reasoning-budget 1024 --spec-type draft-mtp --spec-draft-n-max 3"; CACHE=1024 ;;
+    EXTRA="-fa on -ctk q8_0 -ctv q8_0 --reasoning-budget 1024 --spec-type draft-mtp --spec-draft-n-max 3"; CACHE=0 ;;   # 2026-09-28: sees one fresh digest a time, nothing to reuse
   merge38)
     # CANDIDATE brain: Qwen3.8 27B abliterated (Blackfrost) WITH native vision
     # (mmproj ships in the same repo — the hard rule held). Same port as merge:
@@ -108,7 +108,7 @@ case "${1:-big122}" in
     # MoE: 21B total, ~3.6B active per token, ~12 GB — fast on Void.
     MODEL=~/forge/models/gpt-oss-20b-MXFP4.gguf
     PORT=8093; CTX=32768; NGL=99
-    EXTRA="-fa on"; CACHE=1024 ;;
+    EXTRA="-fa on"; CACHE=0 ;;   # 2026-09-28: never reuses a prompt either
   q6brain)
     # 2026-09-27: MERGE'S BRAIN (runs in the big122 slot — same port 8087,
     # same unit, so config/pipelines/memguard/power.py all follow unchanged).
@@ -124,7 +124,9 @@ case "${1:-big122}" in
     MODEL=~/forge/models/Qwen3.8-27B-ABLITERATED-Q6_K.gguf
     MMPROJ=~/forge/models/mmproj-Qwen3.8-27B-ABLITERATED-F16.gguf
     PORT=8087; CTX=131072; NGL=99
-    EXTRA="-fa on -ctk q8_0 -ctv q8_0 --reasoning-budget 1024 --spec-type draft-mtp --spec-draft-n-max 3"; CACHE=4096 ;;
+    # CACHE 4096->1024 (2026-09-28): the host-RAM prompt cache grew the brain to 6.6 GB
+    # of HIS 30 GB over one long run and tripped memguard. One user = little reuse.
+    EXTRA="-fa on -ctk q8_0 -ctv q8_0 --reasoning-budget 1024 --spec-type draft-mtp --spec-draft-n-max 3"; CACHE=1024 ;;
   big122)
     # 2026-09-05 (Void only): Qwen3.5-122B-A10B abliterated (huihui — same
     # lineage as her 27B), WITH its own eyes (mmproj). Mixture-of-experts:

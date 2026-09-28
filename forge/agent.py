@@ -1964,13 +1964,25 @@ class Agent:
     # dumb checker that never screws up; the advocate below does the thinking.
     _CAUSE_CLAIM = re.compile(
         r"\b(root cause|the cause is|final cause|caused by|the culprit|"
-        r"the bug is|cause[s]? of (the|this) (bug|failure|problem))\b|\bcause \(final\)", re.I)
+        r"the bug is|cause[s]? of (the|this) (bug|failure|problem)|"
+        r"(most )?(probable|likely) cause)\b|\bcause \(final\)|"
+        # 2026-09-28: her answer said "• Cause: …" and slipped past.
+        # and her rewritten ANSWER.md headed a section just "## The cause".
+        r"^\W*(the\s+)?((root|final|real|actual|likely|probable)\s+)?cause\s*([:—-].*)?$", re.I | re.M)
     _FINAL_WORDS = re.compile(r"\b(final|definitely|confirmed|certainly|the (root )?cause is)\b", re.I)
     _BOX = {"proven": re.compile(r"^\W*proven\b", re.I | re.M),
             "believed": re.compile(r"^\W*believed\b", re.I | re.M),
             "ruled out": re.compile(r"^\W*ruled[ -]out\b", re.I | re.M),
             "wrong": re.compile(r"^\W*what would prove (me|this|it) wrong\b", re.I | re.M)}
     _PROJECT_DOC = re.compile(r"(readme|\.md$|\.markdown$|\.rst$|\.txt$|(^|/)docs?/)", re.I)
+
+    def _diagnostic_session(self, turn_start: int) -> bool:
+        ask = ""
+        for m in self.history[turn_start:]:
+            if m.get("role") == "user":
+                ask = str(m.get("content") or "").rsplit("\n\n---\n\n", 1)[-1]
+                break
+        return bool(get_mode(self.active_mode).get("forensic") or looks_diagnostic(ask))
 
     def _is_diagnosis(self, turn_start: int, text: str) -> bool:
         ask = ""
@@ -2042,11 +2054,18 @@ class Agent:
             why = self._cause_gate_text(turn_start, body)
             if why:
                 return f"in {name}: {why}"
-        return self._cause_gate_text(turn_start, text)
+        # The REPLY: structural, not by wording (2026-09-28 — chasing "Cause:",
+        # "The cause", "Most probable cause" was whack-a-mole). In a diagnostic
+        # session every hand-in uses the four boxes; an honest "still open" fits
+        # them trivially. Files stay phrase-tested: FINDINGS.md is her notebook.
+        return self._cause_gate_text(turn_start, text, structural=True)
 
-    def _cause_gate_text(self, turn_start: int, text: str) -> str:
+    def _cause_gate_text(self, turn_start: int, text: str, structural: bool = False) -> str:
         """The reason to send a diagnosis back, or \"\" if it may stand."""
-        if not self._is_diagnosis(turn_start, text):
+        if structural:
+            if not self._diagnostic_session(turn_start):
+                return ""
+        elif not self._is_diagnosis(turn_start, text):
             return ""
         missing = [k for k, rx in self._BOX.items() if not rx.search(text)]
         if missing:

@@ -1490,7 +1490,11 @@ def t_cause_gate_needs_receipts_and_never_trusts_docs():
     chat = Agent(provider=None, tools=[]); chat.history = [{"role": "user", "content": "hi"}]
     return (bool(no_boxes) and not backed and "docs" in docs_only and bool(invented)
             and "final" in final_word and "SOLVE-REQUEST" in no_request and not with_request
-            and not chat._cause_gate(0, "The root cause is usually DNS."))
+            and not chat._cause_gate(0, "The root cause is usually DNS.")
+            and bool(gate(h, " • Cause: the Info.plist personalities lack a key."))
+            and bool(gate(h, "## Most probable cause\n1. signing"))
+            and bool(gate(h, "## The cause\nThe personalities lack a key."))
+            and bool(gate(h, "Candidate root causes, in doc order: (a) signing")))   # structural: boxes always
 
 
 def t_cause_gate_reads_the_findings_file():
