@@ -20,6 +20,18 @@ import json
 from dataclasses import dataclass, field
 from typing import Any
 
+# Her LIVE reading-in speed (prompt tokens/s), from llama-server's timings.
+# It falls as her context grows (~280 tok/s near empty, ~115 at 60-90k on the
+# 27B, measured 2026-09-28), so read_file prices a file with this, not a
+# constant. Only replies that read >= 500 new tokens count; tiny ones are noise.
+READ_SPEED: dict = {"tps": None}
+
+
+def note_read_speed(timings: dict) -> None:
+    n, tps = timings.get("prompt_n") or 0, timings.get("prompt_per_second")
+    if tps and n >= 500:
+        READ_SPEED["tps"] = float(tps)
+
 
 @dataclass
 class ToolCall:
@@ -360,6 +372,8 @@ class OpenAICompatProvider(Provider):
                         continue
                     if chunk.get("usage"):
                         usage = chunk["usage"]
+                    if chunk.get("timings"):
+                        note_read_speed(chunk["timings"])
                     choices = chunk.get("choices") or []
                     if not choices:
                         continue

@@ -45,6 +45,9 @@ from .web import fetch_url, grep_text, web_search
 from .writing import ai_tells, name_check, text_stats
 
 MAX_READ_BYTES = 400_000     # a huge file would blow the context window
+READ_CHEAP_SECONDS = 30      # a whole-file read costing more than this gets priced, not dumped
+READ_TPS_DEFAULT = 150.0     # reading-in speed until her first real reply is measured
+BYTES_PER_TOKEN = 3.5        # rough, for source code and prose
 FINDINGS_DIR = Path.home() / ".forge" / "findings"  # per-task working-facts scratchpads
 # --- scouts: throwaway read-only sub-agents (fan-out) ---
 SCOUT_TOOLS = {"read_file", "search", "list_dir", "fetch_url"}   # read-only only
@@ -1173,7 +1176,8 @@ def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provi
     _bigfile_reads = {}    # path -> times read whole/paged this session
     _bigfile_digest = {}   # path -> cached scout digest (auto-scout)
 
-    def read_file(path: str, offset: int = 0, limit: int = 2000, contains: str = "") -> str:
+    def read_file(path: str, offset: int = 0, limit: int = 2000, contains: str = "",
+                  whole: bool = False) -> str:
         f = ws.resolve(path)
         if not f.exists():
             return f"Error: no such file: {ws.rel(f)}"
@@ -1199,9 +1203,25 @@ def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provi
         # so a normal file is simply read and only a genuinely huge one is
         # summarised. Raised 2026-09-08.
         _big = len(lines) > 2000 or f.stat().st_size > 100_000
-        if _big and not contains:
+        # PRICE IN SECONDS (2026-09-28). On Void a whole-file read is paid in
+        # reading-in time at her live speed: a 20k-token file was 3 minutes of a
+        # 30-minute bug hunt. Cheap files are handed over whole as before; a
+        # pricey one gets the map + its price, and she chooses — whole=True reads
+        # it anyway. Genuinely huge files (_big) keep the old rules.
+        from .providers import READ_SPEED
+        _tps = READ_SPEED.get("tps") or READ_TPS_DEFAULT
+        _secs = f.stat().st_size / BYTES_PER_TOKEN / _tps
+        _pricey = _secs > READ_CHEAP_SECONDS and not whole
+        if (_big or _pricey) and not contains:
             _k = str(f)
             _bigfile_reads[_k] = _bigfile_reads.get(_k, 0) + 1
+            if offset == 0 and not _big:
+                return (f"{ws.rel(f)} ({len(lines)} lines) would cost about {_secs:.0f}s of "
+                        f"reading-in to take whole at your current speed. Choose ONE:\n"
+                        f"  • read_file(\"{ws.rel(f)}\", contains=\"WORD\") — only the lines you need (seconds)\n"
+                        f"  • read_file(\"{ws.rel(f)}\", offset=N, limit=M) — just one stretch\n"
+                        f"  • read_file(\"{ws.rel(f)}\", whole=True) — all of it, if you really need it all\n\n"
+                        f"MAP of {ws.rel(f)}:\n" + _file_outline(lines))
             if offset == 0:
                 return (f"{ws.rel(f)} is large ({len(lines)} lines) — not dumped whole, to "
                         f"protect your working memory. Jump in with ONE of:\n"
@@ -1209,7 +1229,7 @@ def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provi
                         f"  • scout(\"<your question about {ws.rel(f)}>\") — a sub-agent reads it, you get just the answer\n"
                         f"  • read_file(\"{ws.rel(f)}\", offset=N) — page from a line\n\n"
                         f"MAP of {ws.rel(f)}:\n" + _file_outline(lines))
-            if AUTO_SCOUT_ENABLED and _bigfile_reads[_k] >= 3 and provider is not None:
+            if AUTO_SCOUT_ENABLED and _big and _bigfile_reads[_k] >= 3 and provider is not None:
                 if _k not in _bigfile_digest:
                     # The MAIN BRAIN writes this digest, not the little model.
                     # A summary she will act on without re-reading the file has
@@ -1649,6 +1669,7 @@ def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provi
                     "offset": {"type": "integer", "description": "First line to show (0-based)"},
                     "limit": {"type": "integer", "description": "How many lines to show"},
                     "contains": {"type": "string", "description": "If set, return only lines matching this pattern (regex, case-insensitive) with surrounding context — instead of paging the whole file"},
+                    "whole": {"type": "boolean", "description": "Read the whole file even though it is priced as slow to take in — only when you truly need all of it"},
                 },
                 "required": ["path"],
             },
