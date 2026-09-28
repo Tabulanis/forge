@@ -2107,18 +2107,31 @@ class Agent:
     def _advocate_review(self, turn_start: int, text: str) -> str:
         """The rival the advocate says she has not ruled out, or "". Fails OPEN."""
         prov = self.advocate or self.superego
-        if not (prov and self._is_diagnosis(turn_start, text)):
+        # Structural trigger, like the cause gate: the 15:16 run's four-box reply
+        # had no cause-talk phrase, so the phrase test skipped the advocate entirely.
+        if not (prov and self._diagnostic_session(turn_start)):
             return ""
+        t0 = time.time()
         try:
             raw = advocate_ask(prov, self._evidence_digest(turn_start, text))
-        except Exception:
-            return ""
+        except Exception as e:
+            raw, err = "", type(e).__name__
+        else:
+            err = ""
         m = re.search(r"RIVAL:\s*(.+)", raw)
         rival = (m.group(1).strip() if m else "")
         addressed = re.search(r"ADDRESSED:\s*yes", raw, re.I)
-        if not rival or rival.upper().startswith("NONE") or addressed or len(rival.split()) < 5:
-            return ""
-        return rival[:400]
+        out = "" if (not rival or rival.upper().startswith("NONE") or addressed
+                     or len(rival.split()) < 5) else rival[:400]
+        # Every advocate call goes in the ledger (2026-09-28: a whole run passed
+        # with no record of whether the other side was ever argued).
+        if not self.ephemeral:
+            self._ledger_write({"t": time.time(), "claim": (text or "")[:300],
+                                "verdict": "advocate:" + ("rival" if out else "error" if err
+                                                           else "empty" if not raw else "none"),
+                                "reason": (out or err or raw)[:400],
+                                "judge_ms": int((time.time() - t0) * 1000)})
+        return out
 
     # -- receipts -------------------------------------------------------
     _CLAIM_DONE = re.compile(

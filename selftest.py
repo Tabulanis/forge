@@ -1529,10 +1529,12 @@ def t_advocate_sends_back_an_unaddressed_rival_only():
     from forge.agent import Agent
     def adv(text):
         a = Agent(provider=None, tools=[], superego=_FakeProv(text)); a.history = [_ASK]
+        a._ledger_write = lambda e: None   # never write test rows into the real ledger
         return a._advocate_review(0, "The root cause is the USB matching keys.")
     class _Dead:
         def complete(self, *a, **k): raise RuntimeError("judge down")
     dead = Agent(provider=None, tools=[], superego=_Dead()); dead.history = [_ASK]
+    dead._ledger_write = lambda e: None
     return (adv("RIVAL: the version stamp commit a1fe588 changed CFBundleVersion format\nADDRESSED: no")
             and not adv("RIVAL: NONE\nADDRESSED: no")
             and not adv("RIVAL: the version stamp commit a1fe588 changed it\nADDRESSED: yes")
@@ -1546,7 +1548,7 @@ def _own_advocate_is_used():
     from forge.agent import Agent
     a = Agent(provider=None, tools=[], superego=_FakeProv("RIVAL: NONE\nADDRESSED: no"),
               advocate=_FakeProv("RIVAL: the version stamp commit a1fe588 changed CFBundleVersion\nADDRESSED: no"))
-    a.history = [_ASK]
+    a.history = [_ASK]; a._ledger_write = lambda e: None
     return "a1fe588" in a._advocate_review(0, "The root cause is the USB matching keys.")
 
 
