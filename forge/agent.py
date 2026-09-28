@@ -876,6 +876,9 @@ class Agent:
         # The devil's advocate: a different model family, so it argues from a
         # different angle. None = the superego's model takes that job too.
         self.advocate = advocate
+        # Where her files live (set by the session). Lets the receipts gate
+        # read the FINDINGS/ANSWER files the test actually scores.
+        self.workspace_root = None
         # The workspace's live read-ledger (shared set of Paths). Lets the
         # harness ask "did you actually open the file you're describing?"
         self.reads = reads if reads is not None else set()
@@ -2008,8 +2011,41 @@ class Agent:
                         return True
         return False
 
+    _DIAG_FILE = re.compile(r"(findings|answer|diagnos|root[-_ ]?cause|report)[^/]*\.md$", re.I)
+
+    def _diagnosis_files(self, turn_start: int) -> list:
+        """(name, text) of findings/answer files she wrote or edited this job —
+        her conclusion often lives THERE, and that is what gets read and scored.
+        (2026-09-28: the 52-min run said 'Cause (final)' in FINDINGS.md.)"""
+        root, seen, out = self.workspace_root, set(), []
+        if not root:
+            return out
+        for m in self.history[turn_start:]:
+            if m.get("role") != "tool_use":
+                continue
+            for c in (m.get("calls") or []):
+                path = str((getattr(c, "args", None) or {}).get("path", ""))
+                if getattr(c, "name", "") in ("write_file", "edit_file") and self._DIAG_FILE.search(path) \
+                        and path not in seen:
+                    seen.add(path)
+                    try:
+                        out.append((path, (Path(root) / path).read_text(errors="replace")))
+                    except Exception:
+                        pass
+        return out
+
     def _cause_gate(self, turn_start: int, text: str) -> str:
-        """The reason to send a diagnosis back, or "" if it may stand."""
+        """Check the reply AND any findings/answer file written this job."""
+        # Files first: a "final" written into the file that gets read is the
+        # bigger problem, and must not hide behind a smaller one in the reply.
+        for name, body in self._diagnosis_files(turn_start):
+            why = self._cause_gate_text(turn_start, body)
+            if why:
+                return f"in {name}: {why}"
+        return self._cause_gate_text(turn_start, text)
+
+    def _cause_gate_text(self, turn_start: int, text: str) -> str:
+        """The reason to send a diagnosis back, or \"\" if it may stand."""
         if not self._is_diagnosis(turn_start, text):
             return ""
         missing = [k for k, rx in self._BOX.items() if not rx.search(text)]

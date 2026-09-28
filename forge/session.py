@@ -197,6 +197,7 @@ class Session:
             reads=ws.reads,
             read_mtimes=ws.read_mtimes,
         )
+        self.agent.workspace_root = ws.root
         # so the flight recorder files a turn under the right session
         self.agent.session_id = self.id
 

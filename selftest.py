@@ -1493,6 +1493,24 @@ def t_cause_gate_needs_receipts_and_never_trusts_docs():
             and not chat._cause_gate(0, "The root cause is usually DNS."))
 
 
+def t_cause_gate_reads_the_findings_file():
+    """2026-09-28: the 52-min run's chat reply was careful, but FINDINGS.md —
+    the file that gets read and scored — said 'Cause (final)'. The gate must
+    read the findings/answer files she wrote this job, not only her reply."""
+    from forge.agent import Agent
+    root = Path(tempfile.mkdtemp())
+    (root / "FINDINGS.md").write_text("## Cause (final)\n- the USB matching keys\n")
+    w = _FakeCall("write_file", "c9"); w.args = {"path": "FINDINGS.md"}
+    careful = ("## Proven\n## Believed\n- USB keys may be the root cause (40%)\n"
+               "## Ruled out\n- none\n## What would prove me wrong\n- a hardware log\n")
+    a = Agent(provider=None, tools=[]); a.workspace_root = root
+    a.history = _cause_hist([{"role": "tool_use", "calls": [w]}])
+    fired = a._cause_gate(0, careful)
+    (root / "FINDINGS.md").write_text("notes only, no conclusions yet\n")
+    quiet = a._cause_gate(0, careful)
+    return fired.startswith("in FINDINGS.md") and "SOLVE-REQUEST" in quiet
+
+
 class _FakeProv:
     def __init__(self, text): self.text = text
     def complete(self, *a, **k):
@@ -1591,6 +1609,8 @@ CHECKS = [
      t_diagnosis_stamp_catches_a_theory_over_printed_failures, False),
     ("harness: causes need receipts; docs are not proof",
      t_cause_gate_needs_receipts_and_never_trusts_docs, False),
+    ("harness: the receipts gate reads the findings file too",
+     t_cause_gate_reads_the_findings_file, False),
     ("harness: the other side is argued; unaddressed rival sends back",
      t_advocate_sends_back_an_unaddressed_rival_only, False),
     ("harness: auto-verify finds the project from a relative path",
