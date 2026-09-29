@@ -2249,11 +2249,17 @@ class Agent:
             out = subprocess.run(cmd, capture_output=True, text=True, timeout=10).stdout
         except Exception:
             return []
+        # "Opened" means she saw the DIFF (2026-09-29: she ran `git show --stat` on
+        # all six staples in one go and learned nothing). A hash counts only inside a
+        # git show/diff/log -p command that is not a --stat/--name-only/--oneline glance.
         seen = set()
         for m in self.history[turn_start:]:
             if m.get("role") == "tool_use":
                 for c in (m.get("calls") or []):
-                    seen |= set(self._HASH.findall(str(getattr(c, "args", ""))))
+                    cmd = str(getattr(c, "args", ""))
+                    if re.search(r"git\s+(show|diff|log\s+-p)", cmd) and not re.search(
+                            r"--(stat|name-only|name-status|oneline|format)", cmd):
+                        seen |= set(self._HASH.findall(cmd))
         unexamined = []
         for ln in out.splitlines():
             h = ln.split()[0] if ln.split() else ""
@@ -2280,7 +2286,7 @@ class Agent:
         stapled = ("" if not (named and unexamined) else
                    "You name " + ", ".join(named[:4]) + " but never opened these changes to "
                    + ("them" if len(named) > 1 else "it") + ": " + "; ".join(unexamined[:6])
-                   + ". Open them (git show <hash>) or say why not.")
+                   + ". Read their diffs (git show <hash>, not --stat) or say why not.")
         system = RULEDOUT_PROMPT if (ruled or unexamined) else ADVOCATE_PROMPT
         if ruled:
             digest = "RULED OUT (as the investigator wrote it):\n" + "\n".join(ruled) + "\n\n" + digest

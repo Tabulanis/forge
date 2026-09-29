@@ -1579,10 +1579,11 @@ def t_advocate_sees_files_and_unexamined_commits():
         hashes.append(subprocess.run(["git", "-C", str(repo), "rev-parse", "--short", "HEAD"],
                                      capture_output=True, text=True).stdout.strip())
     (root / "ANSWER.md").write_text("## Proven\n- x\n## Believed\n- y\n## Ruled out\n- Stale-dext trap — symptom mismatch\n## What would prove me wrong\n- z\n")
-    run = _FakeCall("run_command", "c1"); run.args = {"command": f"cd repo && git show {hashes[2]} --stat"}
+    run = _FakeCall("run_command", "c1"); run.args = {"command": f"cd repo && git show {hashes[2]}"}
+    glance = _FakeCall("run_command", "c0"); glance.args = {"command": f"cd repo && git show {hashes[1]} --stat"}   # a glance does not count
     wrote = _FakeCall("write_file", "c2"); wrote.args = {"path": "ANSWER.md"}
     a = Agent(provider=None, tools=[]); a.workspace_root = root
-    a.history = [_ASK, {"role": "tool_use", "calls": [run, wrote]},
+    a.history = [_ASK, {"role": "tool_use", "calls": [glance, run, wrote]},
                  {"role": "tool_result", "id": "c1", "content": "commit " + hashes[2]}]
     reply = "**Ruled out:** the VID/PID, and signing.\n"
     items = a._ruled_out_items(0, reply)
