@@ -1554,7 +1554,25 @@ def t_advocate_sends_back_an_unaddressed_rival_only():
             and not adv("RIVAL: the version stamp commit a1fe588 changed it\nADDRESSED: yes")
             and not adv("RIVAL: something else\nADDRESSED: no")
             and not dead._advocate_review(0, "The root cause is the USB matching keys.")
-            and _own_advocate_is_used())
+            and _own_advocate_is_used() and _empty_advocate_falls_back_to_judge()
+            and _advocate_runs_even_after_a_receipts_stamp())
+
+
+def _empty_advocate_falls_back_to_judge():
+    """gpt-oss came back empty 3/3 on a real digest: the judge's model must argue instead."""
+    from forge.agent import Agent
+    a = Agent(provider=None, tools=[], advocate=_FakeProv(""),
+              superego=_FakeProv("RIVAL: the version stamp commit a1fe588 changed CFBundleVersion\nADDRESSED: no"))
+    a.history = [_ASK]; a._ledger_write = lambda e: None
+    return "a1fe588" in a._advocate_review(0, "The root cause is the USB matching keys.")
+
+
+def _advocate_runs_even_after_a_receipts_stamp():
+    """As an `elif` the advocate was skipped whenever the receipts check failed twice."""
+    import inspect
+    from forge import agent as A
+    src = inspect.getsource(A.Agent)
+    return "elif not advocate_bounced" not in src and "if not advocate_bounced" in src
 
 
 def _own_advocate_is_used():

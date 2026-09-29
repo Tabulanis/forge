@@ -412,7 +412,9 @@ def advocate_ask(prov, digest: str) -> str:
     """Put the evidence to the advocate and return its raw reply. Thinking ON
     (this is a reasoning job, unlike the honesty check); greedy and pinned like
     the superego. Returns "" on nothing — the caller fails open."""
-    body = {"chat_template_kwargs": {"enable_thinking": True, "reasoning_effort": "medium"},
+    # reasoning_effort LOW (2026-09-28): at medium gpt-oss spent all 3000 tokens thinking
+    # and answered nothing, 3 of 3 on a real 8k digest; low answered in 4s.
+    body = {"chat_template_kwargs": {"enable_thinking": True, "reasoning_effort": "low"},
             "temperature": 0.0, "top_k": 1, "seed": 20260928, "max_tokens": 3000}
     # gpt-oss sometimes ends after its thinking with NO answer (measured
     # 2026-09-28: 2 of 6 identical calls came back empty, finish "stop").
@@ -1810,7 +1812,9 @@ class Agent:
                     if self.history and self.history[-1].get("role") == "assistant":
                         self.history[-1]["content"] = (self.history[-1]["content"] or "") + _warn
                     self._turn_hiccups.append("receipts for causes: stamped")
-                elif not advocate_bounced:
+                # Always argued, even after a receipts stamp (2026-09-28: as an
+                # `elif` this was skipped whenever receipts failed twice).
+                if not advocate_bounced:
                     _rival = self._advocate_review(turn_start, reply.text or "")
                     if _rival:
                         advocate_bounced = True
@@ -2112,12 +2116,21 @@ class Agent:
         if not (prov and self._diagnostic_session(turn_start)):
             return ""
         t0 = time.time()
+        digest = self._evidence_digest(turn_start, text)
+        used = "advocate" if self.advocate else "judge"
         try:
-            raw = advocate_ask(prov, self._evidence_digest(turn_start, text))
+            raw = advocate_ask(prov, digest)
         except Exception as e:
             raw, err = "", type(e).__name__
         else:
             err = ""
+        # Nothing from the advocate -> the judge's model argues instead, so an
+        # argument ALWAYS happens (gpt-oss returned empty 3/3 at one point).
+        if not raw and self.advocate is not None and self.superego is not None:
+            try:
+                raw, used = advocate_ask(self.superego, digest), "judge-fallback"
+            except Exception as e:
+                err = err or type(e).__name__
         m = re.search(r"RIVAL:\s*(.+)", raw)
         rival = (m.group(1).strip() if m else "")
         addressed = re.search(r"ADDRESSED:\s*yes", raw, re.I)
@@ -2127,7 +2140,7 @@ class Agent:
         # with no record of whether the other side was ever argued).
         if not self.ephemeral:
             self._ledger_write({"t": time.time(), "claim": (text or "")[:300],
-                                "verdict": "advocate:" + ("rival" if out else "error" if err
+                                "verdict": f"advocate[{used}]:" + ("rival" if out else "error" if err
                                                            else "empty" if not raw else "none"),
                                 "reason": (out or err or raw)[:400],
                                 "judge_ms": int((time.time() - t0) * 1000)})
