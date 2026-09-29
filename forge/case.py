@@ -120,6 +120,29 @@ def add_queue(case: dict, commits: list) -> int:
     return n
 
 
+_PROSE_PREFIX = re.compile(r"^\W*(commit message|diff comment|comment|the comment|readme|docs?|documentation|message)\b", re.I)
+_COMMENT_LINE = re.compile(r"^\s*[+-]?\s*(//|#|\*|/\*|<!--|;|--|\"\"\")")
+
+
+def receipt_is_evidence(receipt: str) -> str:
+    """'' if the receipt can count as evidence, else why not. A receipt is a line of
+    CODE or DATA from the diff, or command output. Commit messages, code comments and
+    README prose are the author's CLAIMS about behaviour — the 2026-09-29 14:51 run
+    marked the trap commit YES on the strength of a comment that 'matches the symptom'."""
+    r = (receipt or "").strip()
+    if not r:
+        return "empty"
+    if _PROSE_PREFIX.match(r):
+        return "that is a commit message / comment / doc: the author's claim, not evidence of behaviour"
+    if _COMMENT_LINE.match(r):
+        return "that is a comment line: a claim, not evidence — quote the code or data line instead"
+    words = re.findall(r"[A-Za-z]{3,}", r)
+    codey = len(re.findall(r"[=:<>(){}\[\]/_\.\-\$\|\\]", r))
+    if len(words) >= 12 and codey < 3:
+        return "that reads as prose, not a code/data line or command output"
+    return ""
+
+
 def review_commit(case: dict, hash: str, verdict: str, why: str = "", receipt: str = "",
                   next_check: str = "") -> str:
     h = (hash or "").strip()
@@ -138,6 +161,10 @@ def review_commit(case: dict, hash: str, verdict: str, why: str = "", receipt: s
     _need(why, "one or two sentences of why")
     if v in ("YES", "NO"):
         _need(receipt, f"a receipt for {v} — quote the exact output (diff lines or command output) that shows it")
+        bad = receipt_is_evidence(receipt)
+        if bad:
+            raise ValueError(f"receipt refused: {bad}. Commit messages, comments and docs are claims; if the claim is "
+                             f"all you have, the verdict is UNKNOWN with the check that would test it")
     else:
         _need(next_check, "for UNKNOWN, the one check that would settle it")
     q.update({"status": v, "why": why.strip()[:400], "receipt": (receipt or "").strip()[:400],
@@ -165,6 +192,9 @@ def _find(case: dict, sid: str) -> dict:
 def support(case: dict, sid: str, receipt: str, confidence: str = "") -> str:
     s = _find(case, sid)
     _need(receipt, "a receipt — the exact output that supports it")
+    bad = receipt_is_evidence(receipt)
+    if bad:
+        raise ValueError("receipt refused: " + bad)
     s["evidence"].append(receipt.strip()[:400])
     s["status"] = "supported"
     if confidence:
@@ -176,6 +206,9 @@ def clear(case: dict, sid: str, receipt: str) -> str:
     s = _find(case, sid)
     _need(receipt, "a receipt — a suspect is cleared only by quoting the check that cleared it; "
                    "'it would look different' is a next_check, not a receipt")
+    bad = receipt_is_evidence(receipt)
+    if bad:
+        raise ValueError("receipt refused: " + bad)
     s["evidence"].append("cleared by: " + receipt.strip()[:400])
     s["status"] = "cleared"
     return f"{s['id']} cleared."
@@ -538,6 +571,7 @@ decide whether this change could produce the symptom. Rules:
   version strings, build settings) whose rule you cannot verify from the diff alone,
   answer UNKNOWN and say what would settle it. Never guess a platform rule.
 - Documentation-only or UI-only changes are NO with the line that shows it.
+- Commit messages and code comments are the author's CLAIMS, never a RECEIPT; quote code or data lines only.
 Answer in exactly this shape, nothing else:
 VERDICT: YES|NO|UNKNOWN
 WHY: <one sentence>

@@ -1836,6 +1836,25 @@ def t_platform_answers_need_a_quoted_rule_and_block_a_no():
             and any("not backed by a fetched page" in b for b in C.blockers(c3)))
 
 
+def t_receipts_reject_prose_claims():
+    """14:51 run: YES on the trap commit, receipt = 'Diff comment added by this commit: …
+    matches the symptom'; NO on the stamp, receipt = 'Commit message: …'. Both are the
+    author's claims. Code/data lines and command output count; prose does not."""
+    from forge import case as C
+    c = C.load(Path(tempfile.mkdtemp()), "x"); C.set_window(c, reason="none")
+    C.add_queue(c, [{"hash": "e0666e5", "subject": "matching", "files": []}, {"hash": "a1fe588", "subject": "stamp", "files": []}])
+    refused = 0
+    for rec in ['Diff comment added by this commit: "With only VID/PID the personality never matches" — matches the symptom',
+                'Commit message: "Both hardware failures — ReadLog and SubmitJob dying" requires a connection',
+                '+    // with only idVendor/idProduct the personality never matches',
+                'The change only adds narration to the log drain and touches nothing on the attach path at all']:
+        try: C.review_commit(c, "e0666e5", "YES", why="w", receipt=rec)
+        except ValueError: refused += 1
+    ok = C.review_commit(c, "e0666e5", "NO", why="w", receipt="+    <key>bInterfaceNumber</key>")
+    ok2 = C.review_commit(c, "a1fe588", "NO", why="w", receipt="plutil -p Info.plist -> CFBundleVersion => 340857")
+    return refused == 4 and "NO" in ok and "NO" in ok2
+
+
 class _FakeProv:
     def __init__(self, text): self.text = text
     def complete(self, *a, **k):
@@ -1987,6 +2006,8 @@ CHECKS = [
      t_scout_pre_review_files_clean_nos_and_leaves_platform_commits, False),
     ("hunt: platform answers need a quoted rule; unresolved platform question blocks a NO",
      t_platform_answers_need_a_quoted_rule_and_block_a_no, False),
+    ("hunt: receipts reject prose claims (comments, commit messages, docs)",
+     t_receipts_reject_prose_claims, False),
     ("case: triage fills the queue from the window",
      t_triage_fills_the_queue_from_the_window, False),
     ("case: the ledger enforces receipts, cheap UNKNOWN, blockers",
