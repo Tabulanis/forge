@@ -2151,6 +2151,9 @@ class Agent:
         if c is None:
             return ""
         real, _docs = self._evidence_pool(turn_start)
+        for eq in c.get("external_questions", []):
+            if eq.get("auto") and eq.get("status") == "answered" and eq.get("quote") is not None:
+                eq["verified"] = eq["quote"][:120] in real or eq["quote"] in real
         text = C.checkpoint(c, label, verify=lambda r: bool(r) and r in real)
         try:
             C.save(self.workspace_root, c)

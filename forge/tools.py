@@ -1175,18 +1175,25 @@ def _case_op(ws, op: str, *args, _provider=None) -> str:
 
 
 def _check_contract(question: str) -> str:
-    """Question-directed lookup, vendor docs first. Not a free web search: the
-    query is the question, and the first pass is pinned to the platform's own site."""
+    """Question-directed lookup. Two passes on purpose (2026-09-29): the vendor's
+    reference page for a key often omits the LIMITS, which live in error messages,
+    open-source loaders and developer forums — so pass 2 asks what makes the value
+    ILLEGAL. Says so when a fetched page has no text (script-rendered docs)."""
     from . import case as C
     q = (question or "").strip()
     eco = next((e for e, keys in C.PLATFORM_KEYS.items() if any(k in q for k in keys)), "")
+    key = next((k for k in C._PLATFORM_LOOKUP if k in q), "")
     site = {"apple": "site:developer.apple.com", "android": "site:developer.android.com",
             "python": "site:packaging.python.org"}.get(eco, "")
-    first = web_search((q + " " + site).strip(), 5) if site else ""
-    if first and "No results" not in first:
-        return ("Authoritative first pass (" + site + "):\n" + first
-                + "\n\nRead the relevant page with fetch_url if needed, then answer_question(question, answer, source).")
-    return "General pass:\n" + web_search(q, 5) + "\n\nThen answer_question(question, answer, source) — or source=unanswerable with the reason."
+    out = []
+    if site:
+        out.append("Pass 1 — the platform's own documentation (" + site + "):\n" + web_search((q + " " + site).strip(), 4))
+    err_q = (f'"{key}" invalid OR "bad value" OR "maximum" digits format limit' if key else q + " invalid format limit")
+    out.append("Pass 2 — what makes the value ILLEGAL (error strings, open-source loaders, forums):\n" + web_search(err_q, 5))
+    out.append("Then fetch_url the best page and answer_question(question, answer, source, quote=<the rule, verbatim>). "
+               "If a fetched page comes back with no text, it is script-rendered — use another result. "
+               "If no page states a rule, answer_question(..., source=unanswerable) with what you tried.")
+    return "\n\n".join(out)
 
 
 def _case_next(ws) -> str:
@@ -1804,9 +1811,10 @@ def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provi
         Tool(
             name="answer_question",
             description="Answer an open external question WITH its source (URL or document). An answer without a source is a guess and is refused.",
-            parameters={"type": "object", "properties": {"question": {"type": "string"}, "answer": {"type": "string"}, "source": {"type": "string"}},
+            parameters={"type": "object", "properties": {"question": {"type": "string"}, "answer": {"type": "string"}, "source": {"type": "string"},
+                        "quote": {"type": "string", "description": "the rule, verbatim, from the page you fetched (required for platform questions)"}},
                         "required": ["question", "answer", "source"]},
-            run=guard(lambda question, answer, source: _case_op(ws, "answer", question, answer, source)),
+            run=guard(lambda question, answer, source, quote="": _case_op(ws, "answer", question, answer, source, quote)),
         ),
         Tool(
             name="check_contract",

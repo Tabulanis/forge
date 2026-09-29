@@ -129,6 +129,12 @@ def review_commit(case: dict, hash: str, verdict: str, why: str = "", receipt: s
     v = (verdict or "").strip().upper()
     if v not in VERDICTS:
         raise ValueError("verdict must be YES, NO or UNKNOWN")
+    if v == "NO" and q.get("platform"):
+        unresolved = [x for x in case["external_questions"] if x.get("auto") and x.get("artifact") in q["platform"]
+                      and (x["status"] == "open" or (x["status"] == "answered" and x.get("verified") is False))]
+        if unresolved:
+            v = "UNKNOWN"; next_check = next_check or ("resolve: " + unresolved[0]["question"][:120])
+            why = (why or "") + " [recorded as UNKNOWN: this change writes a platform-defined value whose rule is not yet established]"
     _need(why, "one or two sentences of why")
     if v in ("YES", "NO"):
         _need(receipt, f"a receipt for {v} — quote the exact output (diff lines or command output) that shows it")
@@ -190,11 +196,18 @@ def ask(case: dict, question: str, artifact: str = "", auto: bool = False) -> st
     return f"question {len(case['external_questions'])} opened."
 
 
-def answer(case: dict, question: str, answer_text: str, source: str) -> str:
+def answer(case: dict, question: str, answer_text: str, source: str, quote: str = "") -> str:
     q = next((q for q in case["external_questions"]
               if q["question"].lower().startswith((question or "").strip().lower()[:40])), None)
     if q is None:
         raise ValueError("no such open question")
+    if q.get("auto") and (source or "").strip().lower() not in ("unanswerable", "none", "n/a", "cannot"):
+        # 2026-09-29: she "answered" from an EMPTY fetch. A platform rule must be QUOTED
+        # from a page she fetched; the quote is verified against her tool output at land.
+        if len((quote or "").strip()) < 25:
+            raise ValueError("quote the rule verbatim from the page you fetched (quote=..., at least 25 characters); "
+                             "if no page states it, pass source=unanswerable with what you tried")
+        q["quote"] = quote.strip()[:400]; q["verified"] = False
     _need(answer_text, "the answer (or why it cannot be answered)")
     if (source or "").strip().lower() in ("unanswerable", "none", "n/a", "cannot"):
         q.update({"status": "unanswerable", "answer": answer_text.strip()[:400], "source": ""})
@@ -202,7 +215,7 @@ def answer(case: dict, question: str, answer_text: str, source: str) -> str:
     _need(source, "the source (URL or document) — an answer without a source is a guess; "
                   "if it truly cannot be answered, pass source=unanswerable with the reason")
     q.update({"status": "answered", "answer": answer_text.strip()[:400], "source": source.strip()[:200]})
-    return "answered."
+    return "answered (the quote will be checked against the page you fetched)."
 
 
 # ----------------------------------------------------------------- reading
@@ -238,6 +251,8 @@ def blockers(case: dict) -> list:
     for q in case["external_questions"]:
         if q["status"] == "open":
             out.append(f"external question open: {q['question'][:90]}")
+        elif q["status"] == "answered" and q.get("auto") and q.get("verified") is False:
+            out.append(f"external answer not backed by a fetched page (quote not found): {q['question'][:70]}")
     return out
 
 

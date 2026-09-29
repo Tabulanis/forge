@@ -1805,6 +1805,37 @@ def t_scout_pre_review_files_clean_nos_and_leaves_platform_commits():
             and "scout says NO" in C.next_commit(root, c))
 
 
+def t_platform_answers_need_a_quoted_rule_and_block_a_no():
+    """2026-09-29 14:17 run: she 'answered' the CFBundleVersion question from an EMPTY
+    fetch and marked the stamp commit NO. Now: a platform question needs a verbatim
+    quote (>= 25 chars); a NO on a commit whose platform question is unresolved is
+    recorded as UNKNOWN; at land an unverified quote counts as an open question."""
+    from forge import case as C
+    from forge.agent import Agent
+    root = Path(tempfile.mkdtemp())
+    c = C.load(root, "x"); C.set_window(c, reason="none")
+    C.add_queue(c, [{"hash": "a1fe588", "subject": "stamp", "files": ["Info.plist"]}])
+    c["queue"][0]["platform"] = ["CFBundleVersion"]; C.prioritise(c)
+    C.review_commit(c, "a1fe588", "UNKNOWN", why="writes the version", next_check="the rule")
+    opened = C.auto_question(c, "a1fe588")
+    forced = C.review_commit(c, "a1fe588", "NO", why="build plumbing", receipt="+CFBundleVersion")
+    try: C.answer(c, opened[:40], "it satisfies", "https://developer.apple.com/x"); short = False
+    except ValueError: short = True
+    C.answer(c, opened[:40], "one to three period-separated integers", "https://developer.apple.com/x",
+             quote="composed of one to three period-separated integers")
+    C.save(root, c)
+    a = Agent(provider=None, tools=[]); a.workspace_root = root
+    fetch = _FakeCall("fetch_url", "f1")
+    a.history = [_ASK, {"role": "tool_use", "calls": [fetch]},
+                 {"role": "tool_result", "id": "f1", "content": "CFBundleVersion ... string composed of one to three period-separated integers, such as 10.14.1"}]
+    a._case_land(0, "t"); ok = C.load(root)["external_questions"][0].get("verified")
+    a.history = [_ASK, {"role": "tool_use", "calls": [fetch]}, {"role": "tool_result", "id": "f1", "content": "(empty page)"}]
+    a._case_land(0, "t2"); c3 = C.load(root)
+    return ("UNKNOWN" in forced and c["queue"][0]["status"] == "UNKNOWN" and short and ok is True
+            and c3["external_questions"][0].get("verified") is False
+            and any("not backed by a fetched page" in b for b in C.blockers(c3)))
+
+
 class _FakeProv:
     def __init__(self, text): self.text = text
     def complete(self, *a, **k):
@@ -1954,6 +1985,8 @@ CHECKS = [
      t_priority_queue_and_next_commit, False),
     ("hunt: scouts pre-review the top set; platform commits stay hers",
      t_scout_pre_review_files_clean_nos_and_leaves_platform_commits, False),
+    ("hunt: platform answers need a quoted rule; unresolved platform question blocks a NO",
+     t_platform_answers_need_a_quoted_rule_and_block_a_no, False),
     ("case: triage fills the queue from the window",
      t_triage_fills_the_queue_from_the_window, False),
     ("case: the ledger enforces receipts, cheap UNKNOWN, blockers",
