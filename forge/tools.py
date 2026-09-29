@@ -1148,6 +1148,26 @@ def _looks_like_finding(note: str) -> bool:
     return any(c in low for c in cues)
 
 
+def _case_op(ws, op: str, *args) -> str:
+    """Apply one case-file operation and save. Rules (receipts, UNKNOWN needs a
+    next check, cleared needs a receipt) are enforced in forge/case.py."""
+    from . import case as C
+    c = C.load(ws.root)
+    try:
+        msg = getattr(C, op)(c, *args)
+    except ValueError as e:
+        return f"Refused: {e}"
+    C.save(ws.root, c)
+    bl = C.blockers(c)
+    return msg + ("" if not bl else "  | still blocking a diagnosis: " + "; ".join(bl[:2]))
+
+
+def _case_show(ws) -> str:
+    from . import case as C
+    c = C.load(ws.root)
+    return C.render(c)
+
+
 def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provider=None, summarizer=None) -> list[Tool]:
     """Construct the toolset bound to one workspace.
 
@@ -1674,6 +1694,92 @@ def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provi
                 "required": ["path"],
             },
             run=guard(read_file),
+        ),
+        # ---- the CASE FILE (bug-hunt rebuild, 2026-09-29) --------------------
+        # The investigation ledger. The final answer is rendered from it; prose
+        # is never parsed. Rules live in forge/case.py, not in prompts.
+        Tool(
+            name="set_stage",
+            description="Record which stage of the failure the evidence shows: build, install, load, discovery, matching, transport, app — or unknown WITH a reason. While it is unknown, no upstream cause may be crossed off.",
+            parameters={"type": "object", "properties": {
+                "stage": {"type": "string", "description": "one of: unknown, build, install, load, discovery, matching, transport, app"},
+                "evidence": {"type": "string", "description": "exact output from this job that shows it (required unless unknown)"},
+                "reason": {"type": "string", "description": "why it is unknown (required if unknown)"}},
+                "required": ["stage"]},
+            run=guard(lambda stage, evidence="", reason="": _case_op(ws, "set_stage", stage, evidence, reason)),
+        ),
+        Tool(
+            name="set_window",
+            description="Record last-known-good and first-known-bad commits with the output that dates them — or both unknown WITH a reason (then the whole history stays in the queue).",
+            parameters={"type": "object", "properties": {
+                "good": {"type": "string"}, "bad": {"type": "string"},
+                "evidence": {"type": "string", "description": "exact output that dates the window"},
+                "reason": {"type": "string", "description": "why unknown, if unknown"}},
+                "required": []},
+            run=guard(lambda good="", bad="", evidence="", reason="": _case_op(ws, "set_window", good, bad, evidence, reason)),
+        ),
+        Tool(
+            name="review_commit",
+            description="Your verdict on one queued commit after reading its DIFF: YES (can produce the symptom) / NO / UNKNOWN. YES and NO need a receipt (quote diff lines or command output). UNKNOWN is fine and cheap: it only needs the one check that would settle it.",
+            parameters={"type": "object", "properties": {
+                "hash": {"type": "string"},
+                "verdict": {"type": "string", "description": "YES, NO or UNKNOWN"},
+                "why": {"type": "string", "description": "one or two sentences"},
+                "receipt": {"type": "string", "description": "exact quoted output (required for YES/NO)"},
+                "next_check": {"type": "string", "description": "the check that would settle it (required for UNKNOWN)"}},
+                "required": ["hash", "verdict", "why"]},
+            run=guard(lambda hash, verdict, why, receipt="", next_check="": _case_op(ws, "review_commit", hash, verdict, why, receipt, next_check)),
+        ),
+        Tool(
+            name="suspect",
+            description="Add a hypothesis to the case as an OPEN suspect, with the check that would settle it.",
+            parameters={"type": "object", "properties": {
+                "hypothesis": {"type": "string"}, "next_check": {"type": "string"}},
+                "required": ["hypothesis"]},
+            run=guard(lambda hypothesis, next_check="": _case_op(ws, "suspect", hypothesis, next_check)),
+        ),
+        Tool(
+            name="support_suspect",
+            description="Mark a suspect SUPPORTED with a receipt: the exact output from this job that supports it. Optional confidence like '70%'.",
+            parameters={"type": "object", "properties": {
+                "id": {"type": "string", "description": "e.g. S2"}, "receipt": {"type": "string"}, "confidence": {"type": "string"}},
+                "required": ["id", "receipt"]},
+            run=guard(lambda id, receipt, confidence="": _case_op(ws, "support", id, receipt, confidence)),
+        ),
+        Tool(
+            name="clear_suspect",
+            description="Cross a suspect off — ONLY by quoting the check that cleared it. 'It would look different' is reasoning: put that in next_check instead and leave the suspect open.",
+            parameters={"type": "object", "properties": {
+                "id": {"type": "string"}, "receipt": {"type": "string", "description": "exact output of the check that clears it"}},
+                "required": ["id", "receipt"]},
+            run=guard(lambda id, receipt: _case_op(ws, "clear", id, receipt)),
+        ),
+        Tool(
+            name="set_next_check",
+            description="Record, for an open suspect, the one check that would settle it.",
+            parameters={"type": "object", "properties": {"id": {"type": "string"}, "next_check": {"type": "string"}},
+                        "required": ["id", "next_check"]},
+            run=guard(lambda id, next_check: _case_op(ws, "set_next_check", id, next_check)),
+        ),
+        Tool(
+            name="ask_contract",
+            description="Open an external question the repository cannot answer (a platform rule, a vendor contract, a hardware fact). It stays open until answered with a source.",
+            parameters={"type": "object", "properties": {"question": {"type": "string"}, "artifact": {"type": "string"}},
+                        "required": ["question"]},
+            run=guard(lambda question, artifact="": _case_op(ws, "ask", question, artifact)),
+        ),
+        Tool(
+            name="answer_question",
+            description="Answer an open external question WITH its source (URL or document). An answer without a source is a guess and is refused.",
+            parameters={"type": "object", "properties": {"question": {"type": "string"}, "answer": {"type": "string"}, "source": {"type": "string"}},
+                        "required": ["question", "answer", "source"]},
+            run=guard(lambda question, answer, source: _case_op(ws, "answer", question, answer, source)),
+        ),
+        Tool(
+            name="show_case",
+            description="Show the case file rendered as the four boxes plus coverage, and what still blocks a diagnosis.",
+            parameters={"type": "object", "properties": {}, "required": []},
+            run=guard(lambda: _case_show(ws)),
         ),
         Tool(
             name="write_file",

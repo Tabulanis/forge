@@ -1307,6 +1307,9 @@ class Agent:
                             text=f"⏱ Ending this turn cleanly — {_why} "
                                  f"({int(_elapsed)}s elapsed). Whatever she assembled is here; "
                                  "ask again or in smaller pieces to continue.")
+                _cr = self._case_land(turn_start, _why)
+                if _cr:
+                    yield Event(kind="text", text="\n\n" + _cr)
                 # 2026-09-20: this path used to `return` straight past the gate, so a
                 # turn that ran out of clock — which on a real porting job is MOST of
                 # them — was never verified and never logged. The checker only fired on
@@ -1816,7 +1819,32 @@ class Agent:
                 # Causes need receipts, then the other side gets argued
                 # (2026-09-28). Each may send the answer back ONCE; a second
                 # failure is stapled on visibly instead — never an endless loop.
-                _cause_reason = self._cause_gate(turn_start, reply.text or "")
+                _case = self._case()
+                if _case is not None and self._diagnostic_session(turn_start):
+                    from . import case as C
+                    _bl = C.blockers(_case)
+                    if _bl and not cause_bounced:
+                        cause_bounced = True
+                        yield Event(kind="note", text="Case file: diagnosis not yet allowed — " + "; ".join(_bl[:3]))
+                        self.history.append({
+                            "role": "user", "synthetic": True,
+                            "content": "Automatic check (case file): a diagnosis is not allowed yet — "
+                                       + "; ".join(_bl[:5])
+                                       + ". Work the case: review_commit for each queued commit (UNKNOWN is fine, it only "
+                                       "needs the check that would settle it), set_next_check for open suspects, answer_question "
+                                       "or ask_contract for open external questions, set_stage/set_window (unknown with a reason "
+                                       "is allowed). Then hand in again. This check is internal machinery — never mention it."
+                                       + BOUNCE_TAIL,
+                        })
+                        continue
+                    _cr = self._case_land(turn_start, "hand-in")
+                    if _cr:
+                        yield Event(kind="text", text="\n\n" + _cr)
+                        if self.history and self.history[-1].get("role") == "assistant":
+                            self.history[-1]["content"] = (self.history[-1]["content"] or "") + "\n\n" + _cr
+                    _cause_reason = ""   # the ledger replaces the prose gate
+                else:
+                    _cause_reason = self._cause_gate(turn_start, reply.text or "")
                 if _cause_reason and not cause_bounced:
                     cause_bounced = True
                     yield Event(kind="note", text=f"Receipts check: {_cause_reason[:160]} — sent back.")
@@ -2009,6 +2037,35 @@ class Agent:
             "ruled out": re.compile(r"^[^\w\n]*ruled[ -]out\b", re.I | re.M),
             "wrong": re.compile(r"^[^\w\n]*what would prove (me|this|it) wrong\b", re.I | re.M)}
     _PROJECT_DOC = re.compile(r"(readme|\.md$|\.markdown$|\.rst$|\.txt$|(^|/)docs?/)", re.I)
+
+    # -- the case file (bug-hunt rebuild, 2026-09-29) ------------------------
+    def _case(self):
+        """The workspace's CASE.yaml if there is one, else None."""
+        try:
+            from . import case as C
+            root = self.workspace_root
+            if root and C.path(root).exists():
+                return C.load(root)
+        except Exception:
+            pass
+        return None
+
+    def _case_land(self, turn_start: int, label: str) -> str:
+        """Render the case file (receipts verified against THIS job's real output),
+        write ANSWER.md from it, record a checkpoint. Returns the render or ""."""
+        from . import case as C
+        c = self._case()
+        if c is None:
+            return ""
+        real, _docs = self._evidence_pool(turn_start)
+        text = C.checkpoint(c, label, verify=lambda r: bool(r) and r in real)
+        try:
+            C.save(self.workspace_root, c)
+            (Path(self.workspace_root) / "ANSWER.md").write_text(
+                "# ANSWER — rendered from CASE.yaml (" + label + ")\n\n" + text + "\n")
+        except Exception:
+            pass
+        return text
 
     def _diagnostic_session(self, turn_start: int) -> bool:
         ask = ""

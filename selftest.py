@@ -1602,6 +1602,61 @@ def t_advocate_sees_files_and_unexamined_commits():
             and "never opened" in staple and "stale-dext stamp" in staple)
 
 
+def t_case_file_rules():
+    """Bug-hunt rebuild (2026-09-29): the answer is rendered from CASE.yaml, and the
+    rules live in the ledger. YES/NO need a receipt; UNKNOWN is cheap (next check
+    only); a suspect is cleared only with a receipt; an unverified receipt cannot
+    make anything Proven; blockers name what still stops a diagnosis."""
+    from forge import case as C
+    root = Path(tempfile.mkdtemp())
+    c = C.load(root, "driver isn't there")
+    C.set_stage(c, "unknown", reason="no device")
+    C.set_window(c, "e0666e5", "1e4ea63", evidence="git log --date=iso: 2026-08-12 .. 2026-08-21")
+    C.add_queue(c, [{"hash": "a1fe588", "subject": "stamp every build", "files": ["Info.plist"]},
+                    {"hash": "6cb6a8c", "subject": "restore", "files": ["Info.plist"]}])
+    refused = 0
+    for bad in [lambda: C.review_commit(c, "a1fe588", "NO", why="plumbing"),
+                lambda: C.review_commit(c, "6cb6a8c", "UNKNOWN", why="?"),
+                lambda: C.clear(c, "S9", "x"),
+                lambda: C.answer(c, "q", "yes", "")]:
+        try: bad(); 
+        except ValueError: refused += 1
+    C.review_commit(c, "a1fe588", "UNKNOWN", why="writes CFBundleVersion", next_check="legal per Apple?")
+    C.review_commit(c, "6cb6a8c", "NO", why="only restores personalities", receipt="+    <key>IOClass</key>")
+    C.suspect(c, "illegal version stamp", next_check="Apple rule")
+    C.support(c, "S1", receipt="CFBundleVersion 1.0.20260821.1", confidence="60%")
+    C.suspect(c, "USB matching", next_check="attach log")
+    C.clear(c, "S2", receipt="dext | grep Start -> DNPDriver: Start")
+    C.save(root, c); c = C.load(root)
+    real = lambda r: r in ("+    <key>IOClass</key>", "dext | grep Start -> DNPDriver: Start")   # the stamp receipt is NOT in real output
+    r = C.render(c, verify=real)
+    bl = C.blockers(c)
+    return (refused == 4 and c["queue"][0]["status"] == "UNKNOWN"
+            and "Status: best guess" in r                       # S1's receipt unverified -> not Proven
+            and "illegal version stamp" in r.split("## Believed")[1].split("## Ruled out")[0]
+            and "USB matching" in r.split("## Ruled out")[1]
+            and "legal per Apple?" in r and bl == [])
+
+
+def t_case_land_renders_and_writes_answer():
+    """Every stop path renders the case file and writes ANSWER.md from it; a receipt
+    that is not in this job's real output cannot make a suspect Proven."""
+    from forge import case as C
+    from forge.agent import Agent
+    root = Path(tempfile.mkdtemp())
+    c = C.load(root, "x"); C.suspect(c, "the stamp is illegal"); C.support(c, "S1", "CFBundleVersion 1.0.20260821.1")
+    C.suspect(c, "USB matching"); C.support(c, "S2", "made-up receipt"); C.save(root, c)
+    run = _FakeCall("run_command", "c1")
+    a = Agent(provider=None, tools=[]); a.workspace_root = root
+    a.history = [_ASK, {"role": "tool_use", "calls": [run]},
+                 {"role": "tool_result", "id": "c1", "content": "CFBundleVersion 1.0.20260821.1"}]
+    text = a._case_land(0, "test")
+    ans = (root / "ANSWER.md").read_text()
+    proven = ans.split("## Proven")[1].split("## Believed")[0]
+    return ("the stamp is illegal" in proven and "USB matching" not in proven
+            and "USB matching" in ans.split("## Believed")[1] and C.load(root)["checkpoints"])
+
+
 class _FakeProv:
     def __init__(self, text): self.text = text
     def complete(self, *a, **k):
@@ -1739,6 +1794,10 @@ CHECKS = [
      t_gate_reads_wrapped_and_fenced_quotes_and_reports_all, False),
     ("harness: advocate sees hand-in files and unexamined commits",
      t_advocate_sees_files_and_unexamined_commits, False),
+    ("case: every landing renders the ledger into ANSWER.md",
+     t_case_land_renders_and_writes_answer, False),
+    ("case: the ledger enforces receipts, cheap UNKNOWN, blockers",
+     t_case_file_rules, False),
     ("harness: ruled-out needs receipts too",
      t_ruled_out_needs_receipts, False),
     ("harness: the receipts gate reads the findings file too",
