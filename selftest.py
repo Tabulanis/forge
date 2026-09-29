@@ -1548,6 +1548,21 @@ def t_ruled_out_needs_receipts():
     return ("Ruled out" in by_reasoning and not by_receipt and "Ruled out" in by_docs and not none_yet)
 
 
+def t_gate_reads_wrapped_and_fenced_quotes_and_reports_all():
+    """2026-09-28 step-6 run: her quotes sat in fenced blocks under wrapped bullets;
+    the gate saw none, stamped two false 'Unproven's, and the Ruled-out check never
+    ran because Proven 'failed' first. Continuation lines and fenced blocks are part
+    of the bullet, and every problem comes back in ONE send-back."""
+    from forge.agent import Agent
+    a = Agent(provider=None, tools=[]); a.history = _cause_hist([])
+    wrapped = ("## Proven\n- **The stamp is four fields.** Reading the plist:\n  ```\n  CFBundleVersion 1.0.20260821.1\n  ```\n"
+               "## Believed\n- x (50%)\n## Ruled out\n- none yet\n## What would prove me wrong\n- a log\n")
+    both = ("## Proven\n- the log says `DNPDriver: Start failed 0x1`\n## Believed\n- x (50%)\n"
+            "## Ruled out\n- the stamp — symptom mismatch\n## What would prove me wrong\n- a log\n")
+    r = a._cause_gate(0, both)
+    return (not a._cause_gate(0, wrapped)) and ("Proven" in r and "Ruled out" in r and " AND " in r)
+
+
 class _FakeProv:
     def __init__(self, text): self.text = text
     def complete(self, *a, **k):
@@ -1666,6 +1681,8 @@ CHECKS = [
      t_diagnosis_stamp_catches_a_theory_over_printed_failures, False),
     ("harness: causes need receipts; docs are not proof",
      t_cause_gate_needs_receipts_and_never_trusts_docs, False),
+    ("harness: gate reads wrapped/fenced quotes, reports all at once",
+     t_gate_reads_wrapped_and_fenced_quotes_and_reports_all, False),
     ("harness: ruled-out needs receipts too",
      t_ruled_out_needs_receipts, False),
     ("harness: the receipts gate reads the findings file too",

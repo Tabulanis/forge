@@ -1974,10 +1974,12 @@ class Agent:
         # and her rewritten ANSWER.md headed a section just "## The cause".
         r"^\W*(the\s+)?((root|final|real|actual|likely|probable)\s+)?cause\s*([:—-].*)?$", re.I | re.M)
     _FINAL_WORDS = re.compile(r"\b(final|definitely|confirmed|certainly|the (root )?cause is)\b", re.I)
-    _BOX = {"proven": re.compile(r"^\W*proven\b", re.I | re.M),
-            "believed": re.compile(r"^\W*believed\b", re.I | re.M),
-            "ruled out": re.compile(r"^\W*ruled[ -]out\b", re.I | re.M),
-            "wrong": re.compile(r"^\W*what would prove (me|this|it) wrong\b", re.I | re.M)}
+    # [^\w\n]* not \W*: \W swallowed the newline and the closing ``` fence of the
+    # box above, cutting fenced quotes off (2026-09-28).
+    _BOX = {"proven": re.compile(r"^[^\w\n]*proven\b", re.I | re.M),
+            "believed": re.compile(r"^[^\w\n]*believed\b", re.I | re.M),
+            "ruled out": re.compile(r"^[^\w\n]*ruled[ -]out\b", re.I | re.M),
+            "wrong": re.compile(r"^[^\w\n]*what would prove (me|this|it) wrong\b", re.I | re.M)}
     _PROJECT_DOC = re.compile(r"(readme|\.md$|\.markdown$|\.rst$|\.txt$|(^|/)docs?/)", re.I)
 
     def _diagnostic_session(self, turn_start: int) -> bool:
@@ -2077,7 +2079,23 @@ class Agent:
         start = m.end()
         ends = [rx.search(text, start) for k, rx in self._BOX.items() if k != key]
         end = min([e.start() for e in ends if e] or [len(text)])
-        return [ln for ln in text[start:end].splitlines() if re.match(r"^\s*([-*•]|\d+[.)])\s+", ln)]
+        # A bullet is everything from its marker to the next marker (2026-09-28:
+        # she wrapped bullets and put the quotes — often fenced ``` blocks — on
+        # the lines under the marker, and the gate saw none of them).
+        items, cur = [], None
+        for ln in text[start:end].splitlines():
+            if re.match(r"^\s*([-*•]|\d+[.)])\s+", ln):
+                cur = [ln]; items.append(cur)
+            elif cur is not None and ln.strip():
+                cur.append(ln)
+        return ["\n".join(it) for it in items]
+
+    @staticmethod
+    def _quotes(item: str) -> list:
+        qs = [q.strip() for q in re.findall(r"(?<!`)`([^`\n]{6,})`(?!`)", item)]
+        for block in re.findall(r"```[^\n]*\n(.*?)```", item, re.S):
+            qs += [ln.strip() for ln in block.splitlines() if len(ln.strip()) >= 6]
+        return qs
 
     def _cause_gate_text(self, turn_start: int, text: str, structural: bool = False) -> str:
         """The reason to send a diagnosis back, or \"\" if it may stand."""
@@ -2094,19 +2112,20 @@ class Agent:
         real, docs = self._evidence_pool(turn_start)
         unbacked, docs_only, proven = [], [], 0
         for ln in items:
-            quotes = [q.strip() for q in re.findall(r"`([^`]{6,})`", ln)]
+            quotes = self._quotes(ln)
             if any(q in real for q in quotes):
                 proven += 1
             elif any(q in docs for q in quotes):
                 docs_only.append(ln.strip()[:120])
             else:
                 unbacked.append(ln.strip()[:120])
+        problems = []
         if docs_only:
-            return ("these 'Proven' items rest only on the project's own docs, which are "
+            problems.append("these 'Proven' items rest only on the project's own docs, which are "
                     "claims, not proof — move them to Believed or prove them another way: "
                     + " | ".join(docs_only[:3]))
         if unbacked:
-            return ("every 'Proven' item must quote, in backticks, the exact output from "
+            problems.append("every 'Proven' item must quote, in backticks, the exact output from "
                     "this job that proves it — these don't: " + " | ".join(unbacked[:3]))
         # RULED OUT needs receipts too (2026-09-28, his call). She ruled the true
         # cause out with "symptom mismatch" — reasoning, no check — and the rival
@@ -2115,14 +2134,16 @@ class Agent:
         for ln in self._box_items(text, "ruled out"):
             if re.match(r"^\W*(none|nothing)\b", ln, re.I):
                 continue
-            quotes = [q.strip() for q in re.findall(r"`([^`]{6,})`", ln)]
+            quotes = self._quotes(ln)
             if not any(q in real for q in quotes):
                 weak.append(ln.strip()[:120])
         if weak:
-            return ("a suspect can only be 'Ruled out' by quoting, in backticks, the exact "
+            problems.append("a suspect can only be 'Ruled out' by quoting, in backticks, the exact "
                     "output from this job that clears it (the project's own docs don't count) "
                     "— these have no such receipt, so quote the check or move them to Believed "
                     "as still-live suspects: " + " | ".join(weak[:3]))
+        if problems:
+            return " AND ".join(problems)   # everything at once: she gets ONE retry
         if not proven:
             if self._FINAL_WORDS.search(text):
                 return ("nothing is Proven, so the cause cannot be called final or confirmed "
