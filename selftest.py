@@ -1563,6 +1563,44 @@ def t_gate_reads_wrapped_and_fenced_quotes_and_reports_all():
     return (not a._cause_gate(0, wrapped)) and ("Proven" in r and "Ruled out" in r and " AND " in r)
 
 
+def t_advocate_sees_files_and_unexamined_commits():
+    """2026-09-28 19:52 run: the reply said 'Ruled out:' in prose, the bullets were in
+    ANSWER.md, and she opened 5 of 43 commits — the stamp commit not among them.
+    The advocate must read the hand-in file's box, count a prose line as an item,
+    and be handed the commits she never opened."""
+    import subprocess
+    from forge.agent import Agent
+    root = Path(tempfile.mkdtemp()); repo = root / "repo"; repo.mkdir()
+    def git(*a): subprocess.run(["git", "-C", str(repo)] + list(a), capture_output=True, check=True)
+    git("init", "-q"); git("config", "user.email", "t@t"); git("config", "user.name", "t")
+    hashes = []
+    for i, subj in enumerate(["initial matching", "stale-dext stamp", "restore personalities"]):
+        (repo / "f.txt").write_text(str(i)); git("add", "."); git("commit", "-q", "-m", subj)
+        hashes.append(subprocess.run(["git", "-C", str(repo), "rev-parse", "--short", "HEAD"],
+                                     capture_output=True, text=True).stdout.strip())
+    (root / "ANSWER.md").write_text("## Proven\n- x\n## Believed\n- y\n## Ruled out\n- Stale-dext trap — symptom mismatch\n## What would prove me wrong\n- z\n")
+    run = _FakeCall("run_command", "c1"); run.args = {"command": f"cd repo && git show {hashes[2]} --stat"}
+    wrote = _FakeCall("write_file", "c2"); wrote.args = {"path": "ANSWER.md"}
+    a = Agent(provider=None, tools=[]); a.workspace_root = root
+    a.history = [_ASK, {"role": "tool_use", "calls": [run, wrote]},
+                 {"role": "tool_result", "id": "c1", "content": "commit " + hashes[2]}]
+    reply = "**Ruled out:** the VID/PID, and signing.\n"
+    items = a._ruled_out_items(0, reply)
+    unex = a._unexamined_changes(0)
+    # filtered to the files she cites: f.txt is in the repo, ghost.py is not
+    (root / "ANSWER.md").write_text("## Proven\n- see repo/f.txt\n## Believed\n- y\n## Ruled out\n- Stale-dext trap — symptom mismatch\n## What would prove me wrong\n- z\n")
+    cited = a._cited_files(0, "the fault is in repo/f.txt, not ghost.py")
+    filt = a._unexamined_changes(0, ["f.txt"]); none = a._unexamined_changes(0, ["ghost.py"])
+    a.advocate = _FakeProv("SUSPECT: NONE\nCHECK: -"); a.superego = None; a._ledger_write = lambda e: None
+    a.active_mode = "bughunt"
+    staple = a._advocate_review(0, "the fault is in f.txt")
+    return (any("VID/PID" in it for it in items) and any("Stale-dext" in it for it in items)
+            and len(unex) == 2 and any("stale-dext stamp" in u for u in unex)
+            and not any(hashes[2] in u for u in unex)
+            and "repo/f.txt" in cited and len(filt) == 2 and none == []
+            and "never opened" in staple and "stale-dext stamp" in staple)
+
+
 class _FakeProv:
     def __init__(self, text): self.text = text
     def complete(self, *a, **k):
@@ -1698,6 +1736,8 @@ CHECKS = [
      t_cause_gate_needs_receipts_and_never_trusts_docs, False),
     ("harness: gate reads wrapped/fenced quotes, reports all at once",
      t_gate_reads_wrapped_and_fenced_quotes_and_reports_all, False),
+    ("harness: advocate sees hand-in files and unexamined commits",
+     t_advocate_sees_files_and_unexamined_commits, False),
     ("harness: ruled-out needs receipts too",
      t_ruled_out_needs_receipts, False),
     ("harness: the receipts gate reads the findings file too",

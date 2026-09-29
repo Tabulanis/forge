@@ -23,6 +23,7 @@ later without touching this file.
 from __future__ import annotations
 
 import json
+import subprocess
 import re
 import time
 from dataclasses import dataclass
@@ -426,8 +427,12 @@ Rules:
   (a vendor rule, a platform requirement, a hardware read).
 - Name the single concrete check that would settle it.
 
+- UNEXAMINED CHANGES, when listed, are commits the investigator never opened. If
+  one of them plausibly explains the symptom, it is the strongest suspect of all:
+  name it (hash and subject) and the check is `git show <hash>`.
+
 Answer in exactly this shape, nothing else:
-SUSPECT: <the ruled-out item, quoted as written, or NONE>
+SUSPECT: <the ruled-out item quoted as written, or the unexamined commit, or NONE>
 CHECK: <the one command, file, source or measurement that would settle it>"""
 
 
@@ -2111,6 +2116,9 @@ class Agent:
                 cur = [ln]; items.append(cur)
             elif cur is not None and ln.strip():
                 cur.append(ln)
+        if not items:   # prose box ("**Ruled out:** a, b, c"): its lines are the items
+            return [ln.strip().lstrip(':*- ').strip() for ln in text[start:end].splitlines()
+                    if ln.strip().lstrip(':*- ').strip()]
         return ["\n".join(it) for it in items]
 
     @staticmethod
@@ -2178,6 +2186,81 @@ class Agent:
                         "answered. Strip client names and private details")
         return ""
 
+    def _handin_files(self, turn_start: int) -> list:
+        """Diagnosis files laid out in the boxes (>= 3 headings) = hand-ins."""
+        return [(n, body) for n, body in self._diagnosis_files(turn_start)
+                if sum(1 for rx in self._BOX.values() if rx.search(body)) >= 3]
+
+    def _ruled_out_items(self, turn_start: int, text: str) -> list:
+        """Ruled-out items from the reply AND the hand-in files (2026-09-28: the
+        reply said 'Ruled out:' in one prose line while ANSWER.md had the bullets)."""
+        items = list(self._box_items(text, "ruled out"))
+        for _, body in self._handin_files(turn_start):
+            items += [it for it in self._box_items(body, "ruled out") if it not in items]
+        return [it for it in items if not re.match(r"^\W*(none|nothing)\b", it, re.I)]
+
+    _HASH = re.compile(r"\b[0-9a-f]{7,40}\b")
+
+    _PATH = re.compile(r"[\w./-]+\.(?:plist|swift|entitlements|py|yml|yaml|json|sh|md|c|cc|cpp|h|hpp|js|ts|gd|toml|cfg|ini|xcconfig|txt|log|csv)\b")
+
+    def _cited_files(self, turn_start: int, text: str) -> list:
+        """Project files named in her hand-in (reply + hand-in files) that exist in the repo."""
+        blob = text + "".join(body for _, body in self._handin_files(turn_start))
+        return sorted(set(self._PATH.findall(blob)))
+
+    def _repo(self):
+        root = self.workspace_root
+        if not root:
+            return None
+        try:
+            cands = [Path(root)] + sorted(p for p in Path(root).iterdir() if p.is_dir())
+            return next((p for p in cands if (p / ".git").exists()), None)
+        except Exception:
+            return None
+
+    def _in_repo(self, files: list) -> list:
+        """The cited paths that exist in the repo, as repo-relative paths."""
+        repo = self._repo()
+        if repo is None:
+            return []
+        out = []
+        for f in files:
+            for cand in (f, f.split("/", 1)[1] if f.startswith(repo.name + "/") else None):
+                if cand and (repo / cand).exists() and cand not in out:
+                    out.append(cand); break
+        return out
+
+    def _unexamined_changes(self, turn_start: int, files: list | None = None) -> list:
+        """Commits in the project's history she never opened this job (2026-09-28,
+        his design: the harness knows what she looked at, so it can say what she
+        did not). Deterministic: every hash in her own commands counts as examined."""
+        repo = self._repo()
+        if repo is None:
+            return []
+        try:
+            cmd = ["git", "-C", str(repo), "log", "--format=%h %s", "-n", "80"]
+            if files:
+                # only files that exist under the repo, so a cited path outside it is ignored;
+                # she may write them workspace-relative (repo/x) or repo-relative (x)
+                inrepo = self._in_repo(files)
+                if not inrepo:
+                    return []
+                cmd += ["--"] + inrepo
+            out = subprocess.run(cmd, capture_output=True, text=True, timeout=10).stdout
+        except Exception:
+            return []
+        seen = set()
+        for m in self.history[turn_start:]:
+            if m.get("role") == "tool_use":
+                for c in (m.get("calls") or []):
+                    seen |= set(self._HASH.findall(str(getattr(c, "args", ""))))
+        unexamined = []
+        for ln in out.splitlines():
+            h = ln.split()[0] if ln.split() else ""
+            if h and not any(x.startswith(h) or h.startswith(x) for x in seen):
+                unexamined.append(ln[:100])
+        return unexamined
+
     def _advocate_review(self, turn_start: int, text: str) -> str:
         """The rival the advocate says she has not ruled out, or "". Fails OPEN."""
         prov = self.advocate or self.superego
@@ -2187,11 +2270,24 @@ class Agent:
             return ""
         t0 = time.time()
         digest = self._evidence_digest(turn_start, text)
-        ruled = [it for it in self._box_items(text, "ruled out")
-                 if not re.match(r"^\W*(none|nothing)\b", it, re.I)]
-        system = RULEDOUT_PROMPT if ruled else ADVOCATE_PROMPT
+        ruled = self._ruled_out_items(turn_start, text)
+        # Unopened changes to the FILES SHE BLAMES (2026-09-28): a wall of 37 subjects
+        # steered nothing; the filtered list for the 19:52 run was 4 lines, the
+        # stamp commit first.
+        cited = self._cited_files(turn_start, text)
+        unexamined = self._unexamined_changes(turn_start, cited) if cited else self._unexamined_changes(turn_start)
+        named = self._in_repo(cited) if cited else []
+        stapled = ("" if not (named and unexamined) else
+                   "You name " + ", ".join(named[:4]) + " but never opened these changes to "
+                   + ("them" if len(named) > 1 else "it") + ": " + "; ".join(unexamined[:6])
+                   + ". Open them (git show <hash>) or say why not.")
+        system = RULEDOUT_PROMPT if (ruled or unexamined) else ADVOCATE_PROMPT
         if ruled:
             digest = "RULED OUT (as the investigator wrote it):\n" + "\n".join(ruled) + "\n\n" + digest
+        if unexamined:
+            digest = ("UNEXAMINED CHANGES (commits in the history the investigator never opened"
+                      + (", touching the files the answer names" if cited else "") + "):\n"
+                      + "\n".join(unexamined[:12]) + "\n\n" + digest)
         used = "advocate" if self.advocate else "judge"
         try:
             raw = advocate_ask(prov, digest, system)
@@ -2206,11 +2302,11 @@ class Agent:
                 raw, used = advocate_ask(self.superego, digest, system), "judge-fallback"
             except Exception as e:
                 err = err or type(e).__name__
-        if ruled:
+        if ruled or unexamined:
             ms = re.search(r"SUSPECT:\s*(.+)", raw); mc = re.search(r"CHECK:\s*(.+)", raw)
             suspect = (ms.group(1).strip() if ms else "")
             out = "" if (not suspect or suspect.upper().startswith("NONE")) else (
-                f"you crossed off '{suspect[:160]}' by reasoning, not by a check. The check that "
+                f"'{suspect[:160]}' was never cleared by a check. The check that "
                 f"settles it: {(mc.group(1).strip() if mc else 'the one you skipped')[:200]}")
         else:
             m = re.search(r"RIVAL:\s*(.+)", raw)
@@ -2218,11 +2314,14 @@ class Agent:
             addressed = re.search(r"ADDRESSED:\s*yes", raw, re.I)
             out = "" if (not rival or rival.upper().startswith("NONE") or addressed
                          or len(rival.split()) < 5) else rival[:400]
+        adv_hit = bool(out)
+        if stapled:
+            out = (out + "\n\nAlso: " + stapled) if out else stapled
         # Every advocate call goes in the ledger (2026-09-28: a whole run passed
         # with no record of whether the other side was ever argued).
         if not self.ephemeral:
             self._ledger_write({"t": time.time(), "claim": (text or "")[:300],
-                                "verdict": f"advocate[{used}]:" + ("rival" if out else "error" if err
+                                "verdict": f"advocate[{used}]:" + ("rival" if adv_hit else "stapled" if out else "error" if err
                                                            else "empty" if not raw else "none"),
                                 "reason": (out or err or raw)[:400],
                                 "judge_ms": int((time.time() - t0) * 1000)})
