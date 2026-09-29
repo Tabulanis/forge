@@ -185,7 +185,14 @@ MODES = {
         # The date procedure lives HERE as well as in the playbook: run A on
         # 2026-09-05 showed a rule in the system prompt does not reach the
         # moment of action — she ran 22 `git show`s and zero `--since`.
-        "nudge": "Diagnostic mode: everything you do is being recorded so a "
+        "nudge": "WORK THE CASE FILE (CASE.yaml): set_stage (unknown with a reason is fine), "
+                 "set_window (the harness then queues the commits), then git show each queued "
+                 "commit's DIFF and review_commit it — YES/NO with a quoted receipt, or UNKNOWN "
+                 "with the one check that would settle it (UNKNOWN is cheap and honest). Record "
+                 "hypotheses with suspect; clear_suspect only with the check that cleared it; "
+                 "ask_contract for any platform-defined value the repo cannot vouch for. The "
+                 "ledger decides when a diagnosis is allowed; your answer is rendered from it. "
+                 "Diagnostic mode: everything you do is being recorded so a "
                  "failure can be reconstructed later. Before reading any code or "
                  "any diff: (1) find a DATE it last worked — a comment, a commit "
                  "body, a log line. (2) history_survey FIRST — every commit at "

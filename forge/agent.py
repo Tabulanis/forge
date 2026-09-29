@@ -1268,6 +1268,19 @@ class Agent:
             pass
         self._overhead_cache = None    # toolset changed -> re-measure the window
         turn_start = len(self.history) - 1   # index of this turn's user msg
+        # Bug-hunt rebuild (2026-09-29): in a diagnostic session the CASE FILE is
+        # opened by the harness, not by her — the ledger and its blockers exist
+        # from step one, whether or not she ever calls a case tool.
+        try:
+            if self.workspace_root and self._diagnostic_session(turn_start):
+                from . import case as C
+                if not C.path(self.workspace_root).exists():
+                    C.save(self.workspace_root, C.new(str(user_message)[:300]))
+                    yield Event(kind="note", text="Case file opened (CASE.yaml): set_stage, set_window, "
+                                "review_commit, suspect/clear_suspect, ask_contract. The ledger decides "
+                                "when a diagnosis is allowed.")
+        except Exception:
+            pass
 
         # Bug Hunt mode arms the flight recorder for this turn.
         try:
