@@ -1678,6 +1678,38 @@ def t_triage_fills_the_queue_from_the_window():
             and c["queue"][1]["files"] == ["f0.txt"] and n2 == 4)
 
 
+def t_steering_critic_speaks_only_on_signals():
+    """Step 4: the harness computes the signals (unreviewed commits, suspects with no
+    check, a file re-read 3x, open external questions); silence when none; the
+    critic's lines are injected as a synthetic note; a dead critic falls back to
+    the harness's own words."""
+    from forge import case as C
+    from forge.agent import Agent, STEER_EVERY
+    root = Path(tempfile.mkdtemp())
+    c = C.load(root, "x"); C.set_window(c, reason="none"); C.add_queue(c, [{"hash": "a1fe588", "subject": "stamp", "files": []}])
+    C.suspect(c, "USB"); C.save(root, c)
+    reads = [_FakeCall("read_file", f"r{i}") for i in range(3)]
+    for r in reads: r.args = {"path": "README.md"}
+    a = Agent(provider=None, tools=[], advocate=_FakeProv("STEER: read the diff of a1fe588 now\nSTEER: NONE"))
+    a.workspace_root = root; a.active_mode = "bughunt"; a._ledger_write = lambda e: None
+    a.history = [_ASK, {"role": "tool_use", "calls": reads}]
+    sig = a._steer_signals(0, c)
+    quiet = a._steer(0, 1)                       # not a steering step
+    said = a._steer(0, STEER_EVERY)
+    injected = a.history[-1].get("synthetic") and "a1fe588" in a.history[-1]["content"]
+    dead = Agent(provider=None, tools=[], advocate=_FakeProv("")); dead.workspace_root = root
+    dead.active_mode = "bughunt"; dead._ledger_write = lambda e: None
+    dead.history = [_ASK, {"role": "tool_use", "calls": reads}]
+    fallback = dead._steer(0, STEER_EVERY)
+    # nothing to say -> silence
+    c2 = C.load(root, "y"); c2["queue"] = []; c2["suspects"] = []; C.save(root, c2)
+    calm = Agent(provider=None, tools=[], advocate=_FakeProv("STEER: x")); calm.workspace_root = root
+    calm.active_mode = "bughunt"; calm._ledger_write = lambda e: None; calm.history = [_ASK]
+    return (any("unreviewed" in x for x in sig) and any("no check" in x for x in sig)
+            and any("read 3 times" in x for x in sig) and quiet == "" and "a1fe588" in said
+            and injected and "unreviewed" in fallback and calm._steer(0, STEER_EVERY) == "")
+
+
 class _FakeProv:
     def __init__(self, text): self.text = text
     def complete(self, *a, **k):
@@ -1817,6 +1849,8 @@ CHECKS = [
      t_advocate_sees_files_and_unexamined_commits, False),
     ("case: every landing renders the ledger into ANSWER.md",
      t_case_land_renders_and_writes_answer, False),
+    ("hunt: steering critic speaks only on harness signals",
+     t_steering_critic_speaks_only_on_signals, False),
     ("case: triage fills the queue from the window",
      t_triage_fills_the_queue_from_the_window, False),
     ("case: the ledger enforces receipts, cheap UNKNOWN, blockers",

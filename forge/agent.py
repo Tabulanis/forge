@@ -436,6 +436,34 @@ SUSPECT: <the ruled-out item quoted as written, or the unexamined commit, or NON
 CHECK: <the one command, file, source or measurement that would settle it>"""
 
 
+# THE STEERING CRITIC (bug-hunt rebuild step 4, 2026-09-29). "Steer, Don't Solve"
+# (arXiv 2606.21811): a small model reads the trajectory every few steps and
+# injects high-level feedback — no code, no diagnosis; +14-16 pts measured. Here
+# the HARNESS decides whether there is anything to say (deterministic signals
+# from the case file and the recent actions); the model only phrases it.
+STEER_PROMPT = """You are a STEERING CRITIC watching an investigator work a bug. You do not
+diagnose and you do not suggest causes. You read the CASE SUMMARY, the SIGNALS the
+harness computed, and the last few ACTIONS, and you write at most two short,
+imperative lines telling the investigator what to do NEXT to make the investigation
+complete — e.g. review the unreviewed commits (name the first), record the check
+that would settle an open suspect, stop re-reading a file, answer the open
+external question. Refer only to what is in front of you.
+
+Answer in exactly this shape, nothing else:
+STEER: <line>
+STEER: <line, or NONE>"""
+
+STEER_EVERY = 6          # steps between steering checks
+STEER_REREAD = 3         # the same file read this many times this turn is a signal
+
+
+def steer_ask(prov, digest: str) -> str:
+    body = {"chat_template_kwargs": {"enable_thinking": True, "reasoning_effort": "low"},
+            "temperature": 0.0, "top_k": 1, "seed": 20260929, "max_tokens": 600}
+    reply = prov.complete(STEER_PROMPT, [{"role": "user", "content": digest}], [], extra_body=body)
+    return (reply.text or "").strip()
+
+
 def advocate_ask(prov, digest: str, system: str = ADVOCATE_PROMPT) -> str:
     """Put the evidence to the advocate and return its raw reply. Thinking ON
     (this is a reasoning job, unlike the honesty check); greedy and pinned like
@@ -1300,6 +1328,12 @@ class Agent:
         except Exception:
             _chatty = 70
         for step in range(_mode_steps):
+            try:
+                _st = self._steer(turn_start, step)
+                if _st:
+                    yield Event(kind="note", text="Steering: " + _st[:160])
+            except Exception:
+                pass
             # Wall-clock ceiling: a turn can run away on TIME (many slow steps on
             # a local model) without ever tripping the step budget or the coherence
             # guard — seen live 2026-08-25, several 7-10 min turns that never ended.
@@ -2078,6 +2112,73 @@ class Agent:
                 "# ANSWER — rendered from CASE.yaml (" + label + ")\n\n" + text + "\n")
         except Exception:
             pass
+        return text
+
+    def _steer_signals(self, turn_start: int, case: dict) -> list:
+        """What the harness can SEE is wrong with the investigation right now."""
+        from . import case as C
+        sig = []
+        calls = [c for m in self.history[turn_start:] if m.get("role") == "tool_use" for c in (m.get("calls") or [])]
+        recent = calls[-STEER_EVERY:]
+        names = [getattr(c, "name", "") for c in recent]
+        cov = C.coverage(case)
+        if cov["unreviewed"] and "review_commit" not in names:
+            nxt = next((q for q in case["queue"] if q["status"] == "unreviewed"), None)
+            sig.append(f"{cov['unreviewed']} queued commit(s) unreviewed; next is {nxt['hash']} ({nxt['subject'][:50]})")
+        for sp in case["suspects"]:
+            if sp["status"] == "open" and not sp.get("next_check"):
+                sig.append(f"{sp['id']} ({sp['hypothesis'][:50]}) has no check that would settle it")
+        reads = {}
+        for c in calls:
+            if getattr(c, "name", "") == "read_file":
+                pth = str((getattr(c, "args", None) or {}).get("path", ""))
+                reads[pth] = reads.get(pth, 0) + 1
+        for pth, n in reads.items():
+            if n >= STEER_REREAD:
+                sig.append(f"{pth} read {n} times this turn")
+        for q in case["external_questions"]:
+            if q["status"] == "open":
+                sig.append(f"external question still open: {q['question'][:70]}")
+        case_tools = {"set_stage", "set_window", "review_commit", "suspect", "support_suspect",
+                      "clear_suspect", "set_next_check", "ask_contract", "answer_question"}
+        if len(calls) >= 10 and not any(getattr(c, "name", "") in case_tools for c in calls[-10:]):
+            sig.append("10 steps without recording anything in the case file")
+        return sig[:5]
+
+    def _steer(self, turn_start: int, step: int) -> str:
+        """Every STEER_EVERY steps in a diagnostic session with a case file: if the
+        harness sees signals, a small critic phrases <=2 lines and they are injected.
+        Silence when there is nothing to say. Never a diagnosis. Fails open."""
+        if step == 0 or step % STEER_EVERY:
+            return ""
+        case = self._case()
+        if case is None or not self._diagnostic_session(turn_start):
+            return ""
+        from . import case as C
+        sig = self._steer_signals(turn_start, case)
+        if not sig:
+            return ""
+        prov = self.advocate or self.superego
+        calls = [c for m in self.history[turn_start:] if m.get("role") == "tool_use" for c in (m.get("calls") or [])]
+        acts = "; ".join(f"{getattr(c, 'name', '?')} {str(getattr(c, 'args', ''))[:60]}" for c in calls[-8:])
+        digest = f"CASE SUMMARY: {C.summary(case)}\nSIGNALS:\n- " + "\n- ".join(sig) + f"\nLAST ACTIONS: {acts}"
+        lines = []
+        if prov is not None:
+            try:
+                raw = steer_ask(prov, digest)
+                lines = [ln.split(":", 1)[1].strip() for ln in raw.splitlines()
+                         if ln.upper().startswith("STEER:") and not ln.upper().endswith("NONE")]
+            except Exception:
+                lines = []
+        if not lines:
+            lines = sig[:2]          # the harness's own words are the fallback
+        text = " ".join(lines)[:400]
+        if not self.ephemeral:
+            self._ledger_write({"t": time.time(), "claim": digest[:300], "verdict": "steer",
+                                "reason": text, "judge_ms": 0})
+        self.history.append({"role": "user", "synthetic": True,
+                             "content": "Steering (internal, not the owner): " + text
+                                        + " Act on it now; do not reply to it and never mention it."})
         return text
 
     def _diagnostic_session(self, turn_start: int) -> bool:
