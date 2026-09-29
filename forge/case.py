@@ -195,7 +195,12 @@ def answer(case: dict, question: str, answer_text: str, source: str) -> str:
               if q["question"].lower().startswith((question or "").strip().lower()[:40])), None)
     if q is None:
         raise ValueError("no such open question")
-    _need(answer_text, "the answer"); _need(source, "the source (URL or document) — an answer without a source is a guess")
+    _need(answer_text, "the answer (or why it cannot be answered)")
+    if (source or "").strip().lower() in ("unanswerable", "none", "n/a", "cannot"):
+        q.update({"status": "unanswerable", "answer": answer_text.strip()[:400], "source": ""})
+        return "recorded as unanswerable (it stays visible in the answer)."
+    _need(source, "the source (URL or document) — an answer without a source is a guess; "
+                  "if it truly cannot be answered, pass source=unanswerable with the reason")
     q.update({"status": "answered", "answer": answer_text.strip()[:400], "source": source.strip()[:200]})
     return "answered."
 
@@ -291,7 +296,9 @@ def render(case: dict, verify=None) -> str:
              f"{cov['YES']} YES, {cov['NO']} NO, {cov['UNKNOWN']} UNKNOWN")
     eq = case["external_questions"]
     if eq:
-        L.append(f"- external questions: {sum(1 for q in eq if q['status'] == 'answered')} of {len(eq)} answered")
+        L.append(f"- external questions: {sum(1 for q in eq if q['status'] == 'answered')} answered, "
+                 f"{sum(1 for q in eq if q['status'] == 'unanswerable')} unanswerable, "
+                 f"{sum(1 for q in eq if q['status'] == 'open')} open")
         L += [f"  - {q['question'][:100]} — {q['status']}" + (f": {q['answer'][:120]} [{q['source'][:60]}]" if q['status'] == 'answered' else "")
               for q in eq]
     status = "**Status: best guess**" if proven == 0 else "**Status: proven items exist; the rest is best guess**"
@@ -358,4 +365,73 @@ def triage(root, case: dict) -> int:
     if repo is None:
         return 0
     w = case["window"]
-    return add_queue(case, commits(repo, w.get("good", ""), w.get("bad", "")))
+    n = add_queue(case, commits(repo, w.get("good", ""), w.get("bad", "")))
+    tag_platform(root, case)
+    return n
+
+
+# ----------------------------------------------------------------- contract trigger (external facts the repo cannot vouch for)
+
+# Values the PLATFORM defines and the repository cannot validate. Seeing one of
+# these change is the compiler-error moment: "this value is judged by a rule that
+# lives outside this repo — go and check the rule." Curated, small on purpose.
+PLATFORM_KEYS = {
+    "apple": ["CFBundleVersion", "CFBundleShortVersionString", "CFBundleIdentifier",
+              "CFBundleIdentifierKernel", "IOUserServerName", "IOUserClass", "IOProviderClass",
+              "LSMinimumSystemVersion", "MinimumOSVersion", "OSBundleUsageDescription",
+              "com.apple.developer.driverkit", "com.apple.security.", "IOKitPersonalities"],
+    "android": ["versionCode", "versionName", "minSdkVersion", "targetSdkVersion", "<uses-permission"],
+    "python": ["python_requires", "install_requires", "entry_points"],
+}
+_PLATFORM_LOOKUP = {k: eco for eco, keys in PLATFORM_KEYS.items() for k in keys}
+
+
+def platform_hits(diff_text: str) -> list:
+    """Platform-defined keys that ADDED or CHANGED lines of a diff mention, in order."""
+    hits = []
+    for ln in (diff_text or "").splitlines():
+        if not ln.startswith("+") or ln.startswith("+++"):
+            continue
+        for k in _PLATFORM_LOOKUP:
+            if k in ln and k not in hits:
+                hits.append(k)
+    return hits
+
+
+def diff_of(repo, hash: str, limit: int = 200_000) -> str:
+    import subprocess
+    try:
+        return subprocess.run(["git", "-C", str(repo), "show", "--format=%h %s", hash],
+                              capture_output=True, text=True, timeout=20).stdout[:limit]
+    except Exception:
+        return ""
+
+
+def tag_platform(root, case: dict) -> int:
+    """At triage: note on each queued commit which platform-defined keys it touches."""
+    repo = find_repo(root)
+    if repo is None:
+        return 0
+    n = 0
+    for q in case["queue"]:
+        if "platform" in q:
+            continue
+        q["platform"] = platform_hits(diff_of(repo, q["hash"]))
+        n += bool(q["platform"])
+    return n
+
+
+def auto_question(case: dict, hash: str) -> str:
+    """When a reviewed commit touches platform-defined keys, the HARNESS opens the
+    question the repo cannot answer. One per commit. Returns the question or ""."""
+    q = next((q for q in case["queue"] if q["hash"].startswith(hash) or hash.startswith(q["hash"])), None)
+    if not q or not q.get("platform"):
+        return ""
+    keys = ", ".join(q["platform"][:4])
+    eco = _PLATFORM_LOOKUP.get(q["platform"][0], "platform")
+    text = (f"Commit {q['hash']} changes {keys}: do the values it writes satisfy the {eco} "
+            f"platform's rules for those keys? The repository cannot vouch for this — check the rule.")
+    if any(x["question"] == text for x in case["external_questions"]):
+        return ""
+    ask(case, text, artifact=keys, auto=True)
+    return text

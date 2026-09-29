@@ -1710,6 +1710,34 @@ def t_steering_critic_speaks_only_on_signals():
             and injected and "unreviewed" in fallback and calm._steer(0, STEER_EVERY) == "")
 
 
+def t_contract_trigger_opens_the_question_the_repo_cannot_answer():
+    """Step 5: a commit whose diff writes a platform-defined key (CFBundleVersion) is
+    tagged at triage; reviewing it opens an external question automatically; the
+    question blocks a diagnosis until answered with a source or marked
+    unanswerable with a reason; a commit without such keys opens nothing."""
+    import subprocess
+    from forge import case as C
+    root = Path(tempfile.mkdtemp()); repo = root / "repo"; repo.mkdir()
+    def git(*a): return subprocess.run(["git", "-C", str(repo)] + list(a), capture_output=True, text=True, check=True).stdout.strip()
+    git("init", "-q"); git("config", "user.email", "t@t"); git("config", "user.name", "t")
+    (repo / "a.txt").write_text("x"); git("add", "."); git("commit", "-q", "-m", "initial"); h0 = git("rev-parse", "--short", "HEAD")
+    (repo / "stamp.sh").write_text("plutil -replace CFBundleVersion -string \"1.0.$(date +%Y%m%d).1\" Info.plist\n")
+    git("add", "."); git("commit", "-q", "-m", "stamp every build"); h1 = git("rev-parse", "--short", "HEAD")
+    (repo / "a.txt").write_text("y"); git("add", "."); git("commit", "-q", "-m", "unrelated"); h2 = git("rev-parse", "--short", "HEAD")
+    c = C.load(root, "x"); C.set_window(c, h0, h2, evidence="dates"); C.triage(root, c)
+    tagged = {q["hash"]: q.get("platform") for q in c["queue"]}
+    C.review_commit(c, h1, "NO", why="just a build script", receipt="+plutil -replace CFBundleVersion")
+    opened = C.auto_question(c, h1)
+    none = C.auto_question(c, h2)
+    blocked = any("external question open" in b for b in C.blockers(c))
+    C.answer(c, opened[:40], "cannot reach the vendor docs from here", "unanswerable")
+    unblocked = not any("external question open" in b for b in C.blockers(c))
+    try: C.answer(c, "zzz", "x", ""); bad = False
+    except ValueError: bad = True
+    return (tagged[h1] == ["CFBundleVersion"] and tagged[h2] == [] and "CFBundleVersion" in opened
+            and none == "" and blocked and unblocked and bad)
+
+
 class _FakeProv:
     def __init__(self, text): self.text = text
     def complete(self, *a, **k):
@@ -1851,6 +1879,8 @@ CHECKS = [
      t_case_land_renders_and_writes_answer, False),
     ("hunt: steering critic speaks only on harness signals",
      t_steering_critic_speaks_only_on_signals, False),
+    ("hunt: contract trigger opens the question the repo cannot answer",
+     t_contract_trigger_opens_the_question_the_repo_cannot_answer, False),
     ("case: triage fills the queue from the window",
      t_triage_fills_the_queue_from_the_window, False),
     ("case: the ledger enforces receipts, cheap UNKNOWN, blockers",

@@ -1157,6 +1157,10 @@ def _case_op(ws, op: str, *args) -> str:
         msg = getattr(C, op)(c, *args)
     except ValueError as e:
         return f"Refused: {e}"
+    if op == "review_commit":
+        aq = C.auto_question(c, args[0])   # the contract trigger: the harness asks what the repo cannot vouch for
+        if aq:
+            msg += " | EXTERNAL QUESTION OPENED (the repo cannot vouch for this value): " + aq + " Use check_contract, then answer_question with the source."
     if op == "set_window":
         n = C.triage(ws.root, c)   # the HARNESS fills the queue, not her
         if n:
@@ -1164,6 +1168,21 @@ def _case_op(ws, op: str, *args) -> str:
     C.save(ws.root, c)
     bl = C.blockers(c)
     return msg + ("" if not bl else "  | still blocking a diagnosis: " + "; ".join(bl[:2]))
+
+
+def _check_contract(question: str) -> str:
+    """Question-directed lookup, vendor docs first. Not a free web search: the
+    query is the question, and the first pass is pinned to the platform's own site."""
+    from . import case as C
+    q = (question or "").strip()
+    eco = next((e for e, keys in C.PLATFORM_KEYS.items() if any(k in q for k in keys)), "")
+    site = {"apple": "site:developer.apple.com", "android": "site:developer.android.com",
+            "python": "site:packaging.python.org"}.get(eco, "")
+    first = web_search((q + " " + site).strip(), 5) if site else ""
+    if first and "No results" not in first:
+        return ("Authoritative first pass (" + site + "):\n" + first
+                + "\n\nRead the relevant page with fetch_url if needed, then answer_question(question, answer, source).")
+    return "General pass:\n" + web_search(q, 5) + "\n\nThen answer_question(question, answer, source) — or source=unanswerable with the reason."
 
 
 def _case_show(ws) -> str:
@@ -1778,6 +1797,14 @@ def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provi
             parameters={"type": "object", "properties": {"question": {"type": "string"}, "answer": {"type": "string"}, "source": {"type": "string"}},
                         "required": ["question", "answer", "source"]},
             run=guard(lambda question, answer, source: _case_op(ws, "answer", question, answer, source)),
+        ),
+        Tool(
+            name="check_contract",
+            description="Directed lookup for an OPEN external question: 'is value X legal per platform rule Y?'. Searches authoritative sources first (vendor documentation). Read the result, then answer_question with the source — or answer_question with source=unanswerable and the reason.",
+            parameters={"type": "object", "properties": {
+                "question": {"type": "string", "description": "the open question, or the exact key + platform"}},
+                "required": ["question"]},
+            run=guard(lambda question: _check_contract(question)),
         ),
         Tool(
             name="show_case",
