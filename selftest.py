@@ -1657,6 +1657,27 @@ def t_case_land_renders_and_writes_answer():
             and "USB matching" in ans.split("## Believed")[1] and C.load(root)["checkpoints"])
 
 
+def t_triage_fills_the_queue_from_the_window():
+    """The harness owns the search space: setting the window queues every commit in
+    it (window unknown -> the recent history), newest first, with the files touched."""
+    import subprocess
+    from forge import case as C
+    root = Path(tempfile.mkdtemp()); repo = root / "repo"; repo.mkdir()
+    def git(*a): return subprocess.run(["git", "-C", str(repo)] + list(a), capture_output=True, text=True, check=True).stdout.strip()
+    git("init", "-q"); git("config", "user.email", "t@t"); git("config", "user.name", "t")
+    hs = []
+    for i, subj in enumerate(["initial", "stamp every build", "restore", "timeout"]):
+        (repo / ("f%d.txt" % (i % 2))).write_text(str(i)); git("add", "."); git("commit", "-q", "-m", subj)
+        hs.append(git("rev-parse", "--short", "HEAD"))
+    c = C.load(root, "x")
+    C.set_window(c, hs[0], hs[3], evidence="dates")
+    n = C.triage(root, c)
+    subjects = [q["subject"] for q in c["queue"]]
+    c2 = C.load(root, "y"); C.set_window(c2, reason="no dates"); n2 = C.triage(root, c2)
+    return (n == 3 and subjects == ["timeout", "restore", "stamp every build"]
+            and c["queue"][1]["files"] == ["f0.txt"] and n2 == 4)
+
+
 class _FakeProv:
     def __init__(self, text): self.text = text
     def complete(self, *a, **k):
@@ -1796,6 +1817,8 @@ CHECKS = [
      t_advocate_sees_files_and_unexamined_commits, False),
     ("case: every landing renders the ledger into ANSWER.md",
      t_case_land_renders_and_writes_answer, False),
+    ("case: triage fills the queue from the window",
+     t_triage_fills_the_queue_from_the_window, False),
     ("case: the ledger enforces receipts, cheap UNKNOWN, blockers",
      t_case_file_rules, False),
     ("harness: ruled-out needs receipts too",

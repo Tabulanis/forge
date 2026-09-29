@@ -1157,6 +1157,10 @@ def _case_op(ws, op: str, *args) -> str:
         msg = getattr(C, op)(c, *args)
     except ValueError as e:
         return f"Refused: {e}"
+    if op == "set_window":
+        n = C.triage(ws.root, c)   # the HARNESS fills the queue, not her
+        if n:
+            msg += f" — {n} commit(s) queued for review (git show <hash>, then review_commit)."
     C.save(ws.root, c)
     bl = C.blockers(c)
     return msg + ("" if not bl else "  | still blocking a diagnosis: " + "; ".join(bl[:2]))

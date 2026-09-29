@@ -317,3 +317,45 @@ def summary(case: dict) -> str:
             f"({cov['YES']} YES {cov['NO']} NO {cov['UNKNOWN']} UNKNOWN); "
             f"open suspects: {'; '.join(open_s) or 'none'}; "
             f"external open: {sum(1 for q in case['external_questions'] if q['status'] == 'open')}")
+
+
+# ----------------------------------------------------------------- triage (harness-owned search space)
+
+def find_repo(root):
+    """The git repo at the workspace root or one level down."""
+    import subprocess
+    try:
+        cands = [Path(root)] + sorted(p for p in Path(root).iterdir() if p.is_dir())
+    except Exception:
+        return None
+    return next((p for p in cands if (p / ".git").exists()), None)
+
+
+def commits(repo, good: str = "", bad: str = "", limit: int = 60) -> list:
+    """Commits to review, newest first: good..bad when both known, bad's ancestry
+    when only bad is known, else the recent history. Each: hash, subject, files."""
+    import subprocess
+    rng = f"{good}..{bad}" if good not in ("", "unknown") and bad not in ("", "unknown") else \
+          (bad if bad not in ("", "unknown") else "HEAD")
+    try:
+        out = subprocess.run(["git", "-C", str(repo), "log", "--format=%h%x09%s", "--name-only", "-n", str(limit), rng],
+                             capture_output=True, text=True, timeout=15).stdout
+    except Exception:
+        return []
+    items, cur = [], None
+    for ln in out.splitlines():
+        if "\t" in ln and len(ln.split("\t")[0]) in range(7, 41):
+            h, subj = ln.split("\t", 1)
+            cur = {"hash": h, "subject": subj, "files": []}; items.append(cur)
+        elif ln.strip() and cur is not None:
+            cur["files"].append(ln.strip())
+    return items
+
+
+def triage(root, case: dict) -> int:
+    """Fill the queue from the window. Returns how many commits were added."""
+    repo = find_repo(root)
+    if repo is None:
+        return 0
+    w = case["window"]
+    return add_queue(case, commits(repo, w.get("good", ""), w.get("bad", "")))
