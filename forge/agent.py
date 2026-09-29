@@ -1331,7 +1331,8 @@ class Agent:
                                              "content": "Case file context (internal): the project's history, oldest first —\n"
                                              + hist + "\n\nFirst job: set_stage (unknown with a reason is fine) and "
                                              "set_window from what is dated above (or unknown with a reason); the harness "
-                                             "then queues the commits for review_commit. Never mention this note."})
+                                             "then queues the commits — next_commit hands you each diff, review_commit records "
+                                             "your verdict. Never mention this note."})
         except Exception:
             pass
 
@@ -1370,7 +1371,7 @@ class Agent:
                                     yield Event(kind="note", text="T+8: " + "; ".join(_bl[:2])[:160])
                                     self.history.append({"role": "user", "synthetic": True,
                                         "content": "Checkpoint (internal): eight minutes in, a diagnosis is not yet allowed — "
-                                                   + "; ".join(_bl[:4]) + ". Do these now with the case tools, then continue. Never mention this note."})
+                                                   + "; ".join(_bl[:4]) + ". Do these now with the case tools (next_commit -> review_commit, one step each), then continue. Never mention this note."})
             except Exception:
                 pass
             try:

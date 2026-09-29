@@ -223,10 +223,12 @@ def blockers(case: dict) -> list:
     w = case["window"]
     if w["good"] == "unknown" and w["bad"] == "unknown" and not w.get("reason"):
         out.append("window: not set — last-known-good / first-known-bad (or unknown, with a reason)")
-    cov = coverage(case)
-    if cov["unreviewed"]:
-        first = [x["hash"] + " " + x["subject"][:50] for x in case["queue"] if x["status"] == "unreviewed"][:4]
-        out.append(f"queue: {cov['unreviewed']} of {cov['total']} commits unreviewed — next: " + "; ".join(first))
+    pri = [x for x in case["queue"] if x.get("priority", True)]
+    left = [x for x in pri if x["status"] == "unreviewed"]
+    if left:
+        left.sort(key=lambda x: -x.get("score", 0))
+        first = [x["hash"] + " " + x["subject"][:40] for x in left[:3]]
+        out.append(f"queue: {len(left)} of the top {len(pri)} commits unreviewed (next_commit hands you the diff) — next: " + "; ".join(first))
     for x in case["queue"]:
         if x["status"] == "UNKNOWN" and not x.get("next_check"):
             out.append(f"queue: {x['hash']} is UNKNOWN with no next check")
@@ -292,8 +294,10 @@ def render(case: dict, verify=None) -> str:
     L.append(f"- stage: {case['stage']['value']}" + (f" ({case['stage']['reason']})" if case['stage'].get('reason') else ""))
     L.append(f"- window: good={case['window']['good']} bad={case['window']['bad']}"
              + (f" ({case['window']['reason']})" if case['window'].get('reason') else ""))
+    npri = sum(1 for x in case["queue"] if x.get("priority", True))
     L.append(f"- queue: {cov['total'] - cov['unreviewed']} of {cov['total']} reviewed — "
-             f"{cov['YES']} YES, {cov['NO']} NO, {cov['UNKNOWN']} UNKNOWN")
+             f"{cov['YES']} YES, {cov['NO']} NO, {cov['UNKNOWN']} UNKNOWN"
+             + (f" (top {npri} block a diagnosis; {cov['total'] - npri} deferred)" if npri < cov["total"] else ""))
     eq = case["external_questions"]
     if eq:
         L.append(f"- external questions: {sum(1 for q in eq if q['status'] == 'answered')} answered, "
@@ -368,6 +372,7 @@ def triage(root, case: dict) -> int:
     w = case["window"]
     n = add_queue(case, commits(repo, w.get("good", ""), w.get("bad", "")))
     tag_platform(root, case)
+    prioritise(case)
     return n
 
 
@@ -450,3 +455,45 @@ def dated_history(root, limit: int = 60) -> str:
     except Exception:
         return ""
     return "\n".join(ln[:110] for ln in out.splitlines())
+
+
+# ----------------------------------------------------------------- priority (an unknown window must not mean 43 diffs)
+
+PRIORITY_N = 12
+
+
+def _tokens(text: str) -> set:
+    import re as _re
+    return {w for w in _re.findall(r"[a-z][a-z0-9_]{4,}", (text or "").lower())}
+
+
+def prioritise(case: dict) -> int:
+    """Score every queued commit: platform-defined keys touched (x3), files whose path
+    shares a word with the symptom (x2), recency (small). The top PRIORITY_N are the
+    ones that block a diagnosis; the rest stay visible as deferred."""
+    toks = _tokens(case.get("symptom", ""))
+    n = len(case["queue"])
+    for i, q in enumerate(case["queue"]):
+        files = " ".join(q.get("files", [])).lower()
+        match = sum(1 for t in toks if t in files)
+        q["score"] = 3 * len(q.get("platform") or []) + 2 * min(match, 3) + (n - i) / max(n, 1)
+    order = sorted(range(n), key=lambda i: -case["queue"][i]["score"])
+    for rank, i in enumerate(order):
+        case["queue"][i]["priority"] = rank < PRIORITY_N
+    return min(n, PRIORITY_N)
+
+
+def next_commit(root, case: dict, chars: int = 6000) -> str:
+    """The highest-priority unreviewed commit, with its DIFF, ready for review_commit."""
+    repo = find_repo(root)
+    todo = [q for q in case["queue"] if q["status"] == "unreviewed"]
+    if not todo:
+        return "Nothing left to review."
+    todo.sort(key=lambda q: (-(q.get("priority", False)), -q.get("score", 0)))
+    q = todo[0]
+    diff = diff_of(repo, q["hash"], chars + 1) if repo is not None else ""
+    more = " …(diff truncated; git show for the rest)" if len(diff) > chars else ""
+    return (f"COMMIT {q['hash']} — {q['subject']}\nfiles: {', '.join(q.get('files', [])[:8])}\n"
+            f"platform-defined keys touched: {', '.join(q.get('platform') or []) or 'none'}\n"
+            f"{len(todo) - 1} more to review after this one.\n\n{diff[:chars]}{more}\n\n"
+            f"Now: review_commit(\"{q['hash']}\", YES|NO|UNKNOWN, why, receipt|next_check).")

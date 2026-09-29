@@ -1164,7 +1164,7 @@ def _case_op(ws, op: str, *args) -> str:
     if op == "set_window":
         n = C.triage(ws.root, c)   # the HARNESS fills the queue, not her
         if n:
-            msg += f" — {n} commit(s) queued for review (git show <hash>, then review_commit)."
+            msg += f" — {n} commit(s) queued; the top {min(n, C.PRIORITY_N)} block a diagnosis. Call next_commit to get the first diff."
     C.save(ws.root, c)
     bl = C.blockers(c)
     return msg + ("" if not bl else "  | still blocking a diagnosis: " + "; ".join(bl[:2]))
@@ -1183,6 +1183,12 @@ def _check_contract(question: str) -> str:
         return ("Authoritative first pass (" + site + "):\n" + first
                 + "\n\nRead the relevant page with fetch_url if needed, then answer_question(question, answer, source).")
     return "General pass:\n" + web_search(q, 5) + "\n\nThen answer_question(question, answer, source) — or source=unanswerable with the reason."
+
+
+def _case_next(ws) -> str:
+    from . import case as C
+    c = C.load(ws.root)
+    return C.next_commit(ws.root, c)
 
 
 def _case_show(ws) -> str:
@@ -1805,6 +1811,12 @@ def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provi
                 "question": {"type": "string", "description": "the open question, or the exact key + platform"}},
                 "required": ["question"]},
             run=guard(lambda question: _check_contract(question)),
+        ),
+        Tool(
+            name="next_commit",
+            description="The next commit to review, highest priority first, WITH its diff in front of you (platform-defined keys and files named in the symptom rank first). Read it, then review_commit it. Loop until nothing is left.",
+            parameters={"type": "object", "properties": {}, "required": []},
+            run=guard(lambda: _case_next(ws)),
         ),
         Tool(
             name="show_case",

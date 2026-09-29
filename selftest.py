@@ -1753,6 +1753,28 @@ def t_gap_finder_writes_checks_into_the_case():
             and c2["suspects"][0]["next_check"] == "")
 
 
+def t_priority_queue_and_next_commit():
+    """An unknown window queued 43 commits and she reviewed none. Now: platform keys and
+    files named in the symptom rank first, only the top PRIORITY_N block a diagnosis,
+    and next_commit hands over the top unreviewed commit with its diff."""
+    import subprocess
+    from forge import case as C
+    root = Path(tempfile.mkdtemp()); repo = root / "repo"; repo.mkdir()
+    def git(*a): return subprocess.run(["git", "-C", str(repo)] + list(a), capture_output=True, text=True, check=True).stdout.strip()
+    git("init", "-q"); git("config", "user.email", "t@t"); git("config", "user.name", "t")
+    (repo / "notes.txt").write_text("a"); git("add", "."); git("commit", "-q", "-m", "notes")
+    (repo / "driver").mkdir(); (repo / "driver" / "Info.plist").write_text("<key>CFBundleVersion</key>"); git("add", "."); git("commit", "-q", "-m", "stamp"); h_stamp = git("rev-parse", "--short", "HEAD")
+    for i in range(14):
+        (repo / f"ui{i}.txt").write_text(str(i)); git("add", "."); git("commit", "-q", "-m", f"ui tweak {i}")
+    c = C.load(root, "the driver is not there"); C.set_window(c, reason="never worked"); C.triage(root, c)
+    top = [q["hash"] for q in c["queue"] if q.get("priority")]
+    nxt = C.next_commit(root, c)
+    bl = C.blockers(c)
+    return (len(c["queue"]) == 16 and len(top) == C.PRIORITY_N and top and c["queue"][[q["hash"] for q in c["queue"]].index(h_stamp)]["score"] > 5
+            and nxt.startswith("COMMIT " + h_stamp) and "CFBundleVersion" in nxt and "review_commit" in nxt
+            and any("top 12" in b for b in bl))
+
+
 class _FakeProv:
     def __init__(self, text): self.text = text
     def complete(self, *a, **k):
@@ -1898,6 +1920,8 @@ CHECKS = [
      t_contract_trigger_opens_the_question_the_repo_cannot_answer, False),
     ("hunt: gap-finder writes its checks into the case",
      t_gap_finder_writes_checks_into_the_case, False),
+    ("hunt: priority queue + next_commit hands over the diff",
+     t_priority_queue_and_next_commit, False),
     ("case: triage fills the queue from the window",
      t_triage_fills_the_queue_from_the_window, False),
     ("case: the ledger enforces receipts, cheap UNKNOWN, blockers",
