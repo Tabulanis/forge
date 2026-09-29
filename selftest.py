@@ -1738,6 +1738,21 @@ def t_contract_trigger_opens_the_question_the_repo_cannot_answer():
             and none == "" and blocked and unblocked and bad)
 
 
+def t_gap_finder_writes_checks_into_the_case():
+    """Step 8: with a case file the advocate sees 3-5 cards, never prose; its CHECK
+    lines become next_check on the suspects and the send-back names them."""
+    from forge import case as C
+    from forge.agent import Agent
+    root = Path(tempfile.mkdtemp())
+    c = C.load(root, "x"); C.suspect(c, "USB matching"); C.suspect(c, "illegal version stamp"); C.save(root, c)
+    a = Agent(provider=None, tools=[], advocate=_FakeProv("CHECK: S2: compare the written CFBundleVersion with Apple's format rule\nCHECK: NONE"))
+    a.workspace_root = root; a.active_mode = "bughunt"; a.history = [_ASK]; a._ledger_write = lambda e: None
+    out = a._advocate_review(0, "whatever prose")
+    c2 = C.load(root)
+    return ("CFBundleVersion" in out and c2["suspects"][1]["next_check"].startswith("compare the written")
+            and c2["suspects"][0]["next_check"] == "")
+
+
 class _FakeProv:
     def __init__(self, text): self.text = text
     def complete(self, *a, **k):
@@ -1881,6 +1896,8 @@ CHECKS = [
      t_steering_critic_speaks_only_on_signals, False),
     ("hunt: contract trigger opens the question the repo cannot answer",
      t_contract_trigger_opens_the_question_the_repo_cannot_answer, False),
+    ("hunt: gap-finder writes its checks into the case",
+     t_gap_finder_writes_checks_into_the_case, False),
     ("case: triage fills the queue from the window",
      t_triage_fills_the_queue_from_the_window, False),
     ("case: the ledger enforces receipts, cheap UNKNOWN, blockers",

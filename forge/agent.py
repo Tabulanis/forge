@@ -464,6 +464,21 @@ def steer_ask(prov, digest: str) -> str:
     return (reply.text or "").strip()
 
 
+# THE GAP-FINDER (step 8). With a case file the advocate never sees her prose:
+# it gets 3-5 structured candidate cards and names the strongest missing check
+# per card (RETRACE-style: reconstruct what the evidence shows, do not re-diagnose).
+GAP_PROMPT = """You are an independent reviewer of an investigation. You are given CANDIDATE
+CARDS (hypothesis, status, evidence, planned check) and the EVIDENCE gathered.
+For each card, find the strongest unresolved contradiction or the missing check
+that would most reduce uncertainty. Return at most TWO checks in total, the most
+valuable first. Do not propose a new diagnosis. A check must be concrete: a
+command, a file and line, a document to consult, or a measurement.
+
+Answer in exactly this shape, nothing else:
+CHECK: <card id>: <the check>
+CHECK: <card id>: <the check, or NONE>"""
+
+
 def advocate_ask(prov, digest: str, system: str = ADVOCATE_PROMPT) -> str:
     """Put the evidence to the advocate and return its raw reply. Thinking ON
     (this is a reasoning job, unlike the honesty check); greedy and pinned like
@@ -2451,6 +2466,49 @@ class Agent:
                 unexamined.append(ln[:100])
         return unexamined
 
+    def _gap_review(self, turn_start: int, text: str, case: dict) -> str:
+        """Advocate as gap-finder over the case's strongest cards. Its checks are
+        written into the case (next_check) and returned as the send-back. Fails open."""
+        from . import case as C
+        prov = self.advocate or self.superego
+        cards = []
+        for sp in case["suspects"][:5]:
+            cards.append(f"[{sp['id']}] {sp['hypothesis'][:120]} | status: {sp['status']} | evidence: "
+                         f"{'; '.join(e[:80] for e in sp['evidence'][:2]) or 'none'} | planned check: {sp.get('next_check') or 'none'}")
+        for x in [q for q in case["queue"] if q["status"] == "UNKNOWN"][:3]:
+            cards.append(f"[{x['hash']}] change: {x['subject'][:60]} | status: UNKNOWN — {x['why'][:80]} | planned check: {x.get('next_check') or 'none'}")
+        if not cards or prov is None:
+            return ""
+        digest = "CANDIDATE CARDS:\n" + "\n".join(cards) + "\n\n" + self._evidence_digest(turn_start, text)[:6000]
+        t0 = time.time()
+        try:
+            raw = advocate_ask(prov, digest, GAP_PROMPT)
+        except Exception:
+            raw = ""
+        checks = []
+        for ln in raw.splitlines():
+            m = re.match(r"\s*CHECK:\s*\[?([A-Za-z0-9]+)\]?\s*:\s*(.+)", ln)
+            if m and not m.group(2).strip().upper().startswith("NONE"):
+                checks.append((m.group(1).strip(), m.group(2).strip()[:200]))
+        for cid, chk in checks:
+            try:
+                sp = next((x for x in case["suspects"] if x["id"].upper() == cid.upper()), None)
+                if sp is not None and not sp.get("next_check"):
+                    C.set_next_check(case, cid, chk)
+            except Exception:
+                pass
+        if checks:
+            try:
+                C.save(self.workspace_root, case)
+            except Exception:
+                pass
+        out = "" if not checks else "the review found missing checks — " + "; ".join(f"{cid}: {chk}" for cid, chk in checks)
+        if not self.ephemeral:
+            self._ledger_write({"t": time.time(), "claim": digest[:300],
+                                "verdict": "advocate[gap]:" + ("checks" if checks else "empty" if not raw else "none"),
+                                "reason": (out or raw)[:400], "judge_ms": int((time.time() - t0) * 1000)})
+        return out
+
     def _advocate_review(self, turn_start: int, text: str) -> str:
         """The rival the advocate says she has not ruled out, or "". Fails OPEN."""
         prov = self.advocate or self.superego
@@ -2460,6 +2518,9 @@ class Agent:
             return ""
         t0 = time.time()
         digest = self._evidence_digest(turn_start, text)
+        case_ = self._case()
+        if case_ is not None:
+            return self._gap_review(turn_start, text, case_)
         ruled = self._ruled_out_items(turn_start, text)
         # Unopened changes to the FILES SHE BLAMES (2026-09-28): a wall of 37 subjects
         # steered nothing; the filtered list for the 19:52 run was 4 lines, the
