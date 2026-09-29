@@ -1821,7 +1821,7 @@ def t_platform_answers_need_a_quoted_rule_and_block_a_no():
     forced = C.review_commit(c, "a1fe588", "NO", why="build plumbing", receipt="+CFBundleVersion")
     try: C.answer(c, opened[:40], "it satisfies", "https://developer.apple.com/x"); short = False
     except ValueError: short = True
-    C.answer(c, opened[:40], "one to three period-separated integers", "https://developer.apple.com/x",
+    C.answer(c, opened[:40], "components: 1 to 3; digits per component: 18; characters: digits and periods", "https://developer.apple.com/x",
              quote="composed of one to three period-separated integers")
     C.save(root, c)
     a = Agent(provider=None, tools=[]); a.workspace_root = root
@@ -1883,6 +1883,25 @@ def t_solve_request_written_when_nothing_is_proven():
     return ("could not reach a definite answer" in sr and "a1fe588" in sr and "max digits per component" in sr
             and "USB matching keys" in sr and "CFBundleVersion" in sr.split("Questions we could not answer")[1]
             and "d0ee3b1" in sr.split("Ruled out")[1])
+
+
+def t_version_answers_state_limits_or_stay_open():
+    """A version-key answer must state the limits checked; an unknown limit keeps the
+    question open (PARTIAL) — that is what the solve request carries to other sources."""
+    from forge import case as C
+    c = C.load(Path(tempfile.mkdtemp()), "> the app says the driver isn't there\nmore brief text")
+    C.set_window(c, reason="none"); C.add_queue(c, [{"hash": "a1fe588", "subject": "stamp", "files": []}])
+    c["queue"][0]["platform"] = ["CFBundleVersion"]; C.prioritise(c)
+    C.review_commit(c, "a1fe588", "UNKNOWN", why="w", next_check="rule"); opened = C.auto_question(c, "a1fe588")
+    try: C.answer(c, opened[:40], "Yes, it satisfies the rule.", "https://developer.apple.com/x", quote="composed of one to three period-separated integers"); vague = False
+    except ValueError: vague = True
+    C.answer(c, opened[:40], "components: up to 3; digits per component: unknown; characters: digits and periods",
+             "https://developer.apple.com/x", quote="composed of one to three period-separated integers")
+    forced = C.review_commit(c, "a1fe588", "NO", why="w", receipt="+CFBundleVersion 1.0.$(build)")
+    sr = C.solve_request(c)
+    return (vague and c["external_questions"][0]["status"] == "partial" and "UNKNOWN" in forced
+            and "PARTIAL" in " ".join(C.blockers(c)) and "digits per component: unknown" in sr
+            and c["symptom"] == "the app says the driver isn't there")
 
 
 class _FakeProv:
@@ -2042,6 +2061,8 @@ CHECKS = [
      t_contract_pass2_is_plain_keywords, False),
     ("hunt: SOLVE-REQUEST.md is written when nothing is proven",
      t_solve_request_written_when_nothing_is_proven, False),
+    ("hunt: version answers state limits or stay open (partial)",
+     t_version_answers_state_limits_or_stay_open, False),
     ("case: triage fills the queue from the window",
      t_triage_fills_the_queue_from_the_window, False),
     ("case: the ledger enforces receipts, cheap UNKNOWN, blockers",

@@ -41,9 +41,17 @@ def path(root) -> Path:
     return Path(root) / FILE
 
 
+def symptom_of(text: str) -> str:
+    """The client's own words when the brief quotes them (> lines), else the opening lines."""
+    quoted = [ln.lstrip("> ").strip() for ln in (text or "").splitlines() if ln.strip().startswith(">")]
+    if quoted:
+        return " ".join(quoted)[:400]
+    return " ".join((text or "").split())[:300]
+
+
 def new(symptom: str = "") -> dict:
     return {
-        "symptom": symptom,
+        "symptom": symptom_of(symptom),
         "stage": {"value": "unknown", "evidence": [], "reason": ""},
         "window": {"good": "unknown", "bad": "unknown", "evidence": [], "reason": ""},
         "queue": [],
@@ -154,7 +162,7 @@ def review_commit(case: dict, hash: str, verdict: str, why: str = "", receipt: s
         raise ValueError("verdict must be YES, NO or UNKNOWN")
     if v == "NO" and q.get("platform"):
         unresolved = [x for x in case["external_questions"] if x.get("auto") and x.get("artifact") in q["platform"]
-                      and (x["status"] == "open" or (x["status"] == "answered" and x.get("verified") is False))]
+                      and (x["status"] in ("open", "partial") or (x["status"] == "answered" and x.get("verified") is False))]
         if unresolved:
             v = "UNKNOWN"; next_check = next_check or ("resolve: " + unresolved[0]["question"][:120])
             why = (why or "") + " [recorded as UNKNOWN: this change writes a platform-defined value whose rule is not yet established]"
@@ -241,6 +249,18 @@ def answer(case: dict, question: str, answer_text: str, source: str, quote: str 
             raise ValueError("quote the rule verbatim from the page you fetched (quote=..., at least 25 characters); "
                              "if no page states it, pass source=unanswerable with what you tried")
         q["quote"] = quote.strip()[:400]; q["verified"] = False
+        art = (q.get("artifact") or "").lower()
+        if "version" in art or "build" in art:
+            # A version rule has three parts. Say what you found for each, or "unknown";
+            # "satisfies" without the limits is how the 14:51 run went wrong.
+            low = (answer_text or "").lower()
+            if not ("component" in low and "digit" in low):
+                raise ValueError("for a version key state the limits you checked — number of components, "
+                                 "maximum digits per component, allowed characters — and write unknown for any "
+                                 "you could not find a source for")
+            if "unknown" in low:
+                q.update({"status": "partial", "answer": answer_text.strip()[:400], "source": source.strip()[:200]})
+                return "recorded as PARTIAL: the unknown limit stays an open question (it goes in the solve request)."
     _need(answer_text, "the answer (or why it cannot be answered)")
     if (source or "").strip().lower() in ("unanswerable", "none", "n/a", "cannot"):
         q.update({"status": "unanswerable", "answer": answer_text.strip()[:400], "source": ""})
@@ -286,6 +306,8 @@ def blockers(case: dict) -> list:
             out.append(f"external question open: {q['question'][:90]}")
         elif q["status"] == "answered" and q.get("auto") and q.get("verified") is False:
             out.append(f"external answer not backed by a fetched page (quote not found): {q['question'][:70]}")
+        elif q["status"] == "partial":
+            out.append(f"external answer PARTIAL (a limit is unknown): {q['question'][:70]}")
     return out
 
 
@@ -648,7 +670,7 @@ def solve_request(case: dict, verify=None) -> str:
     if not cands:
         L.append("- none recorded")
     L += ["", "## Questions we could not answer from here"]
-    eq = [q for q in case["external_questions"] if q["status"] != "answered" or (q.get("auto") and q.get("verified") is False)]
+    eq = [q for q in case["external_questions"] if q["status"] not in ("answered",) or (q.get("auto") and q.get("verified") is False)]
     for q in eq:
         L.append(f"- {q['question']}")
         L.append(f"  - status: {q['status']}" + (f" — {q['answer'][:200]}" if q.get("answer") else ""))
