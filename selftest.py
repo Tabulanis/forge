@@ -1686,7 +1686,7 @@ def t_steering_critic_speaks_only_on_signals():
     from forge import case as C
     from forge.agent import Agent, STEER_EVERY
     root = Path(tempfile.mkdtemp())
-    c = C.load(root, "x"); C.set_window(c, reason="none"); C.add_queue(c, [{"hash": "a1fe588", "subject": "stamp", "files": []}])
+    c = C.load(root, "x"); C.set_stage(c, "unknown", reason="no device"); C.set_window(c, reason="none"); C.add_queue(c, [{"hash": "a1fe588", "subject": "stamp", "files": []}])
     C.suspect(c, "USB"); C.save(root, c)
     reads = [_FakeCall("read_file", f"r{i}") for i in range(3)]
     for r in reads: r.args = {"path": "README.md"}
@@ -1702,7 +1702,7 @@ def t_steering_critic_speaks_only_on_signals():
     dead.history = [_ASK, {"role": "tool_use", "calls": reads}]
     fallback = dead._steer(0, STEER_EVERY)
     # nothing to say -> silence
-    c2 = C.load(root, "y"); c2["queue"] = []; c2["suspects"] = []; C.save(root, c2)
+    c2 = C.load(root, "y"); c2["queue"] = []; c2["suspects"] = []; C.set_stage(c2, "unknown", reason="no device"); C.save(root, c2)
     calm = Agent(provider=None, tools=[], advocate=_FakeProv("STEER: x")); calm.workspace_root = root
     calm.active_mode = "bughunt"; calm._ledger_write = lambda e: None; calm.history = [_ASK]
     return (any("unreviewed" in x for x in sig) and any("no check" in x for x in sig)

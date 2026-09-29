@@ -1323,6 +1323,15 @@ class Agent:
                     yield Event(kind="note", text="Case file opened (CASE.yaml): set_stage, set_window, "
                                 "review_commit, suspect/clear_suspect, ask_contract. The ledger decides "
                                 "when a diagnosis is allowed.")
+                    # The dated history is the first thing in front of her (2026-09-29:
+                    # run 1 of the batch spent its 15 minutes reading and never set a window).
+                    hist = C.dated_history(self.workspace_root)
+                    if hist:
+                        self.history.append({"role": "user", "synthetic": True,
+                                             "content": "Case file context (internal): the project's history, oldest first —\n"
+                                             + hist + "\n\nFirst job: set_stage (unknown with a reason is fine) and "
+                                             "set_window from what is dated above (or unknown with a reason); the harness "
+                                             "then queues the commits for review_commit. Never mention this note."})
         except Exception:
             pass
 
@@ -1354,6 +1363,14 @@ class Agent:
                         _cp_done.add(_mark)
                         if self._case_land(turn_start, f"T+{_mark // 60}"):
                             yield Event(kind="note", text=f"Checkpoint T+{_mark // 60}: case rendered to ANSWER.md.")
+                            if _mark == 480:
+                                from . import case as C
+                                _bl = C.blockers(self._case() or C.new())
+                                if _bl:
+                                    yield Event(kind="note", text="T+8: " + "; ".join(_bl[:2])[:160])
+                                    self.history.append({"role": "user", "synthetic": True,
+                                        "content": "Checkpoint (internal): eight minutes in, a diagnosis is not yet allowed — "
+                                                   + "; ".join(_bl[:4]) + ". Do these now with the case tools, then continue. Never mention this note."})
             except Exception:
                 pass
             try:
@@ -2149,6 +2166,11 @@ class Agent:
         calls = [c for m in self.history[turn_start:] if m.get("role") == "tool_use" for c in (m.get("calls") or [])]
         recent = calls[-STEER_EVERY:]
         names = [getattr(c, "name", "") for c in recent]
+        w, st = case["window"], case["stage"]
+        if w["good"] == "unknown" and w["bad"] == "unknown" and not w.get("reason"):
+            sig.append("window not set — set_window (good/bad from the dated history, or unknown with a reason); the harness then queues the commits")
+        if st["value"] == "unknown" and not st.get("reason"):
+            sig.append("stage not set — set_stage (unknown with a reason is fine)")
         cov = C.coverage(case)
         if cov["unreviewed"] and "review_commit" not in names:
             nxt = next((q for q in case["queue"] if q["status"] == "unreviewed"), None)

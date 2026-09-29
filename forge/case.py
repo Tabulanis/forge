@@ -436,3 +436,17 @@ def auto_question(case: dict, hash: str) -> str:
         return ""
     ask(case, text, artifact=keys, auto=True)
     return text
+
+
+def dated_history(root, limit: int = 60) -> str:
+    """The repo's commits, oldest first, one dated line each — the raw material for the window."""
+    import subprocess
+    repo = find_repo(root)
+    if repo is None:
+        return ""
+    try:
+        out = subprocess.run(["git", "-C", str(repo), "log", "--reverse", "--date=short", "--format=%h %ad %s", "-n", str(limit)],
+                             capture_output=True, text=True, timeout=15).stdout
+    except Exception:
+        return ""
+    return "\n".join(ln[:110] for ln in out.splitlines())
