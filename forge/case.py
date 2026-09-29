@@ -244,7 +244,9 @@ def blockers(case: dict) -> list:
 def render(case: dict, verify=None) -> str:
     """The four boxes, generated. `verify(receipt) -> bool` says whether a receipt
     appears in this job's real output; unverified receipts cannot make anything Proven."""
-    ok = verify or (lambda r: True)
+    _ok = verify or (lambda r: True)
+    verified_receipts = {x.get("receipt") for x in case["queue"] if x.get("receipt_verified")}
+    ok = lambda r: (r in verified_receipts) or _ok(r)
     cov = coverage(case)
     L = ["## Proven"]
     proven = 0
@@ -433,13 +435,17 @@ def auto_question(case: dict, hash: str) -> str:
     q = next((q for q in case["queue"] if q["hash"].startswith(hash) or hash.startswith(q["hash"])), None)
     if not q or not q.get("platform"):
         return ""
-    keys = ", ".join(q["platform"][:4])
-    eco = _PLATFORM_LOOKUP.get(q["platform"][0], "platform")
-    text = (f"Commit {q['hash']} changes {keys}: do the values it writes satisfy the {eco} "
-            f"platform's rules for those keys? The repository cannot vouch for this — check the rule.")
-    if any(x["question"] == text for x in case["external_questions"]):
+    # One question per KEY, not per commit (2026-09-29: four commits opened four
+    # near-identical questions and none got answered).
+    asked = {x.get("artifact", "") for x in case["external_questions"]}
+    new = [k for k in q["platform"] if k not in asked]
+    if not new:
         return ""
-    ask(case, text, artifact=keys, auto=True)
+    k = new[0]
+    eco = _PLATFORM_LOOKUP.get(k, "platform")
+    text = (f"{k} (changed in {q['hash']}): do the values this project writes to it satisfy the "
+            f"{eco} platform's rule for that key? The repository cannot vouch for this — check the rule.")
+    ask(case, text, artifact=k, auto=True)
     return text
 
 
@@ -473,10 +479,15 @@ def prioritise(case: dict) -> int:
     ones that block a diagnosis; the rest stay visible as deferred."""
     toks = _tokens(case.get("symptom", ""))
     n = len(case["queue"])
+    # Regressions are usually LATE and SMALL; the giant early commit that created the
+    # feature touches every platform key and is the least likely culprit. Queue is
+    # newest first, so recency = (n - i) / n.
     for i, q in enumerate(case["queue"]):
         files = " ".join(q.get("files", [])).lower()
         match = sum(1 for t in toks if t in files)
-        q["score"] = 3 * len(q.get("platform") or []) + 2 * min(match, 3) + (n - i) / max(n, 1)
+        big = len(q.get("files", [])) > 15
+        q["score"] = (3 * bool(q.get("platform")) + 2 * min(match, 3)
+                      + 3 * (n - i) / max(n, 1) - (2 if big else 0))
     order = sorted(range(n), key=lambda i: -case["queue"][i]["score"])
     for rank, i in enumerate(order):
         case["queue"][i]["priority"] = rank < PRIORITY_N
@@ -493,7 +504,64 @@ def next_commit(root, case: dict, chars: int = 6000) -> str:
     q = todo[0]
     diff = diff_of(repo, q["hash"], chars + 1) if repo is not None else ""
     more = " …(diff truncated; git show for the rest)" if len(diff) > chars else ""
+    sc = q.get("scout") or {}
+    note = (f"scout says {sc.get('verdict')}: {sc.get('why', '')[:160]}"
+            + (f" (next check: {sc.get('next_check')})" if sc.get("next_check") and sc.get("next_check") != "-" else "")
+            + "\n") if sc else ""
     return (f"COMMIT {q['hash']} — {q['subject']}\nfiles: {', '.join(q.get('files', [])[:8])}\n"
-            f"platform-defined keys touched: {', '.join(q.get('platform') or []) or 'none'}\n"
+            f"platform-defined keys touched: {', '.join(q.get('platform') or []) or 'none'}\n{note}"
             f"{len(todo) - 1} more to review after this one.\n\n{diff[:chars]}{more}\n\n"
             f"Now: review_commit(\"{q['hash']}\", YES|NO|UNKNOWN, why, receipt|next_check).")
+
+
+# ----------------------------------------------------------------- scout pre-review (coverage bought structurally)
+
+SCOUT_SYSTEM = """You are a sealed reviewer of ONE commit. Given the SYMPTOM and the commit's DIFF,
+decide whether this change could produce the symptom. Rules:
+- YES or NO must quote, verbatim, one line of the diff as the RECEIPT.
+- If the change writes or alters a platform-defined value (Info.plist keys, entitlements,
+  version strings, build settings) whose rule you cannot verify from the diff alone,
+  answer UNKNOWN and say what would settle it. Never guess a platform rule.
+- Documentation-only or UI-only changes are NO with the line that shows it.
+Answer in exactly this shape, nothing else:
+VERDICT: YES|NO|UNKNOWN
+WHY: <one sentence>
+RECEIPT: <one verbatim diff line>
+NEXT_CHECK: <the check that would settle it, or ->"""
+
+
+def scout_review(root, case: dict, provider, limit_chars: int = 5000, only_priority: bool = True) -> int:
+    """The harness reviews the priority set with sealed single-call scouts. A NO with a
+    receipt that is really in the diff is filed as NO (scout); YES/UNKNOWN stay for her,
+    annotated. Returns how many commits were scouted. Fails open per commit."""
+    import re as _re
+    repo = find_repo(root)
+    if repo is None or provider is None:
+        return 0
+    n = 0
+    for q in case["queue"]:
+        if q["status"] != "unreviewed" or (only_priority and not q.get("priority", True)) or q.get("scout"):
+            continue
+        diff = diff_of(repo, q["hash"], limit_chars + 1)
+        if not diff:
+            continue
+        digest = (f"SYMPTOM: {case.get('symptom', '')[:300]}\n\nCOMMIT {q['hash']} — {q['subject']}\n"
+                  f"platform-defined keys touched: {', '.join(q.get('platform') or []) or 'none'}\n\nDIFF:\n{diff[:limit_chars]}")
+        try:
+            body = {"chat_template_kwargs": {"enable_thinking": True}, "temperature": 0.0, "top_k": 1,
+                    "seed": 20260929, "max_tokens": 700}
+            raw = (provider.complete(SCOUT_SYSTEM, [{"role": "user", "content": digest}], [], extra_body=body).text or "")
+        except Exception:
+            continue
+        n += 1
+        g = lambda k: (_re.search(rf"{k}:\s*(.+)", raw) or [None, ""])[1].strip() if _re.search(rf"{k}:\s*(.+)", raw) else ""
+        verdict, why, receipt, nxt = g("VERDICT").upper()[:7], g("WHY")[:300], g("RECEIPT")[:300], g("NEXT_CHECK")[:300]
+        verdict = "YES" if verdict.startswith("YES") else "NO" if verdict.startswith("NO") else "UNKNOWN"
+        in_diff = bool(receipt) and receipt.strip("`'\" ") in diff
+        q["scout"] = {"verdict": verdict, "why": why, "receipt": receipt, "next_check": nxt, "receipt_in_diff": in_diff}
+        if verdict == "NO" and in_diff and not q.get("platform"):
+            # a clean NO on a commit that touches no platform-defined value is filed; the
+            # rest — YES, UNKNOWN, or any platform-touching commit — is hers to judge
+            q.update({"status": "NO", "why": "(scout) " + why, "receipt": receipt.strip("`'\" "),
+                      "next_check": "", "receipt_verified": True})
+    return n

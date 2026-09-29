@@ -447,7 +447,7 @@ harness computed, and the last few ACTIONS, and you write at most two short,
 imperative lines telling the investigator what to do NEXT to make the investigation
 complete — e.g. review the unreviewed commits (name the first), record the check
 that would settle an open suspect, stop re-reading a file, answer the open
-external question. Refer only to what is in front of you.
+external question. Refer only to what is in front of you. Write INSTRUCTIONS ("review commit X next", "record a check for S2"), never a copy of an action or a tool call.
 
 Answer in exactly this shape, nothing else:
 STEER: <line>
@@ -2218,7 +2218,8 @@ class Agent:
             try:
                 raw = steer_ask(prov, digest)
                 lines = [ln.split(":", 1)[1].strip() for ln in raw.splitlines()
-                         if ln.upper().startswith("STEER:") and not ln.upper().endswith("NONE")]
+                         if ln.upper().startswith("STEER:") and not ln.upper().endswith("NONE")
+                         and "{" not in ln]          # an echoed tool call is not steering
             except Exception:
                 lines = []
         if not lines:

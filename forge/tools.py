@@ -1148,7 +1148,7 @@ def _looks_like_finding(note: str) -> bool:
     return any(c in low for c in cues)
 
 
-def _case_op(ws, op: str, *args) -> str:
+def _case_op(ws, op: str, *args, _provider=None) -> str:
     """Apply one case-file operation and save. Rules (receipts, UNKNOWN needs a
     next check, cleared needs a receipt) are enforced in forge/case.py."""
     from . import case as C
@@ -1164,7 +1164,11 @@ def _case_op(ws, op: str, *args) -> str:
     if op == "set_window":
         n = C.triage(ws.root, c)   # the HARNESS fills the queue, not her
         if n:
-            msg += f" — {n} commit(s) queued; the top {min(n, C.PRIORITY_N)} block a diagnosis. Call next_commit to get the first diff."
+            scouted = C.scout_review(ws.root, c, _provider)   # sealed scouts pre-review the top set
+            filed = sum(1 for x in c["queue"] if x.get("status") == "NO" and x.get("receipt_verified"))
+            left = sum(1 for x in c["queue"] if x.get("priority", True) and x["status"] == "unreviewed")
+            msg += (f" — {n} commit(s) queued; scouts pre-reviewed {scouted}, filed {filed} clear NO(s); "
+                    f"{left} of the top set are yours to judge. Call next_commit for the first diff.")
     C.save(ws.root, c)
     bl = C.blockers(c)
     return msg + ("" if not bl else "  | still blocking a diagnosis: " + "; ".join(bl[:2]))
@@ -1745,7 +1749,7 @@ def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provi
                 "evidence": {"type": "string", "description": "exact output that dates the window"},
                 "reason": {"type": "string", "description": "why unknown, if unknown"}},
                 "required": []},
-            run=guard(lambda good="", bad="", evidence="", reason="": _case_op(ws, "set_window", good, bad, evidence, reason)),
+            run=guard(lambda good="", bad="", evidence="", reason="": _case_op(ws, "set_window", good, bad, evidence, reason, _provider=provider)),
         ),
         Tool(
             name="review_commit",

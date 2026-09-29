@@ -1775,6 +1775,36 @@ def t_priority_queue_and_next_commit():
             and any("top 12" in b for b in bl))
 
 
+def t_scout_pre_review_files_clean_nos_and_leaves_platform_commits():
+    """Coverage bought structurally: at set_window sealed scouts review the priority set.
+    A NO with a receipt really in the diff, on a commit touching no platform key, is
+    filed; a platform-touching commit stays hers even if the scout says NO; a receipt
+    not in the diff is not trusted."""
+    import subprocess
+    from forge import case as C
+    root = Path(tempfile.mkdtemp()); repo = root / "repo"; repo.mkdir()
+    def git(*a): return subprocess.run(["git", "-C", str(repo)] + list(a), capture_output=True, text=True, check=True).stdout.strip()
+    git("init", "-q"); git("config", "user.email", "t@t"); git("config", "user.name", "t")
+    (repo / "README.md").write_text("docs\n"); git("add", "."); git("commit", "-q", "-m", "docs"); h_doc = git("rev-parse", "--short", "HEAD")
+    (repo / "stamp.sh").write_text("plutil -replace CFBundleVersion -string 1.0.$(date +%s) Info.plist\n"); git("add", "."); git("commit", "-q", "-m", "stamp"); h_stamp = git("rev-parse", "--short", "HEAD")
+    (repo / "ui.txt").write_text("x"); git("add", "."); git("commit", "-q", "-m", "ui"); h_ui = git("rev-parse", "--short", "HEAD")
+    class Scout:
+        def complete(self, system, msgs, tools, extra_body=None):
+            class R: pass
+            r = R(); d = msgs[0]["content"]
+            if "README" in d: r.text = "VERDICT: NO\nWHY: docs only\nRECEIPT: +docs\nNEXT_CHECK: -"
+            elif "stamp" in d: r.text = "VERDICT: NO\nWHY: build plumbing\nRECEIPT: +plutil -replace CFBundleVersion\nNEXT_CHECK: -"
+            else: r.text = "VERDICT: NO\nWHY: ui\nRECEIPT: +this line is not in the diff\nNEXT_CHECK: -"
+            return r
+    c = C.load(root, "the app says the driver is not there"); C.set_window(c, reason="unknown"); C.triage(root, c)
+    n = C.scout_review(root, c, Scout())
+    by = {q["hash"]: q for q in c["queue"]}
+    return (n == 3 and by[h_doc]["status"] == "NO" and by[h_doc].get("receipt_verified")
+            and by[h_stamp]["status"] == "unreviewed" and by[h_stamp]["scout"]["verdict"] == "NO"
+            and by[h_ui]["status"] == "unreviewed" and not by[h_ui]["scout"]["receipt_in_diff"]
+            and "scout says NO" in C.next_commit(root, c))
+
+
 class _FakeProv:
     def __init__(self, text): self.text = text
     def complete(self, *a, **k):
@@ -1922,6 +1952,8 @@ CHECKS = [
      t_gap_finder_writes_checks_into_the_case, False),
     ("hunt: priority queue + next_commit hands over the diff",
      t_priority_queue_and_next_commit, False),
+    ("hunt: scouts pre-review the top set; platform commits stay hers",
+     t_scout_pre_review_files_clean_nos_and_leaves_platform_commits, False),
     ("case: triage fills the queue from the window",
      t_triage_fills_the_queue_from_the_window, False),
     ("case: the ledger enforces receipts, cheap UNKNOWN, blockers",
