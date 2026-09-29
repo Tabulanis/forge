@@ -1855,6 +1855,15 @@ def t_receipts_reject_prose_claims():
     return refused == 4 and "NO" in ok and "NO" in ok2
 
 
+def t_contract_pass2_is_plain_keywords():
+    """The search backend returns nothing for quoted/OR queries; pass 2 must be plain
+    keywords that ask about LIMITS (the thing reference pages leave out)."""
+    from forge.tools import _contract_pass2
+    qs = [_contract_pass2("CFBundleVersion"), _contract_pass2("CFBundleIdentifier"), _contract_pass2("com.apple.developer.driverkit")]
+    return (all('"' not in q and " OR " not in q for q in qs) and "digits per component" in qs[0]
+            and "allowed characters" in qs[1] and "allowed values" in qs[2])
+
+
 class _FakeProv:
     def __init__(self, text): self.text = text
     def complete(self, *a, **k):
@@ -2008,6 +2017,8 @@ CHECKS = [
      t_platform_answers_need_a_quoted_rule_and_block_a_no, False),
     ("hunt: receipts reject prose claims (comments, commit messages, docs)",
      t_receipts_reject_prose_claims, False),
+    ("hunt: contract pass 2 is plain keywords about limits",
+     t_contract_pass2_is_plain_keywords, False),
     ("case: triage fills the queue from the window",
      t_triage_fills_the_queue_from_the_window, False),
     ("case: the ledger enforces receipts, cheap UNKNOWN, blockers",

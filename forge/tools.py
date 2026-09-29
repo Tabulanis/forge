@@ -1174,6 +1174,17 @@ def _case_op(ws, op: str, *args, _provider=None) -> str:
     return msg + ("" if not bl else "  | still blocking a diagnosis: " + "; ".join(bl[:2]))
 
 
+def _contract_pass2(key: str) -> str:
+    """Pass-2 query for a platform-defined key: what limits does the platform enforce
+    on its value. Plain keywords, no quotes, no OR."""
+    k = (key or "").strip()
+    if any(w in k.lower() for w in ("version", "build")):
+        return f"{k} format digits per component limit"
+    if any(w in k.lower() for w in ("identifier", "name", "class")):
+        return f"{k} allowed characters format rules rejected invalid"
+    return f"{k} allowed values format rules limit rejected"
+
+
 def _check_contract(question: str) -> str:
     """Question-directed lookup. Two passes on purpose (2026-09-29): the vendor's
     reference page for a key often omits the LIMITS, which live in error messages,
@@ -1188,7 +1199,9 @@ def _check_contract(question: str) -> str:
     out = []
     if site:
         out.append("Pass 1 — the platform's own documentation (" + site + "):\n" + web_search((q + " " + site).strip(), 4))
-    err_q = (f'"{key}" invalid OR "bad value" OR "maximum" digits format limit' if key else q + " invalid format limit")
+    # Plain keywords only: the search backend returns NOTHING for quoted/OR queries
+    # (measured 2026-09-29). The template asks about LIMITS, which reference pages omit.
+    err_q = _contract_pass2(key or q)
     out.append("Pass 2 — what makes the value ILLEGAL (error strings, open-source loaders, forums):\n" + web_search(err_q, 5))
     out.append("Then fetch_url the best page and answer_question(question, answer, source, quote=<the rule, verbatim>). "
                "If a fetched page comes back with no text, it is script-rendered — use another result. "
