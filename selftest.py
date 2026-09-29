@@ -1589,6 +1589,7 @@ def t_advocate_sends_back_an_unaddressed_rival_only():
             and not adv("RIVAL: something else\nADDRESSED: no")
             and not dead._advocate_review(0, "The root cause is the USB matching keys.")
             and _own_advocate_is_used() and _empty_advocate_falls_back_to_judge()
+            and _advocate_attacks_the_ruled_out_box()
             and _advocate_runs_even_after_a_receipts_stamp())
 
 
@@ -1607,6 +1608,20 @@ def _advocate_runs_even_after_a_receipts_stamp():
     from forge import agent as A
     src = inspect.getsource(A.Agent)
     return "elif not advocate_bounced" not in src and "if not advocate_bounced" in src
+
+
+def _advocate_attacks_the_ruled_out_box():
+    """With a Ruled out box the advocate is asked WHICH item was crossed off without a
+    check; its SUSPECT/CHECK comes back as the send-back; NONE lets the answer stand."""
+    from forge.agent import Agent
+    boxed = ("## Proven\n- x `CFBundleVersion 1.0.20260821.1`\n## Believed\n- y (50%)\n"
+             "## Ruled out\n- Stale-dext trap — symptom mismatch\n## What would prove me wrong\n- a log\n")
+    def adv(text):
+        a = Agent(provider=None, tools=[], superego=None, advocate=_FakeProv(text)); a.history = [_ASK]
+        a._ledger_write = lambda e: None
+        return a._advocate_review(0, boxed)
+    hit = adv("SUSPECT: Stale-dext trap — symptom mismatch\nCHECK: compare the stamp with Apple's CFBundleVersion format rule")
+    return ("Stale-dext" in hit and "CFBundleVersion format" in hit and not adv("SUSPECT: NONE\nCHECK: -"))
 
 
 def _own_advocate_is_used():

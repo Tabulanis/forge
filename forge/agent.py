@@ -408,7 +408,30 @@ RIVAL: <the strongest other explanation, one or two sentences, or NONE>
 ADDRESSED: <yes if the answer already rules it out with evidence, otherwise no>"""
 
 
-def advocate_ask(prov, digest: str) -> str:
+# THE SHARPER JOB (2026-09-28, with him). "Argue another explanation" over her
+# whole case made the advocate mirror her or say NONE. Every failed hunt had the
+# true cause on her RULED OUT list, crossed off by reasoning. So when there is a
+# Ruled out box, the question is narrower: which item was cleared without a
+# check, and what check would settle it.
+RULEDOUT_PROMPT = """You are the DEVIL'S ADVOCATE: a sealed, independent reviewer.
+An investigator has RULED OUT some suspects. Your one job: find the suspect that
+was crossed off by REASONING ALONE — no command output, diff, log, or outside
+source in the evidence actually clears it — and could still be the cause.
+
+Rules:
+- "It would present differently" or "the symptom doesn't match" is reasoning,
+  not a check. A suspect is only cleared by evidence that was actually gathered.
+- The project's own README, docs and code comments are CLAIMS, not checks.
+- Prefer the suspect whose clearing would need a fact from OUTSIDE the project
+  (a vendor rule, a platform requirement, a hardware read).
+- Name the single concrete check that would settle it.
+
+Answer in exactly this shape, nothing else:
+SUSPECT: <the ruled-out item, quoted as written, or NONE>
+CHECK: <the one command, file, source or measurement that would settle it>"""
+
+
+def advocate_ask(prov, digest: str, system: str = ADVOCATE_PROMPT) -> str:
     """Put the evidence to the advocate and return its raw reply. Thinking ON
     (this is a reasoning job, unlike the honesty check); greedy and pinned like
     the superego. Returns "" on nothing — the caller fails open."""
@@ -420,7 +443,7 @@ def advocate_ask(prov, digest: str) -> str:
     # 2026-09-28: 2 of 6 identical calls came back empty, finish "stop").
     # Same cure as the superego: one nudged retry, then fail open.
     for asked in (digest, digest + "\n\nAnswer now, in the two-line RIVAL / ADDRESSED shape."):
-        reply = prov.complete(ADVOCATE_PROMPT, [{"role": "user", "content": asked}], [],
+        reply = prov.complete(system, [{"role": "user", "content": asked}], [],
                               extra_body=body)
         text = (reply.text or "").strip()
         if text:
@@ -2164,9 +2187,14 @@ class Agent:
             return ""
         t0 = time.time()
         digest = self._evidence_digest(turn_start, text)
+        ruled = [it for it in self._box_items(text, "ruled out")
+                 if not re.match(r"^\W*(none|nothing)\b", it, re.I)]
+        system = RULEDOUT_PROMPT if ruled else ADVOCATE_PROMPT
+        if ruled:
+            digest = "RULED OUT (as the investigator wrote it):\n" + "\n".join(ruled) + "\n\n" + digest
         used = "advocate" if self.advocate else "judge"
         try:
-            raw = advocate_ask(prov, digest)
+            raw = advocate_ask(prov, digest, system)
         except Exception as e:
             raw, err = "", type(e).__name__
         else:
@@ -2175,14 +2203,21 @@ class Agent:
         # argument ALWAYS happens (gpt-oss returned empty 3/3 at one point).
         if not raw and self.advocate is not None and self.superego is not None:
             try:
-                raw, used = advocate_ask(self.superego, digest), "judge-fallback"
+                raw, used = advocate_ask(self.superego, digest, system), "judge-fallback"
             except Exception as e:
                 err = err or type(e).__name__
-        m = re.search(r"RIVAL:\s*(.+)", raw)
-        rival = (m.group(1).strip() if m else "")
-        addressed = re.search(r"ADDRESSED:\s*yes", raw, re.I)
-        out = "" if (not rival or rival.upper().startswith("NONE") or addressed
-                     or len(rival.split()) < 5) else rival[:400]
+        if ruled:
+            ms = re.search(r"SUSPECT:\s*(.+)", raw); mc = re.search(r"CHECK:\s*(.+)", raw)
+            suspect = (ms.group(1).strip() if ms else "")
+            out = "" if (not suspect or suspect.upper().startswith("NONE")) else (
+                f"you crossed off '{suspect[:160]}' by reasoning, not by a check. The check that "
+                f"settles it: {(mc.group(1).strip() if mc else 'the one you skipped')[:200]}")
+        else:
+            m = re.search(r"RIVAL:\s*(.+)", raw)
+            rival = (m.group(1).strip() if m else "")
+            addressed = re.search(r"ADDRESSED:\s*yes", raw, re.I)
+            out = "" if (not rival or rival.upper().startswith("NONE") or addressed
+                         or len(rival.split()) < 5) else rival[:400]
         # Every advocate call goes in the ledger (2026-09-28: a whole run passed
         # with no record of whether the other side was ever argued).
         if not self.ephemeral:
