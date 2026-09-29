@@ -301,7 +301,8 @@ def render(case: dict, verify=None) -> str:
                  f"{sum(1 for q in eq if q['status'] == 'open')} open")
         L += [f"  - {q['question'][:100]} — {q['status']}" + (f": {q['answer'][:120]} [{q['source'][:60]}]" if q['status'] == 'answered' else "")
               for q in eq]
-    status = "**Status: best guess**" if proven == 0 else "**Status: proven items exist; the rest is best guess**"
+    proven_yes = sum(1 for x in case["queue"] if x["status"] == "YES" and ok(x.get("receipt", "")))
+    status = "**Status: best guess**" if (proven + proven_yes) == 0 else "**Status: proven items exist; the rest is best guess**"
     bl = blockers(case)
     if bl:
         status += " — diagnosis not yet allowed: " + "; ".join(bl[:3])
