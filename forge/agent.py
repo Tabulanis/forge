@@ -1264,6 +1264,7 @@ class Agent:
         cause_bounced = False       # receipts-for-causes gate: one send-back
         advocate_bounced = False    # the-other-side gate: one send-back
         _prior_bounce_reason = ""
+        _cp_done: set = set()      # clock checkpoints already taken this turn
         grounding_nudged = False
         godot_nudged = False        # wrote .gd/.tscn but never ran the engine on it
         format_nudged = False      # tool call emitted as plain text
@@ -1328,6 +1329,18 @@ class Agent:
         except Exception:
             _chatty = 70
         for step in range(_mode_steps):
+            # Checkpoints on the clock (step 6): the case is rendered and saved at
+            # T+8 and T+16 min of her own time; the run goes on. A killed run still
+            # leaves a usable ANSWER.md, and the snapshots show WHERE it went wrong.
+            try:
+                _own = time.time() - _turn_t0 - getattr(self, "_tool_secs", 0.0)
+                for _mark in (480, 960):
+                    if _own >= _mark and _mark not in _cp_done and self._case() is not None:
+                        _cp_done.add(_mark)
+                        if self._case_land(turn_start, f"T+{_mark // 60}"):
+                            yield Event(kind="note", text=f"Checkpoint T+{_mark // 60}: case rendered to ANSWER.md.")
+            except Exception:
+                pass
             try:
                 _st = self._steer(turn_start, step)
                 if _st:
