@@ -2159,6 +2159,10 @@ class Agent:
             C.save(self.workspace_root, c)
             (Path(self.workspace_root) / "ANSWER.md").write_text(
                 "# ANSWER — rendered from CASE.yaml (" + label + ")\n\n" + text + "\n")
+            # Nothing proven -> the package to take elsewhere (his target, 2026-09-29)
+            if "Status: best guess" in text:
+                (Path(self.workspace_root) / "SOLVE-REQUEST.md").write_text(
+                    C.solve_request(c, verify=lambda r: bool(r) and r in real) + "\n")
         except Exception:
             pass
         return text

@@ -614,3 +614,57 @@ def scout_review(root, case: dict, provider, limit_chars: int = 5000, only_prior
             q.update({"status": "NO", "why": "(scout) " + why, "receipt": receipt.strip("`'\" "),
                       "next_check": "", "receipt_verified": True})
     return n
+
+
+# ----------------------------------------------------------------- the solve request (his target, 2026-09-29)
+
+def solve_request(case: dict, verify=None) -> str:
+    """When nothing is proven: a short package to take to other people or tools.
+    Ranked candidates with the check that settles each, the exact open questions
+    with what was tried, and what was ruled out with receipts. No client names are
+    added here — it only contains what the case already holds."""
+    ok = verify or (lambda r: True)
+    cands = []
+    for sp in case["suspects"]:
+        if sp["status"] in ("open", "supported"):
+            cands.append((2 if sp["status"] == "supported" else 1, sp["hypothesis"], sp.get("next_check") or "", "suspect"))
+    for x in case["queue"]:
+        if x["status"] in ("YES", "UNKNOWN"):
+            cands.append((x.get("score", 0) / 10 + (1 if x["status"] == "YES" else 0), f"change {x['hash']} ({x['subject'][:70]}): {x['why'][:160]}",
+                          x.get("next_check") or "", "change"))
+    cands.sort(key=lambda c: -c[0])
+    cov = coverage(case)
+    L = ["# SOLVE REQUEST — could not reach a definite answer", "",
+         f"**Symptom:** {case.get('symptom', '')[:400]}", "",
+         "## What is established",
+         f"- failure stage: {case['stage']['value']}" + (f" — {case['stage']['reason']}" if case['stage'].get('reason') else ""),
+         f"- working/broken window: good={case['window']['good']} bad={case['window']['bad']}"
+         + (f" — {case['window']['reason']}" if case['window'].get('reason') else ""),
+         f"- history reviewed: {cov['total'] - cov['unreviewed']} of {cov['total']} commits ({cov['YES']} could cause it, {cov['NO']} could not, {cov['UNKNOWN']} undecided)",
+         "", "## Candidates, most likely first (none is proven)"]
+    for i, (_, what, chk, kind) in enumerate(cands[:3], 1):
+        L.append(f"{i}. {what}")
+        L.append(f"   - what would settle it: {chk or 'not yet named'}")
+    if not cands:
+        L.append("- none recorded")
+    L += ["", "## Questions we could not answer from here"]
+    eq = [q for q in case["external_questions"] if q["status"] != "answered" or (q.get("auto") and q.get("verified") is False)]
+    for q in eq:
+        L.append(f"- {q['question']}")
+        L.append(f"  - status: {q['status']}" + (f" — {q['answer'][:200]}" if q.get("answer") else ""))
+    if not eq:
+        L.append("- none open")
+    ans = [q for q in case["external_questions"] if q["status"] == "answered" and (not q.get("auto") or q.get("verified"))]
+    if ans:
+        L += ["", "## Facts checked"]
+        L += [f"- {q['question'][:100]} → {q['answer'][:160]} [{q['source'][:80]}]" for q in ans]
+    L += ["", "## Ruled out (with the check that cleared it)"]
+    ruled = [(sp["hypothesis"], next((e[len("cleared by: "):] for e in sp["evidence"] if e.startswith("cleared by: ")), ""))
+             for sp in case["suspects"] if sp["status"] == "cleared"]
+    ruled += [(f"change {x['hash']} ({x['subject'][:60]})", x.get("receipt", "")) for x in case["queue"] if x["status"] == "NO" and ok(x.get("receipt", ""))]
+    L += [f"- {h}\n  `{r[:160]}`" for h, r in ruled] or ["- nothing yet"]
+    L += ["", "## What we tried",
+          f"- {len(case['external_questions'])} outside question(s) opened; {sum(1 for q in case['external_questions'] if q['status'] == 'answered')} answered, "
+          f"{sum(1 for q in case['external_questions'] if q['status'] == 'unanswerable')} unanswerable",
+          f"- checkpoints: {len(case.get('checkpoints', []))}"]
+    return "\n".join(L)

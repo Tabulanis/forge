@@ -1864,6 +1864,27 @@ def t_contract_pass2_is_plain_keywords():
             and "allowed characters" in qs[1] and "allowed values" in qs[2])
 
 
+def t_solve_request_written_when_nothing_is_proven():
+    """His target: no definite answer -> a short package: ranked candidates with the
+    check that settles each, the open questions, what was ruled out with receipts."""
+    from forge import case as C
+    from forge.agent import Agent
+    root = Path(tempfile.mkdtemp())
+    c = C.load(root, "the app says the driver is not there"); C.set_stage(c, "unknown", reason="no device"); C.set_window(c, reason="never worked")
+    C.add_queue(c, [{"hash": "a1fe588", "subject": "stamp every build", "files": ["Info.plist"]}, {"hash": "d0ee3b1", "subject": "deploy docs", "files": ["DEPLOY.md"]}])
+    c["queue"][0]["platform"] = ["CFBundleVersion"]; C.prioritise(c)
+    C.review_commit(c, "a1fe588", "UNKNOWN", why="writes a 6-digit build number into the version", next_check="the platform's max digits per component")
+    C.review_commit(c, "d0ee3b1", "NO", why="docs only", receipt="+DEPLOY.md: step 9 replug")
+    C.auto_question(c, "a1fe588"); C.suspect(c, "USB matching keys", next_check="attach log"); C.save(root, c)
+    a = Agent(provider=None, tools=[]); a.workspace_root = root
+    a.history = [_ASK, {"role": "tool_use", "calls": [_FakeCall("run_command", "c1")]}, {"role": "tool_result", "id": "c1", "content": "+DEPLOY.md: step 9 replug"}]
+    a._case_land(0, "t")
+    sr = (root / "SOLVE-REQUEST.md").read_text()
+    return ("could not reach a definite answer" in sr and "a1fe588" in sr and "max digits per component" in sr
+            and "USB matching keys" in sr and "CFBundleVersion" in sr.split("Questions we could not answer")[1]
+            and "d0ee3b1" in sr.split("Ruled out")[1])
+
+
 class _FakeProv:
     def __init__(self, text): self.text = text
     def complete(self, *a, **k):
@@ -2019,6 +2040,8 @@ CHECKS = [
      t_receipts_reject_prose_claims, False),
     ("hunt: contract pass 2 is plain keywords about limits",
      t_contract_pass2_is_plain_keywords, False),
+    ("hunt: SOLVE-REQUEST.md is written when nothing is proven",
+     t_solve_request_written_when_nothing_is_proven, False),
     ("case: triage fills the queue from the window",
      t_triage_fills_the_queue_from_the_window, False),
     ("case: the ledger enforces receipts, cheap UNKNOWN, blockers",
