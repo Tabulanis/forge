@@ -1526,7 +1526,26 @@ def t_cause_gate_reads_the_findings_file():
     fired = a._cause_gate(0, careful)
     (root / "FINDINGS.md").write_text("notes only, no conclusions yet\n")
     quiet = a._cause_gate(0, careful)
-    return fired.startswith("in FINDINGS.md") and "SOLVE-REQUEST" in quiet
+    # a file laid out in the boxes, no cause phrase, ruled-out by reasoning -> caught
+    (root / "FINDINGS.md").write_text("## Proven\n## Believed\n- x (50%)\n## Ruled out\n- the stamp — symptom mismatch\n## What would prove me wrong\n- a log\n")
+    boxed = a._cause_gate(0, careful)
+    return (fired.startswith("in FINDINGS.md") and "SOLVE-REQUEST" in quiet
+            and boxed.startswith("in FINDINGS.md") and "Ruled out" in boxed)
+
+
+def t_ruled_out_needs_receipts():
+    """2026-09-28: she ruled the true cause out with 'symptom mismatch' — reasoning,
+    no check — and the rival was gone. Same rule as Proven: a suspect leaves the
+    list only with the exact output that cleared it; docs don't count; 'none yet' is fine."""
+    from forge.agent import Agent
+    a = Agent(provider=None, tools=[]); a.history = _cause_hist([])
+    def with_ruled(item):
+        return _BOXES.format(p="stamp reads `CFBundleVersion 1.0.20260821.1`").replace("- none yet", "- " + item)
+    by_reasoning = a._cause_gate(0, with_ruled("stale-dext trap — symptom mismatch, would show as version skew"))
+    by_receipt = a._cause_gate(0, with_ruled("wrong version format — the stamp reads `CFBundleVersion 1.0.20260821.1`, four fields"))
+    by_docs = a._cause_gate(0, with_ruled("USB matching — README says `USB matching needs bInterfaceNumber`"))
+    none_yet = a._cause_gate(0, _BOXES.format(p="stamp reads `CFBundleVersion 1.0.20260821.1`"))
+    return ("Ruled out" in by_reasoning and not by_receipt and "Ruled out" in by_docs and not none_yet)
 
 
 class _FakeProv:
@@ -1647,6 +1666,8 @@ CHECKS = [
      t_diagnosis_stamp_catches_a_theory_over_printed_failures, False),
     ("harness: causes need receipts; docs are not proof",
      t_cause_gate_needs_receipts_and_never_trusts_docs, False),
+    ("harness: ruled-out needs receipts too",
+     t_ruled_out_needs_receipts, False),
     ("harness: the receipts gate reads the findings file too",
      t_cause_gate_reads_the_findings_file, False),
     ("harness: the other side is argued; unaddressed rival sends back",

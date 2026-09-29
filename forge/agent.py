@@ -2055,7 +2055,12 @@ class Agent:
         # Files first: a "final" written into the file that gets read is the
         # bigger problem, and must not hide behind a smaller one in the reply.
         for name, body in self._diagnosis_files(turn_start):
-            why = self._cause_gate_text(turn_start, body)
+            # A file laid out in the boxes IS a hand-in — check it structurally.
+            # (2026-09-28: ANSWER.md had the boxes but no cause-talk phrase and
+            # slipped the phrase test.) Notes-only files keep the phrase test.
+            handin = (self._diagnostic_session(turn_start)
+                      and sum(1 for rx in self._BOX.values() if rx.search(body)) >= 3)
+            why = self._cause_gate_text(turn_start, body, structural=handin)
             if why:
                 return f"in {name}: {why}"
         # The REPLY: structural, not by wording (2026-09-28 — chasing "Cause:",
@@ -2063,6 +2068,16 @@ class Agent:
         # session every hand-in uses the four boxes; an honest "still open" fits
         # them trivially. Files stay phrase-tested: FINDINGS.md is her notebook.
         return self._cause_gate_text(turn_start, text, structural=True)
+
+    def _box_items(self, text: str, key: str) -> list:
+        """The bullet items of one box: from its heading to the next box heading."""
+        m = self._BOX[key].search(text)
+        if not m:
+            return []
+        start = m.end()
+        ends = [rx.search(text, start) for k, rx in self._BOX.items() if k != key]
+        end = min([e.start() for e in ends if e] or [len(text)])
+        return [ln for ln in text[start:end].splitlines() if re.match(r"^\s*([-*•]|\d+[.)])\s+", ln)]
 
     def _cause_gate_text(self, turn_start: int, text: str, structural: bool = False) -> str:
         """The reason to send a diagnosis back, or \"\" if it may stand."""
@@ -2075,11 +2090,7 @@ class Agent:
         if missing:
             return ("a diagnosis must be laid out in four boxes — Proven, Believed, "
                     "Ruled out, What would prove me wrong — missing: " + ", ".join(missing))
-        # The Proven box: from its heading to the next box heading.
-        start = self._BOX["proven"].search(text).end()
-        ends = [rx.search(text, start) for k, rx in self._BOX.items() if k != "proven"]
-        end = min([e.start() for e in ends if e] or [len(text)])
-        items = [ln for ln in text[start:end].splitlines() if re.match(r"^\s*([-*•]|\d+[.)])\s+", ln)]
+        items = self._box_items(text, "proven")
         real, docs = self._evidence_pool(turn_start)
         unbacked, docs_only, proven = [], [], 0
         for ln in items:
@@ -2097,6 +2108,21 @@ class Agent:
         if unbacked:
             return ("every 'Proven' item must quote, in backticks, the exact output from "
                     "this job that proves it — these don't: " + " | ".join(unbacked[:3]))
+        # RULED OUT needs receipts too (2026-09-28, his call). She ruled the true
+        # cause out with "symptom mismatch" — reasoning, no check — and the rival
+        # was gone. A suspect leaves the list only with the output that cleared it.
+        weak = []
+        for ln in self._box_items(text, "ruled out"):
+            if re.match(r"^\W*(none|nothing)\b", ln, re.I):
+                continue
+            quotes = [q.strip() for q in re.findall(r"`([^`]{6,})`", ln)]
+            if not any(q in real for q in quotes):
+                weak.append(ln.strip()[:120])
+        if weak:
+            return ("a suspect can only be 'Ruled out' by quoting, in backticks, the exact "
+                    "output from this job that clears it (the project's own docs don't count) "
+                    "— these have no such receipt, so quote the check or move them to Believed "
+                    "as still-live suspects: " + " | ".join(weak[:3]))
         if not proven:
             if self._FINAL_WORDS.search(text):
                 return ("nothing is Proven, so the cause cannot be called final or confirmed "
