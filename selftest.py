@@ -1030,8 +1030,27 @@ def t_belt_is_whole_and_stays_whole():
     ag.client_env = ""; ag.identity_owner = ""; ag.history = []
     names = lambda: {s["name"] for s in ag.tool_schemas}
     before = names()
-    if len(before) < len(built):          # everything she owns is on the belt
+    # 2026-09-30: specialist kits moved to a SHELF (the 27B pays ~150 tok/s to
+    # re-read the prompt). The guarantee stays: everything she owns is either
+    # on the belt or named on the shelf in her prompt and reachable by use_tool.
+    from forge.agent import SHELF_TOOLS
+    from forge.providers import ToolCall
+    shelf_text = ag._system()
+    for t in built:
+        if t.name in before:
+            continue
+        if t.name not in SHELF_TOOLS or f"- {t.name}:" not in shelf_text:
+            return False
+        if ag._unwrap_use_tool(ToolCall(id="x", name="use_tool",
+                                        args={"name": t.name})).name != t.name:
+            return False
+    if not {"use_tool", "tool_help"} <= before:
         return False
+    ag.privacy = "offrec"                  # privacy still wins on the shelf
+    if ag._unwrap_use_tool(ToolCall(id="x", name="use_tool",
+                                    args={"name": "build_sim"})).name == "build_sim":
+        return False
+    ag.privacy = "normal"
     for _ in range(8):
         ag.history.append({"role": "tool_result", "content": "x" * 3000})
     ag._trim_tool_results(keep_recent=2)

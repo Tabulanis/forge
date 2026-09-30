@@ -547,7 +547,9 @@ Reading the room — every message is one of two modes:
   didn't ask you to DO something, just talk. (A checkable fact is the one
   thing that still reaches for a tool even here — see below.)
 - WORK: the user asked you to build, fix, look at, or change something.
-  Use your tools, do it, verify it.
+  Use your tools, do it, verify it. Your belt lists every tool in one line;
+  the first time you use one in a chat its full manual comes back with the
+  result, and tool_help(name) gives it any time before you call.
 Unsure which? Answer in words and offer to do the thing — one short
 question costs nothing; a wrong guess at WORK litters their computer.
 Never create a file the user didn't ask for. A file is a deliverable,
@@ -827,7 +829,11 @@ How to talk:
 - Be honest about failures and uncertainty. If a command failed, say it
   failed and show the relevant part of the error.
 - Keep it conversational and short. No headers or bullet-point walls for
-  simple answers.
+  simple answers. Default to about 150 words; go longer only when the user
+  asks for detail or the job needs it (code, steps, a document). Say each
+  point ONCE — no restating the same fact in new words, no recap paragraph,
+  no repeating what you told them last turn unless they ask. Every extra
+  paragraph costs them time waiting for it.
 
 Know your own house. You run on two machines treated as one: Void (his main box,
 where you live) and the old box pop-os at 10.42.0.1 (headless engine room: Mote,
@@ -927,6 +933,73 @@ class Event:
     will_ask: bool = False
 
 
+# ---- compact belt: one-liners up top, the full manual on command ------------
+# 2026-09-30: on the 27B brain the tool schemas were 20,950 of the 29,704 tokens
+# a fresh chat opens with. Every tool stays on the belt (hiding tools broke
+# things on 2026-09-08, and changing the belt mid-chat throws the cached prompt
+# away), but each one advertises only its first sentence. The full description
+# arrives at the BOTTOM of the chat — attached to the first result of that tool,
+# or on request via tool_help — where it can't disturb the cached prefix.
+_ONE_LINE_MAX = 220
+_RESULT_CAP = 16_000        # chars per tool result kept in the chat (~4k tokens)
+_PARAM_LINE_MAX = 140
+
+
+def _first_sentence(text: str, cap: int) -> str:
+    t = " ".join((text or "").split())
+    s = re.split(r"(?<=[.!?])\s", t, maxsplit=1)[0]
+    return s if len(s) <= cap else s[:cap - 1].rstrip() + "…"
+
+
+def _compact_params(schema: dict) -> dict:
+    """Same shape and rules (types, enums, required), shorter words."""
+    if not isinstance(schema, dict):
+        return schema
+    out = dict(schema)
+    if isinstance(out.get("description"), str):
+        out["description"] = _first_sentence(out["description"], _PARAM_LINE_MAX)
+    if isinstance(out.get("properties"), dict):
+        out["properties"] = {k: _compact_params(v) for k, v in out["properties"].items()}
+    if isinstance(out.get("items"), dict):
+        out["items"] = _compact_params(out["items"])
+    return out
+
+
+# Tools kept OFF the belt: still hers, still listed by name in her prompt, run
+# through use_tool. Chosen 2026-09-30 from real use (40 saved chats called 22
+# distinct tools): specialist kits she reaches for in a few chats a month. The
+# belt itself never changes mid-chat, so the cached prompt survives. Whole
+# TOOL_SETS move together — half a set on the belt is a bug.
+SHELF_TOOLS = frozenset({
+    "design_part", "get_part", "list_parts",                          # CAD
+    "business_calc", "business_framework", "markets_calc",             # money math
+    "find_cases", "find_regulation", "verify_statute",                 # legal
+    "deduce_meaning", "study_calls", "align_field_notes",              # animal calls
+    "see_sound", "separate_sounds", "match_sound",                     # hearing
+    "build_sim", "list_sims", "read_sim", "run_sim", "physics_sim", "verify_shelf",
+    "build_dataset", "list_datasets", "query_dataset", "data_ops",     # datasets
+    "godot_bisect", "godot_check", "godot_docs", "godot_run", "godot_test",
+    "godot_verify", "gd_lint",                                         # Godot
+    "lora_search", "lora_install", "lora_list", "lora_remove",         # LoRA shelf
+    "archive_overview", "ingest_archive", "build_search_index",        # life archive
+    "ai_tells", "name_check", "text_stats", "language_scorecard",      # writing checks
+    "human_duration", "load_tools",
+})
+
+
+def _tool_manual(tool) -> str:
+    """The full description plus every parameter's full wording."""
+    lines = [f"## {tool.name} — full manual", tool.description.strip()]
+    props = (tool.parameters or {}).get("properties") or {}
+    req = set((tool.parameters or {}).get("required") or [])
+    if props:
+        lines.append("Parameters:")
+        for k, v in props.items():
+            d = " ".join(str((v or {}).get("description", "")).split())
+            lines.append(f"- {k}{' (required)' if k in req else ''}: {d}")
+    return "\n".join(lines)
+
+
 class Agent:
     def __init__(self, provider: Provider, tools: list[Tool], *,
                  max_steps: int = 80, permission_mode: str = "ask",
@@ -959,6 +1032,40 @@ class Agent:
         # with Workspace so a hand-edit lands here without any extra wiring.
         self.read_mtimes = read_mtimes if read_mtimes is not None else {}
         self.tools = {t.name: t for t in tools}
+        # Full manuals live off the belt (see _compact_params). Pulling one is
+        # a normal tool call, so it lands at the bottom of the chat.
+        self._manuals_shown: set[str] = set()
+        if "tool_help" not in self.tools:
+            def _help(name: str = "") -> str:
+                t = self.tools.get((name or "").strip())
+                if t is None:
+                    return f"No tool named {name!r}. Tool names are listed on your belt."
+                self._manuals_shown.add(t.name)
+                return _tool_manual(t)
+            from .tools import Tool as _Tool
+            self.tools["tool_help"] = _Tool(
+                name="tool_help",
+                description="The full manual for one of your tools — every rule, "
+                            "example and parameter. Your belt shows only one line per tool.",
+                parameters={"type": "object",
+                            "properties": {"name": {"type": "string",
+                                                    "description": "The tool's exact name."}},
+                            "required": ["name"]},
+                run=_help)
+        if "use_tool" not in self.tools:
+            self.tools["use_tool"] = _Tool(
+                name="use_tool",
+                description="Run one of your SHELF tools (listed in your instructions) "
+                            "by name. Call tool_help(name) first for its parameters.",
+                parameters={"type": "object",
+                            "properties": {"name": {"type": "string",
+                                                    "description": "The shelf tool's exact name."},
+                                           "args": {"type": "object",
+                                                    "description": "Its arguments, as an object."}},
+                            "required": ["name"]},
+                # Never runs itself: the loop unwraps it into the real call so
+                # permissions, fences and privacy apply exactly as usual.
+                run=lambda **_: "use_tool must be unwrapped by the agent loop.")
         # Hand the live belt to owntools, so a tool she writes and PROVES this
         # turn is callable on the same turn instead of waiting for a restart.
         try:
@@ -974,6 +1081,13 @@ class Agent:
         self.max_steps = max_steps
         self.permission_mode = permission_mode
         self.system_prompt = system_prompt
+        on_shelf = sorted(n for n in SHELF_TOOLS if n in self.tools)
+        if on_shelf:
+            self.system_prompt += (
+                "\n\n# Your shelf — tools you own but don't carry\n"
+                "Run these with use_tool(name, args); tool_help(name) gives the manual.\n"
+                + "\n".join(f"- {n}: {_first_sentence(self.tools[n].description, 120)}"
+                            for n in on_shelf))
         self.notes_path = notes_path
         # Where the user is reaching her from (phone / PC / AR / VR / …), set
         # per-turn by the server from the client. Empty = unknown, say nothing.
@@ -1194,9 +1308,12 @@ class Agent:
         # The privacy mode can further remove tools — off-the-record hides the
         # disk-writers, sandbox hides everything that touches the filesystem.
         deny = get_privacy(self.privacy)["deny"]
-        return [{"name": t.name, "description": t.description, "parameters": t.parameters}
+        return [{"name": t.name,
+                 "description": _first_sentence(t.description, _ONE_LINE_MAX),
+                 "parameters": _compact_params(t.parameters)}
                 for t in self.tools.values()
-                if (allowed is None or t.name in allowed) and t.name not in deny]
+                if (allowed is None or t.name in allowed) and t.name not in deny
+                and t.name not in SHELF_TOOLS]
 
     def _needs_ask(self, tool: Tool) -> bool:
         if self.permission_mode == "auto":
@@ -2082,7 +2199,9 @@ class Agent:
                     return
                 if _chatty >= 40:
                     yield Event(kind="note", text=self._call_blurb(call, _chatty))
+                call = self._unwrap_use_tool(call)
                 yield from self._run_one(call, ask)
+                self._attach_manual_once(call)
                 # Degradation-spiral guard: a run of tool calls that all FAIL
                 # (e.g. malformed commands the model can't recover from — the
                 # garbled-git spiral, 2026-08-25) means it's stuck. End cleanly
@@ -3274,6 +3393,50 @@ class Agent:
             detail = short(next(iter(a.values()), ""))
         return f"{label}: {detail}" if detail else f"{label}…"
 
+    def _unwrap_use_tool(self, call: ToolCall) -> ToolCall:
+        """use_tool(name, args) becomes the real call, keeping the same id, so
+        every check in _run_one (permission, fence, repeat guard) applies.
+        A name the privacy mode denies, or one that isn't on the shelf,
+        becomes a call to a tool that doesn't exist — refused, never run."""
+        if call.name != "use_tool":
+            return call
+        a = call.args or {}
+        name = str(a.get("name") or "").strip()
+        args = a.get("args") or {}
+        if isinstance(args, str):
+            try:
+                args = json.loads(args)
+            except Exception:
+                args = {}
+        deny = get_privacy(self.privacy)["deny"]
+        if name not in SHELF_TOOLS or name in deny or name not in self.tools:
+            why = ("hidden in this privacy mode" if name in deny else
+                   "not a shelf tool — call belt tools directly" if name in self.tools
+                   else "unknown")
+            return ToolCall(id=call.id, name=f"use_tool:{name or '?'} ({why})", args={})
+        return ToolCall(id=call.id, name=name, args=args if isinstance(args, dict) else {})
+
+    def _attach_manual_once(self, call: ToolCall) -> None:
+        """First use of a tool this session: staple its full manual to the
+        result, so the one-line belt never leaves her guessing at the rules.
+        Appended to the newest entry, so the cached prefix is untouched."""
+        name = call.name
+        tool = self.tools.get(name)
+        if tool is None or name == "tool_help" or name in self._manuals_shown:
+            return
+        if len(tool.description) <= _ONE_LINE_MAX + 20 and all(
+                len(str((v or {}).get("description", ""))) <= _PARAM_LINE_MAX
+                for v in ((tool.parameters or {}).get("properties") or {}).values()):
+            self._manuals_shown.add(name)      # the belt line already IS the manual
+            return
+        for m in reversed(self.history):
+            if m.get("role") == "tool_result" and m.get("id") == call.id:
+                if isinstance(m.get("content"), str):
+                    m["content"] += ("\n\n---\n(First use this chat — the full manual, "
+                                     "for this and later calls:)\n" + _tool_manual(tool))
+                    self._manuals_shown.add(name)
+                return
+
     def _run_one(self, call: ToolCall, ask: Any) -> Iterator[Event]:
         tool = self.tools.get(call.name)
         if tool is None:
@@ -3497,5 +3660,16 @@ class Agent:
         if call.name == "run_command":
             self._last_run_failed = failed
 
+        # One result must not buy a minute of reading. 2026-09-30: single
+        # results of 6-9.5k tokens cost 44-75 s of prompt processing each on
+        # the 27B, and every later reply carries them. Keep both ends, cut
+        # the middle LOUDLY (silent truncation reads as "that's all there is").
+        if isinstance(result, str) and len(result) > _RESULT_CAP and call.name != "tool_help":
+            head, tail = result[:_RESULT_CAP * 3 // 4], result[-_RESULT_CAP // 4:]
+            cut = len(result) - len(head) - len(tail)
+            result = (head + f"\n\n[… {cut:,} characters cut from the middle of this "
+                      f"{call.name} result to keep the chat fast. If you need that part, "
+                      "ask for it narrowly — a line range, a search term, a smaller page. …]\n\n"
+                      + tail)
         self.history.append({"role": "tool_result", "id": call.id, "content": result})
         yield Event(kind="tool_result", tool=call.name, text=result)
