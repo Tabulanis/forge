@@ -135,7 +135,7 @@ case "${1:-big122}" in
     PORT=8087; CTX=393216; NGL=99
     # CACHE 4096->1024 (2026-09-28): the host-RAM prompt cache grew the brain to 6.6 GB
     # of HIS 30 GB over one long run and tripped memguard. One user = little reuse.
-    EXTRA="-fa on -ctk q8_0 -ctv q8_0 --reasoning-budget 1024 --spec-type draft-mtp --spec-draft-n-max 3 -np 3"; CACHE=1024 ;;
+    EXTRA="-fa on -ctk q8_0 -ctv q8_0 --reasoning-budget 1024 --spec-type draft-mtp --spec-draft-n-max 3 -np 3"; CACHE=2048 ;;   # 1024->2048 (2026-10-25, his call): her prompt state is ~1.67 GB, 1024 never fit it and every turn re-read ~19k tokens (80 s)
   big122)
     # 2026-09-05 (Void only): Qwen3.5-122B-A10B abliterated (huihui — same
     # lineage as her 27B), WITH its own eyes (mmproj). Mixture-of-experts:
