@@ -77,9 +77,12 @@ def _log_dataset(code: str, result: str) -> None:
 
 
 COMPUTE_DESCRIPTION = (
-    "Run exact math in Python and get back what it prints. USE THIS FOR ALL "
-    "physics, geometry, and numeric work — never do arithmetic or algebra in "
-    "your head; you make sign and rounding mistakes, this tool does not. "
+    "Run a Python program and get back what it prints, for numeric work the "
+    "alien_math calculator has no form for: physics, geometry, matrices, "
+    "multi-step programs. NOT for a single arithmetic, algebra, number, "
+    "calculus, date, unit or logic question - those go to alien_math only "
+    "(faster, and every answer carries a certificate; this tool has none). "
+    "Never do arithmetic or algebra in your head either. "
     "sympy is preloaded (symbols, solve, integrate, diff, Eq, Matrix, "
     "geometry: Point/Line/Circle/Triangle/Polygon, physics units: meter, "
     "second, newton, convert_to...) plus python math. Write a short program, "

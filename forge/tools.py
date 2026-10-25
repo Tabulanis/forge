@@ -36,6 +36,7 @@ from . import (audio_nerve, bioacoustics, browser, business, cad, cast, cortex,
                godot, house, knowing, medical, myrecord, news, owntools, persona, ruleout, sims,
                toolindex, vault, whereami, worklog)
 from .codetools import syntax_check
+from .alien_math import ALIEN_MATH_DESCRIPTION, run_alien_math
 from .config import load_config
 from .dataops import data_ops, date_calc
 from .mathtools import COMPUTE_DESCRIPTION, run_compute
@@ -2019,6 +2020,26 @@ def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provi
             run=run_compute,
             needs_permission=True,
             summarize=lambda a: f"compute: {a.get('code', '')[:100]}",
+        ),
+        Tool(
+            name="alien_math",
+            description=ALIEN_MATH_DESCRIPTION,
+            parameters={
+                "type": "object",
+                "properties": {
+                    "question": {"type": "string",
+                                 "description": "e.g. '2^100', 'solve x^2 - 5x + 6 = 0', 'day of week 1969-07-20', "
+                                                "'all x (p(x) -> q(x)). p(a). |- q(a).', 'x ◇ (y ◇ x) = y', 'A -> B', or plain English"},
+                    "english": {"type": "boolean",
+                                "description": "also return a CHECKED plain-English read-back of a law (slower)"},
+                    "domain": {"type": "string", "enum": ["calc", "logic", "law"],
+                               "description": "force a key; otherwise it is picked from the question"},
+                },
+                "required": ["question"],
+            },
+            run=lambda question="", english=False, domain=None: run_alien_math(str(question), bool(english), domain or None),
+            needs_permission=False,
+            summarize=lambda a: f"alien_math: {a.get('question', '')[:100]}",
         ),
         Tool(
             name="verify_case",

@@ -849,6 +849,18 @@ Check RAM before starting anything heavy: Void has 30 GB and its swap is usually
 full, so his work comes first and you unload before anything of his is disturbed.
 Neither box has passwordless sudo — anything needing root is handed to him.
 
+Know the projects. They live in ~/aidojo/current and a few beside it; the register is
+~/aidojo/PROJECTS.md, one paragraph each: what it is, where it lives, where it stands,
+what comes next. The names, so you recognise them when he says them: War Machine (the
+rhythm slasher, three.js and its Unreal port), Penpal (the game with AI characters,
+~/penpal), Fortissimo / Garden Rhythm, Hackbeat, It's The Blob, Game Empire Tycoon,
+Storyweave and holo3d-proto, Choreographer Studio (video and mocap, on the old box),
+Maker Studio, Money Lab, Ad Maker, Going Social, iPadPrint, Command Center, Alien Math
+(your calculator), Mote. When he names one, read its paragraph before answering; you
+never say you do not know a project of his. Where a game or tool can be published and
+how each place pays is ~/aidojo/shared/publishing-ideas.md: ideas he likes, flexible,
+not a plan and not an order of priority; bring it up when something is near shippable.
+
 Godot (4.7.2, on the old box at ~/bin/godot; projects under ~/gamedev). Rules learned
 the hard way on 2026-09-18, when a first pass guessed six API facts wrong:
 - Look it up before you write it. godot_docs("Class.member") is the 4.7.2 reference;
@@ -1383,11 +1395,13 @@ class Agent:
             self._ctx_used = sum(self._entry_chars(m) for m in self.history) // 3
         self._last_failed_call = None
         self._tools_ran = False
+        self._tool_names_this_turn = set()
         self._unverified_change = False
         self._last_run_failed = False
         self._tests_touched: list[str] = []
         nudged = False
         verify_nudged = False
+        truth_nudged = False
         tests_nudged = False
         red_bounces = 0
         server_retried = False
@@ -1880,6 +1894,29 @@ class Agent:
                                    "only describing earlier work, or the work genuinely "
                                    "belongs to a future message, say so plainly in one "
                                    "line and finish." + BOUNCE_TAIL,
+                    })
+                    continue
+                # The calculator gate (2026-10-24, his design): a deterministic
+                # claim - an evaluated sum, "N is prime", "the argument is valid",
+                # a day of the week, a conversion - never ships from her head.
+                # Model-free check: a claim shape AND no alien_math call this
+                # turn = one bounce to ask the calculator and restate.
+                from .alien_math import deterministic_claims
+                _claims = deterministic_claims(reply.text or "")
+                if (_claims and not truth_nudged
+                        and "alien_math" not in getattr(self, "_tool_names_this_turn", set())):
+                    truth_nudged = True
+                    self.history.append({
+                        "role": "user", "synthetic": True,
+                        "content": "Automatic harness check: that reply states "
+                                   + ", ".join(_claims)
+                                   + " with no certificate behind it"
+                                   + (" (compute is not the calculator: a Python run has no certificate)"
+                                      if "compute" in getattr(self, "_tool_names_this_turn", set()) else "")
+                                   + ". Deterministic answers are never produced in your head or in Python: call "
+                                   "alien_math with the question, then restate the "
+                                   "answer from its verdict (quote the certificate "
+                                   "in one line)." + BOUNCE_TAIL,
                     })
                     continue
                 # Changed files but never checked the result? One bounce:
@@ -3573,6 +3610,7 @@ class Agent:
 
         result = str(result)
         self._tools_ran = True
+        self._tool_names_this_turn = getattr(self, "_tool_names_this_turn", set()) | {call.name}
         self._tool_secs = getattr(self, "_tool_secs", 0.0) + (time.time() - _t_started)
         try:
             from . import forensic
