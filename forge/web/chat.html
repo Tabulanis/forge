@@ -64,6 +64,8 @@
             padding:10px 13px; }
   .msg.me.queued { opacity:.5; }   /* typed while she's busy — waiting its turn */
   .msg.bot { white-space:pre-wrap; }
+  .msg.friday { white-space:pre-wrap; background:#2a2440; border-left:3px solid #f2b818; border-radius:14px 14px 14px 4px; padding:9px 12px; }
+  .msg.friday .who { display:block; font-size:12px; font-weight:600; color:#f2b818; margin-bottom:2px; }
   .msg.bot code { background:#0d0f16; padding:2px 5px; border-radius:4px; font-size:13px; }
   .msg.bot pre { background:#0d0f16; padding:10px; border-radius:8px; overflow-x:auto;
                  font-size:12.5px; border:1px solid var(--line); }
@@ -579,6 +581,7 @@ function render(e) {
     imagePaths(e.text).forEach(showImage); videoPaths(e.text).forEach(showVideo);
   }
   else if (e.kind === 'error')  { endStream(); el('err', esc(e.text)); }
+  else if (e.kind === 'note' && e.from === 'Friday') el('msg friday', '<span class="who">Friday</span>' + esc(String(e.text || '').replace(/^Friday:\s*/, '')));
   else if (e.kind === 'note')   el('note', esc(e.text));
   else if (e.kind === 'progress') {
     const pct = Math.max(0, Math.min(100, parseInt(e.summary || '0', 10) || 0));

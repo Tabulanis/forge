@@ -2042,6 +2042,25 @@ def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provi
             summarize=lambda a: f"alien_math: {a.get('question', '')[:100]}",
         ),
         Tool(
+            name="friday",
+            description=("Hand a SMALL job to Friday, your comms assistant, and keep working. She answers in his chat "
+                         "for you. kind='tell': a short message for him right now (a progress update, an ETA, "
+                         "'need your eyes on X when you're back') without ending your turn. kind='remind': "
+                         "'<minutes> <what>', she reminds him then. kind='note': she jots it in her notes file. "
+                         "Use it for quick updates on long jobs; it is not a way to ask HIM questions."),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "kind": {"type": "string", "enum": ["tell", "remind", "note"]},
+                    "text": {"type": "string", "description": "what to say / '<minutes> <what>' / the note"},
+                },
+                "required": ["kind", "text"],
+            },
+            run=lambda kind="tell", text="": _friday(kind, text),
+            needs_permission=False,
+            summarize=lambda a: f"friday ({a.get('kind', 'tell')}): {a.get('text', '')[:100]}",
+        ),
+        Tool(
             name="verify_case",
             description="Verify a court case EXISTS before you cite it. Searches the "
                         "CourtListener/Free Law Project US case database. Returns the real "
@@ -3673,3 +3692,14 @@ def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provi
     # offered by find_tools as if they had to be fetched.
     _INDEX_REGISTRY.update({t.name: t for t in _built if t.name not in _META})
     return _built
+
+def _friday(kind: str, text: str) -> str:
+    """Friday (127.0.0.1:8097, ~/aidojo/shared/friday): Merge's comms assistant does the small job."""
+    import json as _j, urllib.request as _u
+    try:
+        req = _u.Request("http://127.0.0.1:8097/merge", data=_j.dumps({"kind": kind, "text": text}).encode(),
+                         headers={"content-type": "application/json"})
+        with _u.urlopen(req, timeout=15) as r:
+            return _j.load(r).get("reply") or "Friday didn't say."
+    except Exception as e:
+        return f"Friday isn't running ({e.__class__.__name__}); tell him yourself in your reply."

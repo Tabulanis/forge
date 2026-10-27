@@ -16,6 +16,7 @@ import time
 import asyncio
 import json
 import queue
+import re
 import secrets
 import threading
 from pathlib import Path
@@ -254,6 +255,18 @@ def chat(spec: ChatSpec):
     sess.agent.privacy = _priv                               # privacy axis (tools + prompt)
     sess.ephemeral = sess.agent.ephemeral                    # gate all persistence
     sess.emit("user", {"text": spec.message})
+    # "Friday, ..." is for Friday, Merge's comms assistant: answered in this chat, no Merge turn.
+    # If Friday isn't up, the message goes to Merge as before.
+    # And while Merge is mid-run, Friday takes what he types: small jobs she does, the rest she holds and hands to
+    # Merge when Merge is free. Friday's own hand-over (env "friday") always goes straight to Merge.
+    to_friday = re.match(r"\s*(hey |ok |oi )?friday\b", spec.message, re.I)
+    merge_busy = sess.busy or STORE.busy_count(exclude=sess.id)
+    merge_down = not _merge_reachable()
+    if (to_friday or merge_busy or merge_down) and (spec.env or "").strip() != "friday":
+        reply = _ask_friday(sess.id, spec.message, busy=bool((merge_busy or merge_down) and not to_friday), down=merge_down)
+        if reply:
+            sess.emit("note", {"text": f"Friday: {reply[:800]}", "from": "Friday"})
+            return {"session": sess.id, "workspace": str(sess.workspace), "model": "friday"}
     # She runs one request at a time. If another chat is mid-turn, this one
     # will wait its turn on the model — say so, so a queue doesn't read as a hang.
     if not sess.busy and STORE.busy_count(exclude=sess.id):
@@ -264,6 +277,53 @@ def chat(spec: ChatSpec):
                      daemon=True).start()
     return {"session": sess.id, "workspace": str(sess.workspace),
             "model": sess.model_name}
+
+
+class NoteSpec(BaseModel):
+    session: str
+    text: str
+    who: str = "Friday"
+
+
+@app.post("/api/note", dependencies=[Depends(require_token)])
+def note(spec: NoteSpec):
+    """A note from a helper (Friday, Merge's comms assistant) shown in the same chat and session, without
+    starting a turn: she tells him what Merge is up to when Merge has been busy a while."""
+    sess = STORE.get(spec.session)
+    if not sess:
+        STORE.rescan()
+        sess = STORE.get(spec.session)
+    if not sess:
+        raise HTTPException(404, "No such session")
+    sess.emit("note", {"text": f"{spec.who[:20]}: {spec.text[:800]}", "from": spec.who[:20]})
+    return {"ok": True}
+
+
+_REACH = {"t": 0.0, "ok": True}
+
+
+def _merge_reachable() -> bool:
+    """Is Merge's model answering? (health(), cached 10 s so a chat message never waits on it)"""
+    if time.time() - _REACH["t"] > 10:
+        try:
+            _REACH["ok"] = bool(health().get("reachable"))
+        except Exception:
+            _REACH["ok"] = False
+        _REACH["t"] = time.time()
+    return _REACH["ok"]
+
+
+def _ask_friday(session_id: str, message: str, busy: bool = False, down: bool = False):
+    """'Friday, ...' (or anything typed while Merge is mid-run: busy=True) goes to Friday (127.0.0.1:8097).
+    None if Friday isn't there, and the message goes to Merge as before."""
+    import urllib.request as _u
+    try:
+        req = _u.Request("http://127.0.0.1:8097/chat", data=json.dumps({"session": session_id, "text": message, "busy": busy, "down": down}).encode(),
+                         headers={"content-type": "application/json"})
+        with _u.urlopen(req, timeout=25) as r:
+            return (json.load(r).get("reply") or "").strip() or None
+    except Exception:
+        return None
 
 
 @app.get("/api/stream/{session_id}", dependencies=[Depends(require_token)])
