@@ -31,6 +31,71 @@ DEFAULT_CONFIG: dict[str, Any] = {
     # nothing reachable from a tablet can change it.
     "kid_mode": False,
 
+    # 2026-10-27: park her chat's brain state on disk after each turn and read
+    # it back in seconds when the slot lost it (forge/park.py). Needs the brain
+    # started with --slot-save-path. `park: false` (or `slots: false`) = off.
+    "park": True,
+
+    # 2026-10-27: rolling memory (forge/fold.py). Between turns, when the
+    # verbatim window passes fold_window_tokens, the oldest complete turns are
+    # folded into ONE running-summary message right after the system prompt,
+    # which only ever grows by appended lines, so the prompt cache holds. While
+    # on, the old 70% from-scratch compaction does not run (the emergency path
+    # after a server refusal stays). `fold: false` = the old behaviour, untouched.
+    # The numbers are GUESSES (DESIGN.md) until measured on real chats.
+    # 2026-10-28: the prompt front (system text, reasoning-effort line, tool list)
+    # is the same in every mode, so a mode switch keeps the prompt cache. A mode's
+    # lighter toolset becomes a one-line hint in the user message. false = old.
+    "fixed_belt": True,
+    # 2026-10-28 (kitchen A): the fold runs at IDLE now (after a turn, before
+    # park_save), and the brain's cache is re-warmed in the background right
+    # after — the re-read a fold causes is paid while he is away, not at the
+    # top of his next message ("say ok" had taken 176 s that way).
+    "fold": True,
+    # 2026-10-30 (prime): at idle, after the turn and any fold, her chat slot
+    # is left holding the chat rendered EXACTLY as the next turn will render
+    # it, with nothing generated after it (agent.prime_now), then parked. The
+    # brain is hybrid: it reuses a cached prefix only when the new prompt
+    # extends it exactly, and a slot restored from disk has no checkpoints to
+    # roll back to — so the raw reply left in the slot cost a ~47k re-read.
+    # This replaces the idle warm. false = the old warm (after a fold only).
+    "prime_at_idle": True,
+    "fold_window_tokens": 20000,   # GUESSED: window size that triggers a fold
+    "fold_keep_tokens": 10000,     # GUESSED: window left after a fold (folds stay rare)
+    "summary_cap_tokens": 12000,   # 2026-10-28: was 8000; shrinks now deep and rare
+    "fold_pin_turns": 6,           # GUESSED: newest real turns never folded
+    # 2026-10-28 (kitchen A): fold rent — a fold that would free fewer tokens
+    # than this is skipped silently (it would cost a summary+window re-read
+    # for nearly nothing; today one freed 1,991 and cost a 30,514-token read).
+    "fold_min_free_tokens": 6000,
+    # 2026-10-28 (kitchen B): the VIP lane — a chat-shaped question typed
+    # while she is mid-task is answered at once on the helpers slot (a cook
+    # who talks while chopping); a work message still queues, with a heads-up
+    # in the nudge inbox so she sees it between steps. false = the old
+    # behaviour: everything typed while busy just waits for Friday/the queue.
+    "vip_lane": True,
+    # 2026-10-31 (faster side lane): the side prompt carries at most this many
+    # chars of the running summary (its TAIL), 3 recent exchanges of 800 chars,
+    # and a 120-token answer. Measured before: a 7,396-token side prompt took
+    # 57 s while the main turn generated; target is ~2,000 tokens, and the
+    # part before his question is frozen per main turn so the brain's "side"
+    # slot re-reads only the question the second time.
+    "side_summary_chars": 4000,
+    # 2026-10-31 (done-check): a project says what "done" means with an
+    # executable FORGE-DONE.sh at its git root (its own test run). These repo
+    # roots are watched: at the end of a WORK turn, any one of them whose HEAD
+    # or working tree changed during the turn has its script run, and a
+    # failure is written under her reply by the harness — her words cannot
+    # paper over it (twice she committed code that broke the project's tests
+    # after checking only the file she touched). Watched by repo, not by chat
+    # workspace: she edits Swarm from a chat whose workspace is DeepNPC.
+    "done_repos": ["~/aidojo/current/Swarm", "~/aidojo/current/DeepNPC"],
+    "done_check_timeout": 180,     # seconds one FORGE-DONE.sh may take
+    # 2026-10-31: the biggest command/content one tool call may carry. One
+    # 117,743-char call was cut off by the token cap and the turn was lost;
+    # over this the tool refuses and says to write in parts. 0 = off.
+    "tool_arg_max_chars": 8000,
+
     # Named model configs. Add as many as you like — local ones get a
     # base_url pointing at whatever's serving them.
     "models": {

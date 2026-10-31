@@ -252,7 +252,8 @@ def print_events(sess: Session, message: str) -> None:
                                   "[cyan]merge on[/cyan]  "
                                   "[dim]or run[/dim] [cyan]/doctor[/cyan]")
             elif ev.kind == "done":
-                sess.emit("done", {"usage": ev.usage or {}})
+                sess.emit("done", {"usage": ev.usage or {},
+                                   "done_check": getattr(ev, "done_check", "") or "none"})
                 u = ev.usage or {}
                 if u.get("input_tokens") or u.get("output_tokens"):
                     console.print(

@@ -168,10 +168,18 @@ def find_tools(query: str, registry: dict, limit: int = 8) -> str:
                 "datasets, markets, law, medicine, CAD, audio, animal calls, "
                 "your life-archive, credentials, personality.")
     scored.sort(key=lambda x: (-x[0], x[1]))
-    out = [f"Tools matching '{query}' — all of these are already on your belt, "
-           f"just call one:"]
+    # Not everything is on the belt any more (2026-09-30 shelf, doubled
+    # 2026-10-27). Telling her "just call one" for a shelf tool sent her to a
+    # name her belt does not show; mark those with the way to reach them.
+    try:
+        from .agent import SHELF_TOOLS as _shelf
+    except Exception:
+        _shelf = frozenset()
+    out = [f"Tools matching '{query}' — call belt tools directly; ones marked "
+           f"[shelf] run through use_tool(name, args):"]
     for _, name, tool in scored[:limit]:
-        out.append(f"  {name} — {_summarize(tool.description, 100)}")
+        tag = "  [shelf]" if name in _shelf else ""
+        out.append(f"  {name} — {_summarize(tool.description, 100)}{tag}")
     return "\n".join(out)
 
 

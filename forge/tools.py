@@ -80,6 +80,28 @@ MAX_OUTPUT_CHARS = 120_000    # same, for command output
 # CONTEXT rather than the disk.
 READ_WINDOW_CHARS = 90_000
 DEFAULT_TIMEOUT = 120
+# 2026-10-31: the most a single command/content argument may carry. Config
+# `tool_arg_max_chars` overrides; this is the fallback when the key is absent.
+# One write_file call of 117,743 chars was cut off by the token cap and the
+# whole turn was lost — the model does not learn from being asked, so the tool
+# refuses instead. The cut-off handler in agent.py ("cut off after N
+# characters") still covers the case where the JSON never parsed at all.
+TOOL_ARG_MAX_CHARS = 8000
+
+
+def _too_big(text: str) -> str | None:
+    """The refusal for an oversized argument, or None when it fits."""
+    try:
+        cap = int((load_config() or {}).get("tool_arg_max_chars", TOOL_ARG_MAX_CHARS))
+    except Exception:
+        cap = TOOL_ARG_MAX_CHARS
+    n = len(text or "")
+    if cap <= 0 or n <= cap:
+        return None
+    return (f"Error: too big ({n} chars, max {cap}): write the file in parts "
+            f"(first half ending at a line break, then append the rest with "
+            f"edit_file: replace the last line with itself plus the next part), "
+            f"or split the command.")
 
 
 # ---- headless-browser tool helpers (see browser.py) --------------------
@@ -175,10 +197,12 @@ def _librarian_compact(notes: list[str], cap: int) -> list[str] | None:
     out = None
     for base in bases:
         try:
+            from .providers import slot_kw   # off her chat's slot (2026-10-27)
             r = httpx.post(f"{base}/chat/completions",
                            json={"messages": [{"role": "user", "content": prompt}],
                                  "max_tokens": 1500, "temperature": 0.2,
-                                 "chat_template_kwargs": {"enable_thinking": False}},
+                                 "chat_template_kwargs": {"enable_thinking": False},
+                                 **slot_kw(base, "helpers")},
                            timeout=180)
             if r.status_code != 200:
                 continue
@@ -1379,6 +1403,8 @@ def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provi
         return None
 
     def write_file(path: str, content: str) -> str:
+        if (big := _too_big(content)):
+            return big
         f = ws.resolve(path)
         if (refusal := _refuse_protected(f)):
             return refusal
@@ -1413,6 +1439,8 @@ def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provi
         return f"Restored {ws.rel(f)} from backup (undo again to redo)."
 
     def edit_file(path: str, old: str, new: str, replace_all: bool = False) -> str:
+        if (big := (_too_big(old) or _too_big(new))):
+            return big
         f = ws.resolve(path)
         if (refusal := _refuse_protected(f)):
             return refusal
@@ -1674,6 +1702,8 @@ def build_tools(ws: Workspace, fenced: bool = False, session_id: str = "", provi
         return _run_scout(mission, provider, SCOUT_STEPS)
 
     def run_command(command: str, timeout: int = DEFAULT_TIMEOUT) -> str:
+        if (big := _too_big(command)):
+            return big
         blocked = _machine_killer(command)
         if blocked:
             return (f"Error: blocked — {blocked}. This command could damage the "

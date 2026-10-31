@@ -29,7 +29,7 @@ import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import recall
+from . import park, recall
 from .agent import Agent
 from .config import active_model_config, load_config
 from .media import load_media_config
@@ -103,6 +103,54 @@ class PendingPermission:
     allowed: bool = False
 
 
+# ---- the side lane's prompt front (2026-10-31) ------------------------------
+SIDE_SUMMARY_CHARS = 4000     # config `side_summary_chars`
+SIDE_EXCHANGES = 3            # recent user/assistant entries carried
+SIDE_EXCHANGE_CHARS = 800     # chars kept of each
+SIDE_MAX_TOKENS = 120         # the answer is a short paragraph
+
+
+def side_prefix_msgs(history: list[dict], current: str = "") -> list[dict]:
+    """Everything in the side prompt BEFORE his question: the tail of the
+    running summary (history[0] when it carries fold.SUMMARY_MARKER), capped
+    at side_summary_chars, then the last SIDE_EXCHANGES real user/assistant
+    entries at SIDE_EXCHANGE_CHARS each, then `current` — the message the
+    main turn is working on right now (it is not in history yet when the
+    turn-start snapshot is taken; without it "how's it going?" was answered
+    blind to the job). Tool entries are skipped on purpose (a bare tool
+    message upsets the chat template). Built from one history snapshot, so
+    two side questions in the same turn share the same bytes and the brain's
+    side slot re-reads only the question (measured 2026-10-31: 7,396 tokens
+    read from cold in 41 s; target ~2,000, mostly cached)."""
+    from .fold import SUMMARY_MARKER
+    try:
+        cap = int((load_config() or {}).get("side_summary_chars", SIDE_SUMMARY_CHARS))
+    except Exception:
+        cap = SIDE_SUMMARY_CHARS
+    hist = list(history)
+    msgs: list[dict] = []
+    if hist and hist[0].get("synthetic") and \
+            str(hist[0].get("content", "")).startswith(SUMMARY_MARKER):
+        body = str(hist[0]["content"])
+        if len(body) > cap:
+            # Keep the newest lines: the summary only ever grows by appended
+            # lines, so the tail is the recent part.
+            tail = body[-cap:]
+            tail = tail[tail.find("\n") + 1:] if "\n" in tail else tail
+            body = SUMMARY_MARKER + " (older part omitted)\n" + tail
+        msgs.append({"role": "user", "content": body})
+        hist = hist[1:]
+    talk = [m for m in hist if m.get("role") in ("user", "assistant")
+            and str(m.get("content") or "").strip()]
+    for m in talk[-SIDE_EXCHANGES:]:
+        msgs.append({"role": m["role"],
+                     "content": str(m.get("content"))[:SIDE_EXCHANGE_CHARS]})
+    if (current or "").strip():
+        msgs.append({"role": "user", "content": "(What I am working on now) "
+                     + str(current).strip()[:SIDE_EXCHANGE_CHARS]})
+    return msgs
+
+
 def _project_tools(ws, reserved=None) -> list:
     got, notes = _load_project_tools(ws, reserved=reserved)
     for n in notes:
@@ -132,6 +180,20 @@ class Session:
         # Messages typed while she's mid-turn wait here (she works one at a
         # time) and run in order when she frees up, instead of being dropped.
         self.queued: list[str] = []
+        # 2026-10-27: queued messages only land after the turn; a stuck turn
+        # needs a word between steps. A helper's nudge (POST /api/nudge) waits
+        # here and the agent reads it before its next model call.
+        self.nudges: list[str] = []
+        # 2026-10-28 (kitchen B): side-lane Q/A — his quick questions answered
+        # on the helpers slot while a turn runs (server._vip_side_answer).
+        # Held here, then drained into her real history once the turn is over
+        # (drain_side_exchanges) so she remembers what was said on the side.
+        self.side_exchanges: list[tuple[str, str]] = []
+        # 2026-10-31: the side prompt's frozen front — summary tail + recent
+        # exchanges as they stood when the main turn started (side_prefix_msgs).
+        # Byte-identical for every side question within one turn, so the
+        # brain's "side" slot reuses its cache. None = build from live history.
+        self.side_prefix: list[dict] | None = None
         # Set when a permission request times out unanswered: nobody is
         # watching this session right now, so further asks this message
         # auto-refuse instantly instead of stacking five-minute waits.
@@ -200,6 +262,73 @@ class Session:
         self.agent.workspace_root = ws.root
         # so the flight recorder files a turn under the right session
         self.agent.session_id = self.id
+        self.agent.nudge_source = self.take_nudges
+        # The idle prime runs in _prime_and_park (after the side-lane drain,
+        # right before park_save), not in the agent's own idle step.
+        self.agent.prime_deferred = True
+
+    def _prime_and_park(self, still) -> None:
+        """After a turn, off its thread (2026-10-30): prime her chat slot to
+        the chat as the next turn will render it (agent.prime_now) — only if
+        this chat is still the slot's last user — then park it on disk.
+        `still()` False (a new turn here began) skips both."""
+        try:
+            if park.holds(self.id) and self.agent._prime_on():
+                self.agent.prime_now(still=still)
+        except Exception:
+            pass               # a failed prime must never cost the park
+        if not self.ephemeral:
+            park.park_save(self.id, self.ephemeral, still_mine=still)
+
+    def nudge(self, text: str) -> str | None:
+        """Leave a word for the RUNNING turn (read between steps). None if
+        taken, else why not. Never starts a turn."""
+        with self.lock:
+            if not self.busy:
+                return "not busy"
+            if len(self.nudges) >= 3:
+                return "3 nudges already pending"
+            self.nudges.append(text[:400])
+            return None
+
+    def take_nudges(self) -> list[str]:
+        """Everything nudged since the last step, emptied (the agent calls this)."""
+        with self.lock:
+            out, self.nudges = self.nudges, []
+            return out
+
+    def record_side_exchange(self, q: str, a: str) -> None:
+        """One answered side-lane Q/A (2026-10-28, kitchen B), held until a
+        drain folds it into history. The side thread calls this."""
+        with self.lock:
+            self.side_exchanges.append((q, a))
+
+    def drain_side_exchanges(self) -> None:
+        """Fold the side-lane Q/A into her REAL history (2026-10-28, kitchen
+        B), as synthetic user/assistant turns — the superego bounce's pattern
+        — so she remembers the exchange and the fold machinery treats it like
+        anything else. Only called with no model call in flight: at the start
+        of a turn (exchanges answered while ANOTHER session held the brain)
+        and at a turn's end before `busy` clears (so no new turn can race the
+        append). The whole drain holds the session lock."""
+        with self.lock:
+            for q, a in self.side_exchanges:
+                self.agent.history.append({
+                    "role": "user", "synthetic": True,
+                    "content": "(Side lane, answered while the main task "
+                               "ran) He said: " + q})
+                self.agent.history.append({"role": "assistant", "content": a})
+            self.side_exchanges = []
+
+    def snapshot_side_prefix(self, current: str = "") -> None:
+        """Freeze the side prompt's front for the coming/just-ended turn
+        (2026-10-31). At a turn's start `current` is the message the turn is
+        about to work on (the agent appends it to history only once it runs,
+        so it would otherwise be missing). Never raises."""
+        try:
+            self.side_prefix = side_prefix_msgs(list(self.agent.history), current)
+        except Exception:
+            self.side_prefix = None
 
     def reload_model(self, cfg: dict) -> None:
         """Swap the model but keep the conversation."""
@@ -307,6 +436,7 @@ class Session:
         self.agent.stop_requested = True
         with self.lock:
             self.queued.clear()   # Stop means stop — don't fire what was waiting.
+            self.nudges.clear()
         req = self.pending
         if req:
             req.allowed = False
@@ -372,8 +502,18 @@ class Session:
                     + " and runs the moment she's free.")})
                 return
             self.busy = True
+            # 2026-10-27: numbered, so a parked save still running from the last
+            # turn knows to skip once this one has started (forge/park.py).
+            self._turn_no = getattr(self, "_turn_no", 0) + 1
         self.unattended = False   # someone just typed — they're watching again
         self.last_used = time.time()
+        # 2026-10-28 (kitchen B): side-lane answers given while the brain was
+        # busy on ANOTHER session's turn land here, before this turn's
+        # message, in the order he lived them.
+        self.drain_side_exchanges()
+        # 2026-10-31: freeze the side lane's prompt front for this turn — the
+        # history as it stands plus the message this turn is about to work on.
+        self.snapshot_side_prefix(text)
         final_text = ""
         # Stream the reply live: batch tokens into ~18-char pieces (so the log
         # doesn't fill with hundreds of one-token events) and emit them as
@@ -387,6 +527,13 @@ class Session:
                 self.emit("text_delta", {"text": delta_buf[0]})
                 delta_buf[0] = ""
 
+        # Her chat's memory, parked on disk after the last turn (2026-10-27):
+        # if the brain's chat slot lost it, read it back in seconds instead of
+        # re-reading the whole chat. A note, so All shows it and Chat hides it.
+        back = park.begin_turn(self.id, self.ephemeral)
+        if back:
+            self.emit("note", {"text": f"restored this chat's memory from disk "
+                                       f"({back['n']:,} tokens, {back['s']:.1f} s)"})
         done_seen = False
         try:
             for ev in self.agent.run(text, ask=self.ask_permission,
@@ -410,7 +557,10 @@ class Session:
                 elif ev.kind == "error":
                     self.emit("error", {"text": ev.text})
                 elif ev.kind == "done":
-                    self.emit("done", {"usage": ev.usage or {}})
+                    # done_check (2026-10-31): the project done-check's verdict
+                    # for this turn, on the log entry — none/passed/failed.
+                    self.emit("done", {"usage": ev.usage or {},
+                                       "done_check": getattr(ev, "done_check", "") or "none"})
         except Exception as e:
             self.emit("error", {"text": f"{type(e).__name__}: {e}"})
         finally:
@@ -419,13 +569,28 @@ class Session:
             # 2026-08-18: a mid-turn HTTP 400 left the UI hanging).
             if not done_seen:
                 self.emit("done", {"usage": {}})
+            # 2026-10-28 (kitchen B): the turn is over, its idle fold has run
+            # and no model call is in flight — drain the side-lane Q/A into
+            # history NOW, before `busy` clears (no new turn can race the
+            # append) and before save() and park_save read the history.
+            self.drain_side_exchanges()
+            self.snapshot_side_prefix()   # refreshed: the next turn's front
             self.busy = False
+            self.nudges.clear()   # a nudge is for the turn it arrived in
             self.last_used = time.time()
             # Off the record: no session file, no memory card — nothing recorded.
             if not self.ephemeral:
                 self.save()
                 # the librarian files an index card in the background
                 recall.remember_turn(text, final_text, str(self.workspace), self.id)
+            # Park her chat slot on disk (2026-10-27, forge/park.py), off this
+            # thread; skipped if a new turn here has started first. Primed
+            # first (2026-10-30, agent.prime_now): the parked file then holds
+            # the chat as the next turn renders it, so a restore is followed
+            # by reading only the new message. Off the record: prime, no park.
+            _no = self._turn_no
+            threading.Thread(target=self._prime_and_park, daemon=True, args=(
+                lambda: not self.busy and getattr(self, "_turn_no", 0) == _no,)).start()
             # Anything typed while she was busy runs now, in the order it came.
             nxt = None
             with self.lock:

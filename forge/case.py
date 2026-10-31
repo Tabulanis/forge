@@ -619,9 +619,11 @@ def scout_review(root, case: dict, provider, limit_chars: int = 5000, only_prior
         digest = (f"SYMPTOM: {case.get('symptom', '')[:300]}\n\nCOMMIT {q['hash']} — {q['subject']}\n"
                   f"platform-defined keys touched: {', '.join(q.get('platform') or []) or 'none'}\n\nDIFF:\n{diff[:limit_chars]}")
         try:
+            from .providers import slot_kw
             body = {"chat_template_kwargs": {"enable_thinking": True}, "temperature": 0.0, "top_k": 1,
                     "seed": 20260929, "max_tokens": 700}
-            raw = (provider.complete(SCOUT_SYSTEM, [{"role": "user", "content": digest}], [], extra_body=body).text or "")
+            raw = (provider.complete(SCOUT_SYSTEM, [{"role": "user", "content": digest}], [], extra_body=body,
+                                     **slot_kw(provider, "helpers")).text or "")   # off her chat slot
         except Exception:
             continue
         n += 1

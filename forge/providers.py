@@ -27,6 +27,73 @@ from typing import Any
 READ_SPEED: dict = {"tps": None}
 
 
+# 2026-10-27: SLOTS. The reviewer's 300-token calls were landing on her chat's
+# slot. llama-server runs her brain with -np 3 and gives a prompt that matches
+# no slot to the least-recently-used one — which was hers, so it was evicted.
+# Her chat state is ~7.6 GB and --cache-ram is 2 GB, so it can never be parked
+# and comes back only by re-reading 36k-65k tokens (200-380 s). Measured in the
+# day's log: 7 of 8 full re-reads came right after a 135-532-token review on
+# the same slot. So each job gets its own slot by id ("id_slot" in the body).
+# Only for the server her chat runs on, and only when that server says it has
+# enough slots — a 1-slot server errors on an id it does not have, so it gets
+# nothing and behaves exactly as before. config.yaml `slots:` overrides the
+# ids; `slots: false` turns this off.
+# 2026-10-31: the side lane (server._vip_side_answer) gets slot 2 to itself
+# as "side": it is the only job that runs WHILE a turn runs, and its prompt
+# front is frozen per turn so the slot's cache answers the second question by
+# reading only the question. The helpers (steer every 6 steps, the librarian,
+# the fold summarizer, the advocate) move onto the reviewer's slot 1 — all of
+# them run on her own thread, one at a time, never concurrently with the
+# reviewer, and none depends on a cached prefix beyond a short system prompt.
+SLOT_DEFAULTS = {"chat": 0, "reviewer": 1, "helpers": 1, "side": 2}
+_SLOT_COUNT: dict = {}     # server root -> how many slots its /slots listed
+
+
+def _root(base_url: str) -> str:
+    u = (base_url or "").rstrip("/")
+    return u[:-3] if u.endswith("/v1") else u
+
+
+def slot_for(base_url: str, role: str) -> int | None:
+    """The slot id for this job on this server, or None to send nothing."""
+    try:
+        from .config import active_model_config, load_config
+        cfg = load_config()
+        conf = cfg.get("slots", {})
+        if conf is False:
+            return None
+        ids = {**SLOT_DEFAULTS, **(conf if isinstance(conf, dict) else {})}
+        brain = active_model_config(cfg).get("base_url", "")
+    except BaseException:          # active_model_config raises SystemExit
+        return None
+    root = _root(base_url)
+    if role not in ids or _root(brain) != root:
+        return None
+    if root not in _SLOT_COUNT:
+        try:
+            import httpx
+            r = httpx.get(f"{root}/slots", timeout=3.0)
+            d = r.json() if r.status_code == 200 else []
+            _SLOT_COUNT[root] = len(d) if isinstance(d, list) else 0
+        except Exception:
+            return None            # not cached: ask again next call
+    n = _SLOT_COUNT[root]
+    try:
+        want = [int(v) for v in ids.values()]
+        return int(ids[role]) if n >= 3 and n > max(want) else None
+    except (TypeError, ValueError):
+        return None
+
+
+def slot_kw(prov, role: str) -> dict:
+    """{"id_slot": n} for prov.complete() (or a raw request body, given a
+    base_url string), or {} — so providers and test fakes that know nothing
+    about slots are called exactly as before."""
+    url = prov if isinstance(prov, str) else getattr(prov, "base_url", None)
+    n = slot_for(url, role) if isinstance(url, str) else None
+    return {} if n is None else {"id_slot": n}
+
+
 def note_read_speed(timings: dict) -> None:
     n, tps = timings.get("prompt_n") or 0, timings.get("prompt_per_second")
     if tps and n >= 500:
@@ -291,7 +358,7 @@ class OpenAICompatProvider(Provider):
     def complete(self, system: str, messages: list[dict], tools: list[dict],
                  grammar: str | None = None,
                  extra_body: dict | None = None,
-                 on_delta=None) -> Reply:
+                 on_delta=None, id_slot: int | None = None) -> Reply:
         """
         `grammar` is a llama.cpp GBNF grammar. When given, the server can only
         emit text the grammar allows — a small model that would otherwise
@@ -299,6 +366,41 @@ class OpenAICompatProvider(Provider):
         the single most useful trick for getting reliable structured answers
         out of a local model, and it has no equivalent in the hosted APIs.
         """
+        body: dict[str, Any] = {"model": self.model,
+                                **self._chat_body(system, messages, tools),
+                                "max_tokens": self.max_tokens}
+        if grammar:
+            body["grammar"] = grammar
+        if extra_body:
+            # e.g. {"chat_template_kwargs": {"enable_thinking": False}} — lets a
+            # caller skip the reasoning phase for pure-judgment/describe tasks.
+            body.update(extra_body)
+
+        # Always stream — whether or not anyone is watching. Streaming is what
+        # makes the timeout a silence timeout instead of a whole-call cap (see
+        # __init__). No callback → a no-op one; the Reply comes out the same.
+        if on_delta is None:
+            on_delta = lambda _text: None
+        body["stream"] = True
+        body["stream_options"] = {"include_usage": True}
+        if id_slot is None:
+            return self._stream(body, on_delta)
+        # Pinned to a slot (see SLOT_DEFAULTS). If the server refuses it — it
+        # was restarted with fewer slots since we counted — forget the count
+        # and send the call once more the old way, unpinned.
+        body["id_slot"] = int(id_slot)
+        try:
+            return self._stream(body, on_delta)
+        except RuntimeError as e:
+            if "HTTP 4" not in str(e):
+                raise
+            _SLOT_COUNT.pop(_root(self.base_url), None)
+            body.pop("id_slot", None)
+            return self._stream(body, on_delta)
+
+    def _chat_body(self, system: str, messages: list[dict], tools: list[dict]) -> dict:
+        """The messages + tools of a chat request exactly as complete() sends
+        them — one place, so prime() renders the very same prompt (2026-10-30)."""
         payload = [{"role": "system", "content": system}]
         for m in messages:
             if m["role"] == "tool_result":
@@ -318,13 +420,7 @@ class OpenAICompatProvider(Provider):
             else:
                 payload.append({"role": m["role"], "content": m["content"]})
 
-        body: dict[str, Any] = {
-            "model": self.model,
-            "messages": payload,
-            "max_tokens": self.max_tokens,
-        }
-        if grammar:
-            body["grammar"] = grammar
+        body: dict[str, Any] = {"messages": payload}
         if tools:
             body["tools"] = [{
                 "type": "function",
@@ -334,19 +430,60 @@ class OpenAICompatProvider(Provider):
                     "parameters": t["parameters"],
                 },
             } for t in tools]
-        if extra_body:
-            # e.g. {"chat_template_kwargs": {"enable_thinking": False}} — lets a
-            # caller skip the reasoning phase for pure-judgment/describe tasks.
-            body.update(extra_body)
+        return body
 
-        # Always stream — whether or not anyone is watching. Streaming is what
-        # makes the timeout a silence timeout instead of a whole-call cap (see
-        # __init__). No callback → a no-op one; the Reply comes out the same.
-        if on_delta is None:
-            on_delta = lambda _text: None
-        body["stream"] = True
-        body["stream_options"] = {"include_usage": True}
-        return self._stream(body, on_delta)
+    # A user message no real chat contains: rendering the chat with it and
+    # without it shows where the next turn's prompt starts to differ.
+    _PRIME_PROBE = "\u2063forge-prime-probe\u2063"
+
+    def prime_text(self, system: str, messages: list[dict], tools: list[dict],
+                   template_kwargs: dict) -> str:
+        """The chat rendered EXACTLY as the next turn's request will render it,
+        up to and including the last message, with NO generation prompt
+        (2026-10-30). Two /apply-template renders on the server's own template:
+        the chat as-is (which ends in a generation prompt) and the chat plus a
+        probe user message. Their common prefix is everything the next turn
+        shares with what the slot holds; it is checked to end within a short
+        tail of the first render and before the probe. Raises on any doubt."""
+        import httpx
+        import os as _os
+        base = self._chat_body(system, messages, tools)
+        root = _root(self.base_url)
+
+        def render(msgs):
+            r = httpx.post(f"{root}/apply-template", timeout=60.0,
+                           json={**base, "messages": msgs,
+                                 "chat_template_kwargs": template_kwargs})
+            if r.status_code != 200:
+                raise RuntimeError(f"apply-template HTTP {r.status_code}: {r.text[:200]}")
+            return r.json()["prompt"]
+
+        r0 = render(base["messages"])
+        r1 = render(base["messages"] + [{"role": "user", "content": self._PRIME_PROBE}])
+        text = _os.path.commonprefix([r0, r1])
+        if len(r0) - len(text) > 200 or self._PRIME_PROBE not in r1[len(text):]:
+            raise RuntimeError(f"no clean prefix (r0 {len(r0)}, r1 {len(r1)}, common {len(text)})")
+        return text
+
+    def prime(self, system: str, messages: list[dict], tools: list[dict],
+              template_kwargs: dict, id_slot: int, still=lambda: True) -> dict | None:
+        """Leave `id_slot` holding exactly prime_text() — nothing generated —
+        so the next turn's prompt EXTENDS the cached tokens and a hybrid
+        model reuses them even after a restore from disk (which has no
+        checkpoints to roll back to). Returns the server's timings, or None
+        when `still()` says a new turn began meanwhile."""
+        import httpx
+        text = self.prime_text(system, messages, tools, template_kwargs)
+        if not still():
+            return None
+        r = httpx.post(f"{_root(self.base_url)}/completion", timeout=1800.0,
+                       json={"prompt": text, "n_predict": 0, "cache_prompt": True,
+                             "id_slot": int(id_slot), "stream": False})
+        if r.status_code != 200:
+            raise RuntimeError(f"completion HTTP {r.status_code}: {r.text[:200]}")
+        d = r.json()
+        return {**(d.get("timings") or {}), "chars": len(text),
+                "tokens_cached": d.get("tokens_cached")}
 
     def _stream(self, body: dict, on_delta) -> Reply:
         """Stream the reply: fire on_delta(text) as each content chunk arrives,

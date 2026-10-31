@@ -41,7 +41,8 @@
     header { gap:6px; padding:8px 10px; padding-top:calc(8px + env(safe-area-inset-top)); }
     .brand { font-size:12px; letter-spacing:.08em; }
     header button { padding:6px 9px; font-size:13px; }
-    #mode, #privacy { padding:6px 6px; font-size:12px; max-width:34vw; }
+    #mode, #privacy, #verb { padding:6px 6px; font-size:12px; max-width:34vw; }
+    #house, #houseMem { font-size:10.5px; gap:4px 8px; flex-wrap:wrap; white-space:normal; }
     .meta { font-size:10px; }
     .meta > div:first-child { display:none; }   /* drop the model line; keep the tappable folder */
     #mWs { max-width:30vw; }
@@ -51,7 +52,7 @@
     background:#222736; border:1px solid var(--line); color:var(--ink);
     border-radius:8px; padding:7px 11px; font-size:13px; font-family:inherit;
   }
-  #mode, #privacy {
+  #mode, #privacy, #verb {
     background:#222736; border:1px solid var(--line); color:var(--ink);
     border-radius:8px; padding:6px 8px; font-size:13px; font-family:inherit;
   }
@@ -112,6 +113,28 @@
   .dot.warn { background:#e0b050; box-shadow:0 0 6px rgba(224,176,80,.6); }
   .dot.off { background:var(--bad); box-shadow:0 0 6px rgba(255,107,107,.55); }
   .meta > div:first-child { cursor:pointer; }
+  /* house strip: one quiet line under the header buttons — memory, and who's up */
+  #house { flex-basis:100%; display:flex; gap:12px; align-items:center; color:var(--dim);
+           font-size:11.5px; white-space:nowrap; overflow:hidden; line-height:1.2; }
+  #houseMem { display:flex; gap:10px; min-width:0; }
+  #houseMem > span { white-space:nowrap; }
+  /* little fill bar next to each number: green < 70 %, amber 70–90 %, red above */
+  .hb { display:inline-block; width:40px; height:5px; border-radius:3px; background:var(--line);
+        vertical-align:middle; margin-left:4px; overflow:hidden; }
+  .hb b { display:block; height:100%; background:var(--good); }
+  .hb.mid b { background:#e0b050; }
+  .hb.hi b { background:var(--bad); }
+  #house .hd { flex:none; }
+  #fridayDot { cursor:pointer; }
+  /* verbosity: chat = conversation only, normal = plus tool steps, all = everything. Errors always show. */
+  #log.v-chat .step, #log.v-chat .out, #log.v-chat .note, #log.v-chat .prog,
+  #log.v-normal .out, #log.v-normal .note { display:none; }
+  /* Friday's picture / video / link lines */
+  .msg.friday .fimg { display:block; max-width:260px; width:100%; border-radius:10px; margin:4px 0; cursor:pointer; }
+  .msg.friday .fvid { display:block; margin:4px 0; color:var(--accent); text-decoration:none; max-width:260px; }
+  .msg.friday .fvid img { display:block; width:100%; border-radius:10px; margin-bottom:3px; }
+  .msg.friday a { color:var(--accent); }
+  .msg.friday .fpic, .msg.friday .flink { display:block; }
   /* copy button on code blocks she writes */
   .msg pre { position:relative; }
   .copybtn { position:absolute; top:6px; right:6px; background:#2a2f3d; color:var(--dim);
@@ -272,6 +295,11 @@
     <option value="offrec">🕶️ Off the record</option>
     <option value="sandbox">🔒 Knowledge only</option>
   </select>
+  <select id="verb" title="How much to show: chat only / plus tool steps / everything">
+    <option value="chat">💬 Chat</option>
+    <option value="normal">📋 Normal</option>
+    <option value="all">🔧 All</option>
+  </select>
   <button id="arBtn" style="display:none" title="AR — camera view with chat on top">AR</button>
   <button id="speakBtn" title="Read her replies aloud">🔈</button>
   <button id="voiceBtn" style="display:none" title="Hands-free voice chat">🎙️</button>
@@ -279,6 +307,11 @@
   <div class="meta">
     <div><span class="dot" id="statusDot"></span><span id="mModel">—</span></div>
     <div id="mWs" style="max-width:44vw; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"></div>
+  </div>
+  <div id="house">
+    <span id="houseMem">RAM …</span>
+    <span class="hd" id="mergeHd"><span class="dot" id="mergeDot"></span>Merge</span>
+    <span class="hd" id="fridayDot" title="Tap to hush / un-hush Friday"><span class="dot" id="fridayDotI"></span>Friday<span id="fridayHush"></span></span>
   </div>
 </header>
 
@@ -432,6 +465,40 @@ function el(cls, html) {
   return d;
 }
 
+// Friday's lines: "🖼 url" a picture, "🎬 url | thumb | title" a video card, "🔗 url" a link.
+// http(s) only; everything else is escaped text.
+const isUrl = u => /^https?:\/\/[^\s"'<>]+$/i.test(u || '');
+const attr = s => esc(s).replace(/"/g, '&quot;');
+const shortUrl = u => { const t = u.replace(/^https?:\/\/(www\.)?/i, ''); return t.length > 40 ? t.slice(0, 38) + '…' : t; };
+function fridayLine(line) {
+  let m = line.match(/^\s*🖼\uFE0F?\s+(\S+)\s*$/u);
+  if (m && isUrl(m[1]))
+    return '<a class="fpic" href="' + attr(m[1]) + '" target="_blank" rel="noopener"><img class="fimg" loading="lazy" src="' + attr(m[1]) + '" alt=""></a>';
+  m = line.match(/^\s*🎬\uFE0F?\s+(.+)$/u);
+  if (m) {
+    const [u, th, ...rest] = m[1].split('|').map(x => x.trim());
+    const title = rest.join(' | ');
+    if (isUrl(u))
+      return '<a class="fvid" href="' + attr(u) + '" target="_blank" rel="noopener">'
+        + (isUrl(th) ? '<img loading="lazy" src="' + attr(th) + '" alt="">' : '')
+        + '🎬 ' + esc(title || shortUrl(u)) + '</a>';
+  }
+  m = line.match(/^\s*🔗\uFE0F?\s+(\S+)\s*$/u);
+  if (m && isUrl(m[1]))
+    return '<a class="flink" href="' + attr(m[1]) + '" target="_blank" rel="noopener">🔗 ' + esc(shortUrl(m[1])) + '</a>';
+  return null;
+}
+function fridayHtml(text) {
+  // block-level cards carry their own spacing; only text lines get the newline between them
+  let out = '', prevText = false;
+  for (const line of String(text).split('\n')) {
+    const rich = fridayLine(line);
+    if (rich) { out += rich; prevText = false; }
+    else { out += (prevText ? '\n' : '') + esc(line); prevText = true; }
+  }
+  return out;
+}
+
 // Put a small "copy" button on every code block she writes.
 function addCopyButtons(container) {
   if (!container) return;
@@ -581,7 +648,17 @@ function render(e) {
     imagePaths(e.text).forEach(showImage); videoPaths(e.text).forEach(showVideo);
   }
   else if (e.kind === 'error')  { endStream(); el('err', esc(e.text)); }
-  else if (e.kind === 'note' && e.from === 'Friday') el('msg friday', '<span class="who">Friday</span>' + esc(String(e.text || '').replace(/^Friday:\s*/, '')));
+  else if (e.kind === 'note' && e.from) {
+    // 2026-10-28 (kitchen B): any helper note that names its sender renders
+    // as a bubble — Friday exactly as before, and "Merge ⚡" for her
+    // side-lane answers while the main task runs.
+    const raw = String(e.text || '');
+    const ft = raw.startsWith(e.from + ':') ? raw.slice(e.from.length + 1).replace(/^\s+/, '') : raw;
+    el('msg friday', '<span class="who">' + esc(e.from) + '</span>' + fridayHtml(ft));
+    // Voice on: say it out loud too, minus the link lines; only live notes (a page load replays old ones)
+    if ((voiceMode || speakAll) && e.t && Date.now() / 1000 - e.t < 30)
+      say(ft.split('\n').filter(l => !/^\s*(🔗|🖼|🎬|https?:)/u.test(l)).join(' ').replace(/https?:\S+/g, '').replace(/•/g, ''));
+  }
   else if (e.kind === 'note')   el('note', esc(e.text));
   else if (e.kind === 'progress') {
     const pct = Math.max(0, Math.min(100, parseInt(e.summary || '0', 10) || 0));
@@ -772,9 +849,23 @@ function send() {
   if (!text) return;
   $('box').value = '';
   $('box').style.height = 'auto';
-  if (working) { queueMessage(text); return; }   // she's busy → queue it, don't block
+  if (working) { sendWhileBusy(text); return; }  // she's busy → it goes now, and the server hands it to Friday
   clearWelcome();
   dispatch(text);
+}
+
+// While Merge works, a message is NOT held in the page any more (2026-10-27: held messages never reached
+// Friday, so "Friday takes the chat" couldn't happen). It is posted at once; the server sees Merge is busy
+// and gives it to Friday, who answers in seconds. Only if the post itself fails is it queued as before.
+async function sendWhileBusy(text) {
+  clearWelcome();
+  try {
+    await api('/api/chat', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ message:text, session:SESSION, workspace:WORKSPACE,
+                             env: detectEnv(), mode: $('mode').value, privacy: currentPrivacy() })
+    });
+  } catch (_) { queueMessage(text); }
 }
 
 async function dispatch(text) {
@@ -1096,6 +1187,65 @@ $('speakBtn').onclick = () => {
   if (!speakAll) stopSpeaking();          // muting stops any reply she's mid-way through
 };
 setSpeakUI();
+
+// Verbosity: a class on the chat log, so it re-filters what's already there instantly.
+// chat hides tool lines (.step), raw results (.out), her "📖 reading …" blurbs (.note) and progress.
+function setVerb(v) {
+  if (['chat', 'normal', 'all'].indexOf(v) < 0) v = 'chat';
+  $('verb').value = v;
+  log.classList.remove('v-chat', 'v-normal', 'v-all');
+  log.classList.add('v-' + v);
+  localStorage.setItem('forge-verbosity', v);
+}
+$('verb').onchange = () => setVerb($('verb').value);
+setVerb(localStorage.getItem('forge-verbosity') || 'chat');   // default: her words only
+
+// House strip: memory + who's up, every 5 s. Plain fetch (not api()) so a restart
+// never paints "reconnecting…" from a background poll.
+let fridayHushed = false;
+async function pollHouse() {
+  if (document.hidden) return;
+  try {
+    const r = await fetch(q('/api/house' + (SESSION ? '?session=' + encodeURIComponent(SESSION) : '')), { cache: 'no-store' });
+    if (!r.ok) return;
+    const h = await r.json();
+    // numbers only go into this HTML, never text from elsewhere
+    const bar = (used, total) => {
+      const pct = total ? Math.max(0, Math.min(100, 100 * used / total)) : 0;
+      return '<i class="hb' + (pct > 90 ? ' hi' : pct >= 70 ? ' mid' : '') + '"><b style="width:' + pct.toFixed(0) + '%"></b></i>';
+    };
+    const k = n => Math.round(n / 1000) + 'k';
+    const parts = [], ramT = h.ram && h.ram.total_gb;
+    if (h.ram) parts.push('RAM ' + h.ram.avail_gb.toFixed(1) + ' GB free' + bar(ramT - h.ram.avail_gb, ramT));
+    if (h.merge_gb != null) parts.push('Merge ' + h.merge_gb.toFixed(1) + ' GB' + bar(h.merge_gb, ramT));
+    if (h.vram) parts.push('VRAM ' + Math.round(h.vram.used_gb) + '/' + Math.round(h.vram.total_gb) + ' GB' + bar(h.vram.used_gb, h.vram.total_gb));
+    const c = h.ctx || {};
+    if (c.used != null && c.total) parts.push('Context ' + k(c.used) + ' / ' + k(c.total) + bar(c.used, c.total));
+    $('houseMem').innerHTML = parts.map(x => '<span>' + x + '</span>').join('');
+    $('houseMem').title = h.gtt ? 'GTT (shared) ' + h.gtt.used_gb + '/' + h.gtt.total_gb + ' GB' : '';
+    const m = h.merge || {};
+    $('mergeDot').className = 'dot' + (m.busy ? ' warn' : m.up ? ' on' : '');
+    $('mergeHd').title = m.busy ? 'Merge is working' : m.up ? 'Merge is up, idle' : 'Merge is down';
+    const f = h.friday || {};
+    fridayHushed = !!f.hushed;
+    $('fridayDotI').className = 'dot' + (!f.up ? '' : f.covering ? ' warn' : ' on');
+    $('fridayHush').textContent = f.up && f.hushed ? ' 🤫' : '';
+    $('fridayDot').title = !f.up ? 'Friday is off'
+      : (f.covering ? 'Friday is covering for Merge' : 'Friday is on')
+        + (f.held ? ' · holding ' + f.held + ' for Merge' : '')
+        + (f.hushed ? ' · hushed (tap to un-hush)' : ' · tap to hush');
+  } catch (e) { /* server away for a moment — next poll catches up */ }
+}
+$('fridayDot').onclick = async () => {
+  try {
+    await fetch(q('/api/friday/hush'), {method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({on: !fridayHushed})});
+  } catch (e) { /* the next poll shows the truth either way */ }
+  pollHouse();
+};
+pollHouse();
+setInterval(pollHouse, 5000);
+
 function setVoiceUI(on) {
   $('voiceBtn').textContent = on ? '⏹' : '🎙️';
   $('voiceBtn').classList.toggle('recbtn', on);

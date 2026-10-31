@@ -50,10 +50,16 @@ def _brain() -> tuple[str, str]:
 
 
 def _one(url: str, model: str, q: str, timeout: float) -> str:
-    body = json.dumps({"model": model, "max_tokens": 60, "temperature": TEMP,
-                       "chat_template_kwargs": {"enable_thinking": False},
-                       "messages": [{"role": "system", "content": _TERSE},
-                                    {"role": "user", "content": q}]}).encode()
+    req = {"model": model, "max_tokens": 60, "temperature": TEMP,
+           "chat_template_kwargs": {"enable_thinking": False},
+           "messages": [{"role": "system", "content": _TERSE},
+                        {"role": "user", "content": q}]}
+    # Off her chat's slot (2026-10-27): five samples there evicted her context.
+    from .providers import slot_for
+    n = slot_for(url, "helpers")
+    if n is not None:
+        req["id_slot"] = n
+    body = json.dumps(req).encode()
     r = urllib.request.Request(url + "/chat/completions", data=body,
                                headers={"Content-Type": "application/json"})
     try:

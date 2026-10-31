@@ -278,9 +278,16 @@ def search(query: str, workspace: str = "", limit: int = 8) -> str:
 # ---------------------------------------------------------------- librarian
 
 def remember_turn(user_text: str, answer_text: str,
-                  workspace: str, session_id: str) -> None:
+                  workspace: str, session_id: str,
+                  turn_range: tuple[int, int] | None = None) -> None:
     """Drop the finished exchange in the librarian's tray. Instant — one
-    small file write; the slow distilling happens elsewhere, later."""
+    small file write; the slow distilling happens elsewhere, later.
+
+    turn_range (rolling memory, Patch A): (first_turn, last_turn) of the folded
+    block this card summarises. Ordinary single-turn calls pass nothing and the
+    entry is byte-identical to before; folded blocks carry their span so a later
+    recall hit can say WHICH turns it came from, and the fold's announcement can
+    quote the range it freed."""
     if not (user_text or "").strip() or not (answer_text or "").strip():
         return
     try:
@@ -295,6 +302,8 @@ def remember_turn(user_text: str, answer_text: str,
                  "session": session_id,
                  "user": user_text[:EXCHANGE_LIMIT // 2],
                  "answer": answer_text[:EXCHANGE_LIMIT // 2]}
+        if turn_range:
+            entry["turn_range"] = list(turn_range)
         (QUEUE_DIR / f"{time.time_ns()}.json").write_text(
             json.dumps(entry), encoding="utf-8")
     except Exception:
@@ -445,11 +454,14 @@ def process_queue_once() -> int:
             f.unlink(missing_ok=True)
             continue
         if text:
-            _append_card_and_vec({
+            rec = {
                 "t": entry.get("t", time.time()),
                 "workspace": entry.get("workspace", ""),
                 "session": entry.get("session", ""),
-                "gist": text})
+                "gist": text}
+            if entry.get("turn_range"):
+                rec["turn_range"] = entry["turn_range"]
+            _append_card_and_vec(rec)
             filed += 1
         f.unlink(missing_ok=True)
     if filed:

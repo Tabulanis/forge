@@ -133,6 +133,8 @@ def watch(video_path: str, question: str, mc: MediaConfig,
         ]}],
     }
     try:
+        from .providers import slot_kw   # off her chat's slot (2026-10-27)
+        body.update(slot_kw(mc.vision_url, "helpers"))
         r = httpx.post(f"{mc.vision_url.rstrip('/')}/chat/completions",
                        json=body, timeout=180.0)
         r.raise_for_status()
@@ -220,8 +222,10 @@ def see(image_path: str, question: str, mc: MediaConfig,
         # patience — it turns a stalled server into a fifteen-minute silence.
         # The long allowance stays for a genuinely slow fallback, if one is ever
         # configured; by default there isn't one.
+        from .providers import slot_kw   # off her chat's slot (2026-10-27)
         r = httpx.post(f"{url.rstrip('/')}/chat/completions",
-                       json=body, timeout=(120.0 if primary else 900.0))
+                       json={**body, **slot_kw(url, "helpers")},
+                       timeout=(120.0 if primary else 900.0))
         r.raise_for_status()
         return r.json()["choices"][0]["message"]["content"].strip()
 

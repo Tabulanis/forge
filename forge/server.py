@@ -259,9 +259,29 @@ def chat(spec: ChatSpec):
     # If Friday isn't up, the message goes to Merge as before.
     # And while Merge is mid-run, Friday takes what he types: small jobs she does, the rest she holds and hands to
     # Merge when Merge is free. Friday's own hand-over (env "friday") always goes straight to Merge.
-    to_friday = re.match(r"\s*(hey |ok |oi )?friday\b", spec.message, re.I)
+    to_friday = (re.match(r"\s*(hey |ok |oi |thanks |cheers |ta )?friday\b", spec.message, re.I)    # "Friday, ..."
+                 or re.search(r"(?<!\bon )(?<!\bby )(?<!\bnext )(?<!\bthis )(?<!\blast )(?<!\buntil )(?<!\btill )"
+                              r"(?<!\bevery )(?<!\bbefore )(?<!\bafter )(?<!\bfor )(?<!\bfrom )\bfriday[\s?!.]*$", spec.message, re.I))   # "How you doing Friday?" (not "on Friday")
     merge_busy = sess.busy or STORE.busy_count(exclude=sess.id)
     merge_down = not _merge_reachable()
+    # The VIP lane (2026-10-28, kitchen B): a cook who talks while chopping.
+    # A chat-shaped question typed while she is mid-task is answered NOW, on
+    # the helpers slot, instead of queueing behind the long job. Work messages
+    # keep today's queueing and ALSO land in the nudge inbox so she sees them
+    # between steps. "Friday, ..." and brain-down cover stay exactly as below.
+    lane = _vip_route(load_config(), spec.message,
+                      getattr(sess.agent, "mode", "balanced"),
+                      bool(merge_busy), bool(to_friday), merge_down,
+                      spec.env or "")
+    if lane == "side":
+        threading.Thread(target=_vip_side_answer, args=(sess, spec.message),
+                         daemon=True).start()
+        return {"session": sess.id, "workspace": str(sess.workspace),
+                "model": "side-lane"}
+    if lane == "nudge":
+        # Bites awareness: the queued message is also a word between steps.
+        # sess.nudge enforces its own cap (3 pending) and its own busy check.
+        sess.nudge(_VIP_NUDGE + spec.message[:200])
     if (to_friday or merge_busy or merge_down) and (spec.env or "").strip() != "friday":
         reply = _ask_friday(sess.id, spec.message, busy=bool((merge_busy or merge_down) and not to_friday), down=merge_down)
         if reply:
@@ -299,6 +319,25 @@ def note(spec: NoteSpec):
     return {"ok": True}
 
 
+class NudgeSpec(BaseModel):
+    session: str
+    text: str
+
+
+@app.post("/api/nudge", dependencies=[Depends(require_token)])
+def nudge(spec: NudgeSpec):
+    """A helper's word for Merge's RUNNING turn, read before her next step.
+    2026-10-27: queued messages only land after the turn; a stuck turn needs a
+    word between steps. Not busy = refused; this never starts a turn."""
+    sess = STORE.get(spec.session)
+    if not sess:
+        raise HTTPException(404, "No such session")
+    why = sess.nudge(spec.text)
+    if why:
+        return {"ok": False, "why": why}
+    return {"ok": True, "delivered": "next step"}
+
+
 _REACH = {"t": 0.0, "ok": True}
 
 
@@ -313,6 +352,88 @@ def _merge_reachable() -> bool:
     return _REACH["ok"]
 
 
+# The VIP lane's fixed pieces (2026-10-28, kitchen B) — module level so the
+# selftest checks the exact strings the live code uses.
+_VIP_HEAD = ("You are Merge, answering on the side while your main task runs; "
+             "one short paragraph, no tools.")
+_VIP_NUDGE = "He just said (queued for after this task): "
+
+
+def _vip_route(cfg: dict, message: str, mode: str, busy: bool,
+               to_friday: bool, down: bool, env: str) -> str:
+    """Which lane a message takes while she is busy (2026-10-28, kitchen B).
+    Returns "side" (answer it now on the helpers slot), "nudge" (old queueing
+    plus a heads-up in the nudge inbox), or "" (the VIP lane has no opinion —
+    the existing Friday/queue flow decides exactly as before). "Friday, ..."
+    messages, brain-down cover and Friday's own hand-over (env "friday") are
+    all "": those paths are hers. Config vip_lane false = "" always, the old
+    behaviour."""
+    if not busy or to_friday or down or (env or "").strip() == "friday":
+        return ""
+    if not bool((cfg or {}).get("vip_lane", True)):
+        return ""
+    from .agent import is_chat_ask
+    return "side" if is_chat_ask(message, mode) else "nudge"
+
+
+def _vip_side_answer(sess, message: str) -> None:
+    """The VIP lane itself (2026-10-28, kitchen B): his words — a cook who
+    talks while chopping. Runs on its own thread; the main turn never waits.
+    The prompt is compact: a one-line head, the running summary when the chat
+    has one (history[0], fold.SUMMARY_MARKER), the last few real exchanges,
+    and his question — no tools, thinking off, ~200 tokens, pinned to the
+    HELPERS slot so her chat slot's cache is never evicted. The Q/A is held
+    on the session (record_side_exchange) and drained into her real history
+    when the main turn ends, so she remembers it and folding treats it like
+    any other turn. Any failure falls back to the old queue — a message is
+    never dropped.
+
+    2026-10-31 (faster side lane; measured 57 s for a one-liner): an "on it"
+    bubble goes out BEFORE the model call; the prompt front is the session's
+    frozen snapshot (session.side_prefix_msgs: summary tail capped, 3 short
+    exchanges) so every side question in one turn shares the same bytes and
+    the brain's dedicated "side" slot re-reads only the question; the answer
+    is capped at SIDE_MAX_TOKENS."""
+    try:
+        from .providers import slot_kw
+        from .session import SIDE_MAX_TOKENS, side_prefix_msgs
+        ag = sess.agent
+        # Life within a second: the page shows this bubble while the brain
+        # reads. "ack": true so a renderer can fold it into the answer later.
+        sess.emit("note", {"text": "Merge ⚡: on it…", "from": "Merge ⚡", "ack": True})
+        front = getattr(sess, "side_prefix", None)
+        if not isinstance(front, list):
+            front = side_prefix_msgs(list(ag.history))   # no snapshot: live
+        msgs = [dict(m) for m in front]
+        msgs.append({"role": "user", "content": message})
+        reply = ag.provider.complete(
+            _VIP_HEAD, msgs, [],
+            extra_body={"max_tokens": SIDE_MAX_TOKENS,
+                        "chat_template_kwargs": {"enable_thinking": False}},
+            **slot_kw(ag.provider, "side"))
+        text = (reply.text or "").strip()
+        if not text:
+            raise RuntimeError("empty side-lane reply")
+        # Rendered as a helper bubble by the page (the Friday pattern above);
+        # the ⚡ tells him it was the side lane, not the main turn.
+        sess.emit("note", {"text": f"Merge ⚡: {text[:800]}", "from": "Merge ⚡"})
+        sess.record_side_exchange(message, text)
+    except Exception as e:
+        import sys as _sys
+        print("forge: side lane failed; the message takes the old queue: "
+              f"{type(e).__name__}: {e}", file=_sys.stderr)
+        # The "on it…" ack is already out; never leave it hanging.
+        try:
+            sess.emit("note", {"text": "Merge ⚡: couldn't answer on the side — "
+                                       "queued for after this task", "from": "Merge ⚡"})
+        except Exception:
+            pass
+        try:
+            sess.run_message(message)   # queues while busy, runs when free
+        except Exception:
+            pass
+
+
 def _ask_friday(session_id: str, message: str, busy: bool = False, down: bool = False):
     """'Friday, ...' (or anything typed while Merge is mid-run: busy=True) goes to Friday (127.0.0.1:8097).
     None if Friday isn't there, and the message goes to Merge as before."""
@@ -324,6 +445,111 @@ def _ask_friday(session_id: str, message: str, busy: bool = False, down: bool = 
             return (json.load(r).get("reply") or "").strip() or None
     except Exception:
         return None
+
+
+_HOUSE = {"t": 0.0, "data": None}
+_GB = 1024 ** 3
+
+
+def _sum_drm(name: str) -> int | None:
+    """Sum one AMD amdgpu counter (bytes) over every card; None when no card has it."""
+    vals = []
+    for p in Path("/sys/class/drm").glob(f"card*/device/{name}"):
+        try:
+            vals.append(int(p.read_text().strip()))
+        except (OSError, ValueError):
+            pass
+    return sum(vals) if vals else None
+
+
+def _pair(used: int | None, total: int | None) -> dict | None:
+    if used is None or total is None:
+        return None
+    return {"used_gb": round(used / _GB, 1), "total_gb": round(total / _GB, 1)}
+
+
+_SLOT_CTX = {"t": 0.0, "n": None}
+
+
+def _slot_ctx() -> int | None:
+    """Context one chat gets: n_ctx of llama-server slot 0 (cached 60 s; None if it isn't answering)."""
+    if time.time() - _SLOT_CTX["t"] > 60:
+        try:
+            _SLOT_CTX["n"] = int(httpx.get("http://127.0.0.1:8087/slots", timeout=0.5).json()[0]["n_ctx"])
+        except Exception:
+            _SLOT_CTX["n"] = None
+        _SLOT_CTX["t"] = time.time()
+    return _SLOT_CTX["n"]
+
+
+def _ctx_used(session: str | None) -> int | None:
+    """Tokens the chat's last turn used (prompt + reply), from its newest 'done' event."""
+    sess = STORE.get(session) if session else None
+    for e in reversed(getattr(sess, "log", None) or []):
+        u = e.get("usage") if e.get("kind") == "done" else None
+        if u and u.get("prompt_tokens") is not None:
+            return int(u.get("prompt_tokens") or 0) + int(u.get("completion_tokens") or 0)
+    return None
+
+
+@app.get("/api/house", dependencies=[Depends(require_token)])
+def house(session: str | None = None):
+    """The header strip: free RAM, what Merge's brain holds, video memory, whether Merge and
+    Friday are up, and how full this chat's context is. Cached 2 s so a page polling it never
+    costs the box anything (the per-chat context part is read fresh; it is a list lookup)."""
+    ctx = {"used": _ctx_used(session), "total": _slot_ctx()}
+    if _HOUSE["data"] and time.time() - _HOUSE["t"] < 2:
+        return {**_HOUSE["data"], "ctx": ctx}
+    import subprocess
+    mem = {}
+    try:
+        for line in Path("/proc/meminfo").read_text().splitlines():
+            k, v = line.split(":", 1)
+            mem[k] = int(v.split()[0]) * 1024
+    except (OSError, ValueError):
+        pass
+    merge_gb = None
+    try:
+        out = subprocess.run(["systemctl", "--user", "show", "forge-model-big122.service",
+                              "-p", "MemoryCurrent", "--value"],
+                             capture_output=True, text=True, timeout=1).stdout.strip()
+        if out.isdigit():
+            merge_gb = round(int(out) / _GB, 1)
+    except Exception:
+        pass
+    friday = {"up": False}
+    try:
+        f = httpx.get("http://127.0.0.1:8097/status", timeout=0.5).json()
+        friday = {"up": True, "hushed": bool(f.get("hushed")),
+                  "covering": int(f.get("covering") or 0), "held": int(f.get("held") or 0)}
+    except Exception:
+        pass
+    data = {
+        "ram": {"avail_gb": round(mem.get("MemAvailable", 0) / _GB, 1),
+                "total_gb": round(mem.get("MemTotal", 0) / _GB, 1)},
+        "merge_gb": merge_gb,
+        "vram": _pair(_sum_drm("mem_info_vram_used"), _sum_drm("mem_info_vram_total")),
+        "gtt": _pair(_sum_drm("mem_info_gtt_used"), _sum_drm("mem_info_gtt_total")),
+        "merge": {"up": _merge_reachable(), "busy": bool(STORE.busy_count())},
+        "friday": friday,
+    }
+    _HOUSE.update(t=time.time(), data=data)
+    return {**data, "ctx": ctx}
+
+
+class HushSpec(BaseModel):
+    on: bool
+
+
+@app.post("/api/friday/hush", dependencies=[Depends(require_token)])
+def friday_hush(spec: HushSpec):
+    """Hush (or un-hush) Friday from the header dot. Proxied so the page never talks to 8097 itself."""
+    try:
+        r = httpx.post("http://127.0.0.1:8097/hush", json={"on": spec.on}, timeout=2.0)
+        _HOUSE["t"] = 0.0                       # next /api/house shows the change at once
+        return r.json()
+    except Exception as e:
+        raise HTTPException(502, f"Friday isn't answering: {e}")
 
 
 @app.get("/api/stream/{session_id}", dependencies=[Depends(require_token)])

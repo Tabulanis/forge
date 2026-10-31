@@ -1177,6 +1177,82 @@ def t_cortex_refuses_nonsense():
     return "clearly match" in r or "empty" in r or "Nothing" in r
 
 
+def t_parking_rules():
+    """2026-10-27: her chat's brain state is parked on disk after a turn and
+    read back before the next. It must never park or restore an off-the-record
+    chat, never restore over a slot that still holds this chat (that would put
+    an older state over a newer one), never load a file from another model,
+    skip a save once a new turn has started, and keep only the newest
+    PARK_KEEP files (~7.6 GB each). No server: the HTTP calls are faked."""
+    import os
+    import httpx
+    from forge import park
+    d = Path(tempfile.mkdtemp())
+    posts = []
+    meta = {"model": "m.gguf", "build": "b1", "n_ctx": 131072}
+
+    class R:
+        def __init__(self, body):
+            self.status_code, self._b, self.text = 200, body, json.dumps(body)
+        def json(self):
+            return self._b
+
+    def post(url, json=None, timeout=None):
+        posts.append(url)
+        if "action=save" in url:
+            (d / json["filename"]).write_bytes(b"kv")
+            return R({"n_saved": 900, "n_written": 2})
+        return R({"n_restored": 900, "n_read": 2})
+
+    saved = (park.PARK_DIR, park._where, park._slot, park._model, httpx.post, dict(park._HOLDER))
+    try:
+        park.PARK_DIR, httpx.post = d, post
+        park._where = lambda: ("http://x", 0)
+        slot = {"id": 0, "is_processing": False, "id_task": 7, "n_prompt_tokens": 900}
+        park._slot = lambda root, n: dict(slot)
+        park._model = lambda root: dict(meta)
+        # off the record: nothing posted, nothing written
+        park._HOLDER.update(sid="secret1", fp=None)
+        quiet = (park.park_save("secret1", ephemeral=True) is None
+                 and park.begin_turn("secret1", True) is None and not posts
+                 and not list(d.iterdir()))
+        # a save while a new turn has started is skipped; then a real one
+        park._HOLDER.update(sid="chatA", fp=None)
+        skipped = park.park_save("chatA", still_mine=lambda: False) is None and not posts
+        did = park.park_save("chatA")
+        wrote = (did and did["n"] == 900 and (d / "chatA.bin").exists()
+                 and json.loads((d / "chatA.json").read_text())["model"] == "m.gguf")
+        posts.clear()
+        # the slot still holds chatA: no restore
+        held = park.begin_turn("chatA", False) is None and not posts
+        # another chat ran on the slot: chatA is read back
+        park.begin_turn("chatB", False)
+        slot["id_task"] = 8        # chatB's turn ran on the slot (2026-10-30: realistic fake)
+        back = park.begin_turn("chatA", False)
+        restored = back and back["n"] == 900 and any("action=restore" in u for u in posts)
+        # a file from another model is deleted, never loaded
+        posts.clear()
+        (d / "chatC.bin").write_bytes(b"kv")
+        (d / "chatC.json").write_text(json.dumps({**meta, "model": "other.gguf"}))
+        stale = (park.begin_turn("chatC", False) is None and not posts
+                 and not (d / "chatC.bin").exists() and not (d / "chatC.json").exists())
+        # keep the newest PARK_KEEP
+        for i in range(6):
+            for ext in ("bin", "json"):
+                f = d / f"old{i}.{ext}"
+                f.write_text("x")
+                os.utime(f, (1000 + i, 1000 + i))
+        os.utime(d / "chatA.bin", (5000, 5000))
+        gone = park.prune()
+        left = sorted(f.stem for f in d.glob("*.bin"))
+        kept = (left == ["chatA", "old3", "old4", "old5"] and len(gone) == 3
+                and not (d / "old0.json").exists() and (d / "old5.json").exists())
+    finally:
+        (park.PARK_DIR, park._where, park._slot, park._model, httpx.post, h) = saved
+        park._HOLDER.clear(); park._HOLDER.update(h)
+    return bool(quiet and skipped and wrote and held and restored and stale and kept)
+
+
 def t_persona_clamps():
     """Dials had to refuse nonsense rather than store it."""
     from forge import persona
@@ -2041,6 +2117,50 @@ def t_gdapi_accepts_an_is_narrowed_subclass():
     # in the same narrowed block, is still caught.
     return gdapi.check(good) == "" and "totally_invented" in gdapi.check(bad)
 
+def t_a_nudge_lands_between_steps():
+    """2026-10-27: a message sent mid-turn was only queued and ran after the
+    turn ended, so a stuck turn could not be told anything. A helper's nudge
+    must reach her BETWEEN steps: in history before the next model call, and
+    shown as a note. Refused (never starts a turn) when she is not busy."""
+    import threading
+    from forge.agent import Agent
+    from forge.providers import Provider, Reply, ToolCall
+    from forge.session import Session
+    from forge.tools import Tool
+    inbox, seen = [], []
+
+    class Brain(Provider):
+        def complete(self, system, messages, tools, grammar=None,
+                     extra_body=None, on_delta=None):
+            seen.append([dict(m) for m in messages])
+            n = len(seen)
+            if n == 1:
+                inbox.append("check the log first")   # arrives mid-turn
+            if n <= 2:
+                return Reply(tool_calls=[ToolCall(id=f"c{n}", name="ping", args={})])
+            return Reply(text="ok")
+
+    ping = Tool(name="ping", description="ping", run=lambda: "pong",
+                parameters={"type": "object", "properties": {}})
+    ag = Agent(Brain(), [ping], permission_mode="auto")
+    ag.nudge_source = lambda: [inbox.pop() for _ in list(inbox)]
+    events = list(ag.run("ping twice"))
+    note = "Note from Friday (automatic, mid-task): check the log first"
+    has = lambda msgs: any(m.get("synthetic") and m.get("content") == note for m in msgs)
+    landed = len(seen) >= 2 and not has(seen[0]) and has(seen[1])
+    shown = any(e.kind == "note" and e.text == "Friday nudged: check the log first"
+                for e in events)
+    # the session side: refused when idle, capped at 3 x 400 chars when busy
+    s = Session.__new__(Session)
+    s.lock, s.busy, s.nudges = threading.Lock(), False, []
+    idle = s.nudge("hi") == "not busy" and s.nudges == []
+    s.busy = True
+    took = [s.nudge("x" * 900) for _ in range(4)]
+    capped = took[:3] == [None] * 3 and took[3] and len(s.nudges[0]) == 400
+    drained = len(s.take_nudges()) == 3 and s.nudges == []
+    return landed and shown and idle and bool(capped) and drained
+
+
 
 # ------------------------------------------------------------------- main
 CHECKS = [
@@ -2167,6 +2287,7 @@ CHECKS = [
     ("toolindex: cannot bypass privacy", t_load_cannot_bypass_privacy, False),
     ("toolindex: retrieval quality + junk refused", t_tool_search_quality, True),
     ("embedder: batches large inputs", t_embedder_batches, True),
+    ("park: off-record, held, stale, keep newest", t_parking_rules, False),
     ("shelf: garbage refused", t_shelf_rejects_garbage, False),
     ("shelf: circular selftests stay demoted", t_circular_selftests_stay_demoted, False),
     ("recall: refuses gibberish", t_recall_refuses_gibberish, True),
@@ -2176,7 +2297,1411 @@ CHECKS = [
     ("persona: clamps and refuses bad values", t_persona_clamps, False),
     ("forensic: env override not clobbered", t_forensic_env_not_clobbered, False),
     ("forensic: redacts secrets", t_forensic_redacts, False),
+    ("nudge: a helper's word lands between steps", t_a_nudge_lands_between_steps, False),
 ]
+
+def t_folded_turns_carry_their_range():
+    """Patch A (rolling memory): a folded block's tray entry carries the turn
+    span it summarises; an ordinary single-turn entry is byte-identical to
+    before the patch (no turn_range key). Without the span, a recall hit on
+    folded history could not say which turns it came from, and the fold's
+    announcement could not quote what it freed."""
+    import json, tempfile
+    from pathlib import Path
+    from forge import recall
+    with tempfile.TemporaryDirectory() as td:
+        old_q = recall.QUEUE_DIR
+        recall.QUEUE_DIR = Path(td)
+        try:
+            recall.remember_turn("the fold happened", "folded turns three to nine",
+                                 "/tmp/ws", "sess-1", turn_range=(3, 9))
+            recall.remember_turn("an ordinary question", "an ordinary answer",
+                                 "/tmp/ws", "sess-1")
+            entries = [json.loads(q.read_text(encoding="utf-8"))
+                       for q in sorted(recall.QUEUE_DIR.glob("*.json"))]
+        finally:
+            recall.QUEUE_DIR = old_q
+    tagged = [e for e in entries if "turn_range" in e]
+    plain = [e for e in entries if "turn_range" not in e]
+    return (len(tagged) == 1 and tagged[0]["turn_range"] == [3, 9]
+            and len(plain) == 1)
+
+
+check("folded turns carry their range", t_folded_turns_carry_their_range)
+
+
+def t_fold_wired_between_turns():
+    """Patch B2 (rolling memory), re-anchored 2026-10-28 (kitchen A): with
+    `fold` on, a 30-turn history is folded AT IDLE — after the turn completes,
+    never before its first model call — into ONE summary message that sits
+    right after the system prompt (history[0], i.e. payload index 1) and only
+    grows by append across two folds; check_invariant holds; the window ends
+    under the cap; the turn that triggers the fold still reads the UNFOLDED
+    prompt (the fold's re-read is paid at idle, not by him); the NEXT turn's
+    first payload carries the folded summary; the old 70% compaction is never
+    called, nor its threshold consulted (both are booby-trapped here). Also:
+    a fold that raises at idle is covered by the old compaction, and
+    `fold: false` turns the fold off."""
+    import tempfile
+    from pathlib import Path
+    import forge.agent as A
+    import forge.config as C
+    import forge.fold as F
+    from forge import recall
+    from forge.providers import Provider, Reply
+    from forge.tools import Tool
+
+    seen = []
+
+    class Brain(Provider):
+        def complete(self, system, messages, tools, grammar=None,
+                     extra_body=None, on_delta=None):
+            seen.append([dict(m) for m in messages])
+            return Reply(text="Noted, carrying on.")
+
+        def context_limit(self):
+            return 12_000   # 70% = 8.4k: below what the window holds post-fold
+
+    def turn(i):
+        return [{"role": "user", "content": f"Question {i}: what is in bay {i}? "
+                 + "Just thinking out loud here. " * 12},
+                {"role": "assistant", "content": f"Answer {i}: we decided bay {i} "
+                 f"holds crate {i * 7} at /srv/bays/b{i}.txt. "
+                 + "That is all chatter and filler. " * 108}]
+
+    ping = Tool(name="ping", description="ping", run=lambda: "pong",
+                parameters={"type": "object", "properties": {}})
+    ag = A.Agent(Brain(), [ping], permission_mode="auto")
+    st = {"window": A.FOLD_WINDOW_TOKENS, "keep": A.FOLD_KEEP_TOKENS,
+          "summary_cap": A.SUMMARY_CAP_TOKENS, "pins": A.FOLD_PIN_TURNS}
+    ag._fold_settings = lambda: dict(st)
+    old_calls = []
+
+    def _trap(force=False):
+        old_calls.append(force)
+        raise AssertionError("old compaction called while the fold is on")
+    ag._maybe_compact = _trap
+    ag._will_compact = lambda: _trap() or True   # the 70% gate is not even consulted
+    pres, posts = [], []
+    _real_fold = A.Agent._maybe_fold.__get__(ag)
+
+    def _spy(_st):
+        pres.append(ag._fold_split())      # (summary, window) before the fold
+        out = _real_fold(_st)
+        posts.append(ag._fold_split())
+        return out
+    ag._maybe_fold = _spy
+    hist = []
+    for i in range(1, 31):
+        hist += turn(i)
+    ag.history = hist
+    win0 = sum(A.Agent._entry_chars(m) for m in hist) // 4
+    with tempfile.TemporaryDirectory() as td:
+        old_q = recall.QUEUE_DIR
+        recall.QUEUE_DIR = Path(td)
+        try:
+            # fold 1: fires at the IDLE after this turn, so THIS turn's model
+            # call still reads the unfolded history (he never waits on a fold).
+            ev1 = list(ag.run("next one please"))
+            s1 = ag.history[0]
+            ok_inv1 = F.check_invariant(pres[0], posts[0])
+            first_payload_1 = seen[0][0]       # run 1's first call: no summary yet
+            # fold 2: thirty more turns of the same weight. Run 2's FIRST
+            # payload must carry fold 1's summary — the folded prompt is what
+            # the idle warm paid the re-read for.
+            for i in range(31, 61):
+                ag.history += turn(i)
+            ev2 = list(ag.run("and another"))
+            s2 = ag.history[0]
+            ok_inv2 = F.check_invariant(pres[1], posts[1])
+            first_payload_2 = seen[1][0]
+            tagged = [__import__("json").loads(q.read_text(encoding="utf-8"))
+                      for q in sorted(Path(td).glob("*.json"))]
+        finally:
+            recall.QUEUE_DIR = old_q
+    win_after = sum(A.Agent._entry_chars(m) for m in ag.history[1:]) // 4
+    notes = [e.text for e in ev1 + ev2 if e.kind == "note"]
+    folded_notes = [n for n in notes if n.startswith("folded ") and "tokens freed" in n]
+    ok = (win0 > st["window"] and ok_inv1 and ok_inv2
+          and s1["content"].startswith(F.SUMMARY_MARKER)
+          and len(seen) == 2 and len(pres) == 2
+          and not str(first_payload_1.get("content", "")).startswith(F.SUMMARY_MARKER)
+          and first_payload_1.get("content") == hist[0].get("content")
+          and first_payload_2.get("content") == s1["content"]
+          and s2["content"].startswith(s1["content"]) and len(s2["content"]) > len(s1["content"])
+          and sum(1 for m in ag.history if str(m.get("content", "")).startswith(F.SUMMARY_MARKER)) == 1
+          and win_after <= st["window"]
+          and len(folded_notes) == 2 and not old_calls
+          and "crate 7" in s1["content"] and "/srv/bays/b1.txt" in s1["content"]
+          and len(tagged) == 2 and tagged[0]["turn_range"][0] == 1
+          and tagged[1]["turn_range"][0] == tagged[0]["turn_range"][1] + 1)
+    if not ok:
+        return False
+
+    # a fold that raises AT IDLE: logged once, the old compaction condenses
+    # instead (history must never grow unbounded just because the fold broke)
+    ag2 = A.Agent(Brain(), [ping], permission_mode="auto")
+    ag2._fold_settings = lambda: dict(st)
+    ag2.history = [m for i in range(1, 31) for m in turn(i)]
+    fell_back = []
+    ag2._maybe_fold = lambda _st: (_ for _ in ()).throw(RuntimeError("boom"))
+    ag2._maybe_compact = lambda force=False: fell_back.append(force)
+    ag2._will_compact = lambda: False   # straight to the compaction call
+    _logged = A._FOLD_FAIL_LOGGED
+    A._FOLD_FAIL_LOGGED = True          # keep the expected failure out of the output
+    try:
+        list(ag2.run("go"))
+    finally:
+        A._FOLD_FAIL_LOGGED = _logged
+    if not fell_back or fell_back[0] is not False:
+        return False
+
+    # `fold: false` -> no fold settings, the old path owns condensation
+    real = C.load_config
+    try:
+        C.load_config = lambda: dict(C.DEFAULT_CONFIG, fold=False)
+        off = A.Agent(Brain(), [ping], permission_mode="auto")._fold_settings() is None
+        C.load_config = lambda: dict(C.DEFAULT_CONFIG)
+        on = A.Agent(Brain(), [ping], permission_mode="auto")._fold_settings() is not None
+    finally:
+        C.load_config = real
+    return off and on
+
+
+CHECKS.append(("rolling memory: fold wired between turns, old compaction off",
+               t_fold_wired_between_turns, False))
+
+
+def t_fold_summary_cap():
+    """Patch B2: a summary past SUMMARY_CAP_TOKENS is condensed ONCE into a
+    shorter summary (still extractive, still the marker-led message at
+    history[0]); the next fold appends to the condensed one again."""
+    import forge.agent as A
+    import forge.fold as F
+    from forge.providers import Provider
+
+    class Brain(Provider):
+        def context_limit(self):
+            return 131_072
+
+    ag = A.Agent(Brain(), [], permission_mode="auto")
+    ag.privacy = "offrec"          # nothing filed to recall from a selftest
+    hist = []
+    for i in range(1, 41):
+        hist += [{"role": "user", "content": f"Turn {i}: decided item {i} goes to /srv/x{i}. "
+                  + "Idle talk here. " * 40},
+                 {"role": "assistant", "content": f"Agreed, item {i} weighs {i * 3} kg. "
+                  + "More idle talk. " * 120}]
+    ag.history = hist
+    st = {"window": 3000, "keep": 1500, "summary_cap": 300, "pins": 2}
+    notes = ag._maybe_fold(st)
+    s1 = ag.history[0]
+    condensed = (len(notes) == 2 and notes[1].startswith("summary folded")
+                 and s1["content"].startswith(F.SUMMARY_MARKER + " (condensed once")
+                 and F.summary_tokens(s1) <= st["summary_cap"])
+    ag.history += hist[-8:]
+    st2 = dict(st, summary_cap=10_000)
+    notes2 = ag._maybe_fold(st2)
+    s2 = ag.history[0]
+    return (condensed and len(notes2) == 1
+            and s2["content"].startswith(s1["content"])
+            and len(s2["content"]) > len(s1["content"]))
+
+
+CHECKS.append(("rolling memory: summary condensed once at its cap",
+               t_fold_summary_cap, False))
+
+
+def t_fold_reread_counter_parses_server_log():
+    """Patch B3: the live re-read counter (bench/fold_harness.reread_events)
+    reads llama-server's own per-task lines — the shape copied from the brain's
+    journal 2026-10-27 — and reports only tasks that processed more than the
+    threshold, once each, at their largest count."""
+    import importlib.util
+    from pathlib import Path
+    spec = importlib.util.spec_from_file_location(
+        "fold_harness", Path(__file__).resolve().parent / "bench" / "fold_harness.py")
+    H = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(H)
+    log = "\n".join([
+        "2026-10-27T18:16:04-0700 Void start-model.sh[1]: 155.10.659 I slot print_timing: id  0 | task 28577 | prompt processing, n_tokens =    351, progress = 1.00, t =   4.17 s / 84.16 tokens per second",
+        "2026-10-27T18:16:28-0700 Void start-model.sh[1]: 155.35.342 I slot print_timing: id  0 | task 28577 | prompt eval time =    6639.60 ms /   355 tokens (   18.70 ms per token,    53.47 tokens per second)",
+        "2026-10-27T18:20:00-0700 Void start-model.sh[1]: 160.00.000 I slot print_timing: id  0 | task 28600 | prompt processing, n_tokens =   8192, progress = 0.40, t =  60.00 s / 136.00 tokens per second",
+        "2026-10-27T18:21:00-0700 Void start-model.sh[1]: 161.00.000 I slot print_timing: id  0 | task 28600 | prompt processing, n_tokens =  20480, progress = 1.00, t = 150.00 s / 136.00 tokens per second",
+        "2026-10-27T18:21:09-0700 Void start-model.sh[1]: 161.09.000 I slot print_timing: id  0 | task 28600 | prompt eval time =  150600.00 ms / 20480 tokens (    7.35 ms per token,   136.00 tokens per second)",
+        "2026-10-27T18:22:00-0700 Void start-model.sh[1]: 162.00.000 W srv         alloc:  - making room for prompt cache entry, removing oldest entry (size = 1711.387 MiB)",
+    ])
+    ev = H.reread_events(threshold=15000, text=log)
+    return (len(ev) == 1 and ev[0]["task"] == 28600 and ev[0]["tokens"] == 20480
+            and ev[0]["time"].startswith("2026-10-27T18:2"))
+
+
+CHECKS.append(("rolling memory: live re-read counter reads the server log",
+               t_fold_reread_counter_parses_server_log, False))
+
+
+def _kitchen_agent(brain=None, tools=()):
+    """A bare agent for the kitchen-A checks, mode pinned so routing can't
+    move the goalposts."""
+    import forge.agent as A
+    from forge.providers import Provider
+
+    class Brain(Provider):
+        def complete(self, system, messages, tools, grammar=None,
+                     extra_body=None, on_delta=None, id_slot=None):
+            from forge.providers import Reply
+            return Reply(text="Noted.")
+
+        def context_limit(self):
+            return 131_072
+    ag = A.Agent(brain or Brain(), list(tools), permission_mode="auto")
+    ag.mode = "balanced"
+    return ag
+
+
+def t_fold_rent():
+    """Kitchen A (2026-10-28): a fold that would free fewer than min_free
+    tokens is skipped SILENTLY (measured that morning: a fold freed 1,991
+    tokens and the rewrite cost a 30,514-token re-read). When the pinned
+    newest turns alone hold the window over its cap, the skip says so once on
+    stderr and never again until a real fold re-arms it. A fold that frees
+    enough still folds."""
+    import contextlib
+    import io
+    import forge.fold as F
+
+    def turn(i, chars):
+        return [{"role": "user", "content": f"Q{i}: decided /srv/f{i} item {i}. "},
+                # Filler must end its sentences, or the distiller merges the
+                # blob into the next kept sentence and the fold frees nothing.
+                {"role": "assistant",
+                 "content": f"A{i}: noted {i}. " + "Just filler talk. " * (chars // 18)}]
+
+    # 1. Small fold, silently skipped: 8 turns of ~800 tokens; the cut only
+    #    frees the oldest turn, well under min_free.
+    ag = _kitchen_agent()
+    ag.privacy = "offrec"
+    ag.history = [m for i in range(1, 9) for m in turn(i, 3100)]
+    before = list(ag.history)
+    err = io.StringIO()
+    with contextlib.redirect_stderr(err):
+        notes = ag._maybe_fold({"window": 6000, "keep": 5600, "summary_cap": 10_000,
+                                "pins": 2, "min_free": 6000})
+    silent = (notes == [] and ag.history == before and err.getvalue() == ""
+              and not str(ag.history[0].get("content", "")).startswith(F.SUMMARY_MARKER))
+    if not silent:
+        return False
+
+    # 2. Pins alone over the cap: two tiny old turns + one 7k-token newest.
+    #    Skip, one stderr line, and only one across two attempts.
+    ag2 = _kitchen_agent()
+    ag2.privacy = "offrec"
+    ag2.history = [m for i in range(1, 3) for m in turn(i, 60)] + turn(3, 28_000)
+    st = {"window": 6000, "keep": 3000, "summary_cap": 10_000,
+          "pins": 2, "min_free": 6000}
+    err2 = io.StringIO()
+    with contextlib.redirect_stderr(err2):
+        n1 = ag2._maybe_fold(st)
+        n2 = ag2._maybe_fold(st)
+    line = err2.getvalue()
+    pinned_once = (n1 == [] and n2 == [] and line.count("fold skipped") == 1
+                   and "pinned" in line and getattr(ag2, "_fold_rent_said", False))
+    if not pinned_once:
+        return False
+
+    # 3. A fold that frees enough still folds, and re-arms the one-liner.
+    ag3 = _kitchen_agent()
+    ag3.privacy = "offrec"
+    ag3._fold_rent_said = True
+    ag3.history = [m for i in range(1, 31) for m in turn(i, 3100)]
+    notes3 = ag3._maybe_fold({"window": 10_000, "keep": 5000, "summary_cap": 10_000,
+                              "pins": 2, "min_free": 6000})
+    return (len(notes3) >= 1 and notes3[0].startswith("folded ")
+            and str(ag3.history[0].get("content", "")).startswith(F.SUMMARY_MARKER)
+            and ag3._fold_rent_said is False)
+
+
+CHECKS.append(("kitchen A: fold rent — small folds skipped, pins say so once",
+               t_fold_rent, False))
+
+
+def t_fold_idle_warm():
+    """Kitchen A (2026-10-28): after an idle fold, the brain's cache is warmed
+    in the background — the SAME system + summary + window the next turn will
+    send, n_predict 1, on the chat slot — so the fold's re-read is paid while
+    he is away. The warm stands down when a new turn has already started
+    (park_save's turn-numbering guard), and never fires off her slotted brain
+    (slot_kw empty)."""
+    import time as _t
+    import forge.agent as A
+    import forge.fold as F
+    from forge.providers import Provider, Reply
+    calls = []
+
+    class Brain(Provider):
+        def complete(self, system, messages, tools, grammar=None,
+                     extra_body=None, on_delta=None, id_slot=None):
+            calls.append({"system": system, "messages": list(messages),
+                          "extra_body": extra_body or {}, "id_slot": id_slot})
+            return Reply(text="Noted.")
+
+        def context_limit(self):
+            return 131_072
+
+    ag = _kitchen_agent(Brain())
+    ag.privacy = "offrec"
+    # Direct: the warm sends exactly one n_predict-1, cache_prompt call to the
+    # given slot with the prompt it was handed.
+    ag._run_no = 5
+    ag._warm_now(5, "SYS", [{"role": "user", "content": "hello"}], [], {"id_slot": 0})
+    direct = (len(calls) == 1 and calls[0]["id_slot"] == 0
+              and calls[0]["extra_body"].get("max_tokens") == 1
+              and calls[0]["extra_body"].get("n_predict") == 1
+              and calls[0]["extra_body"].get("cache_prompt") is True)
+    # The guard: a newer turn started -> no call.
+    ag._run_no = 6
+    ag._warm_now(5, "SYS", [], [], {"id_slot": 0})
+    guarded = len(calls) == 1
+    if not (direct and guarded):
+        return False
+
+    # End to end: a turn whose idle fold fires spawns the warm, and what it
+    # warms is the FOLDED prompt (summary at messages[0]).
+    def turn(i):
+        return [{"role": "user", "content": f"Q{i}: decided /srv/f{i} item {i}. "},
+                {"role": "assistant",
+                 "content": f"A{i}: noted {i}. " + "Just filler talk. " * 172}]
+    ag.history = [m for i in range(1, 31) for m in turn(i)]
+    real = A.slot_kw
+    try:
+        A.slot_kw = lambda prov, role: {"id_slot": 0} if role == "chat" else {}
+        calls.clear()
+        list(ag.run("next one please"))
+        warm = None
+        for _ in range(60):                       # the thread is instant; 3 s cap
+            warm = next((c for c in calls
+                         if c["extra_body"].get("max_tokens") == 1), None)
+            if warm:
+                break
+            _t.sleep(0.05)
+    finally:
+        A.slot_kw = real
+    if not (warm and warm["id_slot"] == 0 and warm["messages"]
+            and str(warm["messages"][0].get("content", "")).startswith(F.SUMMARY_MARKER)):
+        return False
+
+    # Off her brain (slot_kw empty): no warm thread at all.
+    ag2 = _kitchen_agent(Brain())
+    ag2.privacy = "offrec"
+    ag2.history = [m for i in range(1, 31) for m in turn(i)]
+    calls.clear()
+    list(ag2.run("and another"))
+    _t.sleep(0.2)
+    return all(c["extra_body"].get("max_tokens") != 1 for c in calls)
+
+
+CHECKS.append(("kitchen A: idle fold warms the chat slot's cache, guarded",
+               t_fold_idle_warm, False))
+
+
+def t_reviewer_gate_skips_chat():
+    """Kitchen A (2026-10-28): the ledger held 30 reviews and ZERO skips on a
+    day of mostly chat — every real reply trips a digit, a backtick or a
+    conversational "Done". Now a chat-shaped ask that ran no tools skips (and
+    WRITES a verdict:"skipped" row); the 2026-09-08 fabrication shapes stay
+    judged: paths/files, stakes words (port/config/...), hard work-claims,
+    work tools, diagnostic asks."""
+    import json as _json
+    import tempfile
+    from pathlib import Path
+    import forge.agent as A
+    from forge.providers import Provider, Reply, ToolCall
+
+    ag = _kitchen_agent()
+    ag.active_mode = "balanced"
+    chat_ask = "So what do you think of the name Ditto?"
+
+    def reason(ask, reply, calls=None):
+        ag.history = [{"role": "user", "content": ask}]
+        if calls:
+            ag.history.append({"role": "tool_use", "text": "", "calls": [
+                ToolCall(id=f"c{i}", name=n, args={}) for i, n in enumerate(calls)]})
+        return ag._review_skip_reason(0, reply)
+
+    unit = (
+        # digits in a chat answer are rhetoric, not a work claim
+        reason(chat_ask, "It fits him — a thing whose whole job is making 10 "
+               "copies of itself.").startswith("chat ask")
+        # a bare "Done —" on a no-tool chat ask is conversation
+        and reason(chat_ask, "Done — Ditto it is, and it suits him.").startswith("chat ask")
+        # hard work verbs are claims, chat ask or not
+        and reason(chat_ask, "All fixed and committed.") == ""
+        # the 09-08 shape: stakes word (port) in a no-tool answer
+        and reason("Which one does the dashboard use?", "Port 3000, set in the "
+                   "env file at the workspace root.") == ""
+        # a file name in a no-tool answer
+        and reason(chat_ask, "It's defined in forge/server.py.") == ""
+        # a path in a no-tool answer
+        and reason(chat_ask, "He keeps it in ~/aidojo/shared somewhere.") == ""
+        # a work tool ran: judged
+        and reason("Yeah let's do it", "On it.", calls=["run_command"]) == ""
+        # read-only tools + clean answer: look-up skip, as before
+        and reason("Okay where we at?", "The bay holds the crates we filed "
+                   "yesterday.", calls=["read_file"]).startswith("look-up only")
+        # a work-shaped ask with a digit in a no-tool answer: still judged
+        and reason("Write me a plan for the shop", "Step 1 is the counter.") == "")
+    if not unit:
+        return False
+
+    # End to end: the skip writes a verdict:"skipped" ledger row with the
+    # reason, and the judge is never called for it.
+    class Brain(Provider):
+        def complete(self, system, messages, tools, grammar=None,
+                     extra_body=None, on_delta=None, id_slot=None):
+            return Reply(text="It fits him — a thing whose whole job is "
+                              "making 10 copies of itself.")
+
+        def context_limit(self):
+            return 131_072
+    ag2 = _kitchen_agent(Brain())
+    ag2.superego = object()      # a sentinel: any judge CALL would error-row
+    with tempfile.TemporaryDirectory() as td:
+        old = A.LEDGER_PATH
+        A.LEDGER_PATH = Path(td) / "ledger.jsonl"
+        try:
+            list(ag2.run(chat_ask))
+            rows = [_json.loads(l) for l in
+                    A.LEDGER_PATH.read_text(encoding="utf-8").splitlines()] \
+                if A.LEDGER_PATH.exists() else []
+        finally:
+            A.LEDGER_PATH = old
+    skipped = [r for r in rows if r.get("verdict") == "skipped"]
+    return (len(skipped) == 1 and skipped[0]["reason"].startswith("chat ask")
+            and skipped[0]["judge_ms"] == 0
+            and not [r for r in rows if r.get("verdict") in
+                     ("pass", "bounce", "error", "malformed")])
+
+
+CHECKS.append(("kitchen A: reviewer gate — chat skips, writes the skipped row",
+               t_reviewer_gate_skips_chat, False))
+
+
+def t_prompt_prefix_tripwire():
+    """Kitchen A (2026-10-28): across two consecutive turns with the mutators
+    firing (auto style routing, an idle fold, a reviewer verdict recorded),
+    the prompt bytes up to the summary/window boundary never move — the
+    tripwire sees nothing, and the second turn's first payload extends the
+    idle baseline byte for byte. Proven able to fail: re-enabling the fold at
+    turn start (the pre-kitchen build) makes this check fail (sabotage run
+    2026-10-28, then reverted)."""
+    import time as _time
+    import forge.agent as A
+    from forge.providers import Provider, Reply
+    rendered = []
+
+    class Brain(Provider):
+        def complete(self, system, messages, tools, grammar=None,
+                     extra_body=None, on_delta=None, id_slot=None):
+            rendered.append(A._render_prompt(system, list(messages), tools)[0])
+            return Reply(text="Noted, carrying on.")
+
+        def context_limit(self):
+            return 131_072
+
+    def turn(i):
+        return [{"role": "user", "content": f"Q{i}: decided /srv/f{i} item {i}. "},
+                {"role": "assistant",
+                 "content": f"A{i}: noted {i}. " + "Just filler talk. " * 172}]
+
+    ag = _kitchen_agent(Brain())
+    ag.privacy = "offrec"
+    ag.mode = "auto"                    # the style router runs = mutator 1
+    st = {"window": 10_000, "keep": 5000, "summary_cap": 12_000, "pins": 2,
+          "min_free": 0}
+    ag._fold_settings = lambda: dict(st)
+    ag.history = [m for i in range(1, 31) for m in turn(i)]
+    list(ag.run("next one please"))     # idle fold = mutator 2; baseline set
+    base = dict(getattr(ag, "_trip_prev", {}) or {})
+    if not base or base["window_start"] <= base["system_end"]:
+        return False                    # no baseline, or the fold never ran
+    import tempfile
+    from pathlib import Path
+    with tempfile.TemporaryDirectory() as td:
+        old_lp = A.LEDGER_PATH
+        A.LEDGER_PATH = Path(td) / "ledger.jsonl"    # never the real ledger
+        try:
+            ag._ledger_write({"t": _time.time(), "claim": "x", "verdict": "pass",
+                              "reason": "", "judge_ms": 1})     # mutator 3
+        finally:
+            A.LEDGER_PATH = old_lp
+    for i in range(31, 41):
+        ag.history += turn(i)
+    rendered.clear()
+    list(ag.run("And one more for the record"))
+    bound = base["window_start"]
+    first = rendered[0] if rendered else b""
+    return (not getattr(ag, "_trip_hits", [])
+            and first[:bound] == base["text"][:bound])
+
+
+CHECKS.append(("kitchen A: prompt-prefix tripwire — boundary bytes never move",
+               t_prompt_prefix_tripwire, False))
+
+
+def t_vip_lane_routing():
+    """Kitchen B (2026-10-28): while she is busy, a chat-shaped message takes
+    the side lane ("side") and a work message keeps the old queue plus a
+    heads-up nudge ("nudge"). "Friday, ..." messages, brain-down cover and
+    Friday's own hand-over (env "friday") are untouched (""), and config
+    vip_lane false is the old behaviour everywhere ("")."""
+    import forge.server as S
+    on = {"vip_lane": True}
+    chat = "So what do you think of the name Ditto?"
+    work = "Fix the build and run the tests again"
+    return (S._vip_route(on, chat, "balanced", True, False, False, "") == "side"
+            and S._vip_route(on, work, "balanced", True, False, False, "") == "nudge"
+            # the v12 classifier's own vetoes still route to work
+            and S._vip_route(on, "what's in ~/forge/agent.py?", "balanced",
+                             True, False, False, "") == "nudge"
+            and S._vip_route(on, chat, "deep", True, False, False, "") == "nudge"
+            # not busy / Friday's message / brain down / Friday's hand-over
+            and S._vip_route(on, chat, "balanced", False, False, False, "") == ""
+            and S._vip_route(on, chat, "balanced", True, True, False, "") == ""
+            and S._vip_route(on, chat, "balanced", True, False, True, "") == ""
+            and S._vip_route(on, chat, "balanced", True, False, False, "friday") == ""
+            # the off switch: old queueing behaviour, nothing else fires
+            and S._vip_route({"vip_lane": False}, chat, "balanced",
+                             True, False, False, "") == ""
+            and S._vip_route({"vip_lane": False}, work, "balanced",
+                             True, False, False, "") == ""
+            # the missing-key default is ON
+            and S._vip_route({}, chat, "balanced", True, False, False, "") == "side"
+            and S._VIP_NUDGE == "He just said (queued for after this task): ")
+
+
+CHECKS.append(("kitchen B: VIP routing — chat sides, work nudges, Friday kept",
+               t_vip_lane_routing, False))
+
+
+def t_vip_side_answer():
+    """Kitchen B (2026-10-28): the side lane answers on the HELPERS slot with
+    the compact prompt — head line, the running summary (history[0] when it
+    carries SUMMARY_MARKER), the last ~6 real exchanges (tool entries
+    skipped), his question — thinking off, ~200 tokens; the reply is emitted
+    as a "Merge ⚡" bubble and the Q/A recorded on the session. An empty reply
+    falls back to the old queue and records nothing.
+    2026-10-31 (faster side lane): the last 3 exchanges at 800 chars, 120
+    tokens, and an "on it…" ack bubble goes out before the answer."""
+    import forge.fold as F
+    import forge.server as S
+    from forge.providers import Provider, Reply
+
+    calls = []
+
+    class Brain(Provider):
+        def __init__(self, text):
+            self._text = text
+
+        def complete(self, system, messages, tools, grammar=None,
+                     extra_body=None, on_delta=None, id_slot=None):
+            calls.append({"system": system,
+                          "messages": [dict(m) for m in messages],
+                          "tools": tools, "extra_body": extra_body or {}})
+            return Reply(text=self._text)
+
+        def context_limit(self):
+            return 131_072
+
+    class Ag:
+        pass
+
+    class Sess:
+        def __init__(self, text):
+            self.agent = Ag()
+            self.agent.provider = Brain(text)
+            summary = {"role": "user", "synthetic": True,
+                       "content": F.SUMMARY_MARKER + "\ndinner is at six."}
+            self.agent.history = [summary] + [
+                {"role": ("user" if i % 2 else "assistant"),
+                 "content": f"m{i}"} for i in range(10)] + [
+                {"role": "tool_use", "text": "", "calls": []},
+                {"role": "tool_result", "id": "c1", "content": "tool noise"}]
+            self.noted, self.rec, self.fallback = [], [], []
+
+        def emit(self, kind, data):
+            self.noted.append((kind, data))
+
+        def record_side_exchange(self, q, a):
+            self.rec.append((q, a))
+
+        def run_message(self, text):
+            self.fallback.append(text)
+
+    sess = Sess("Chicken tonight — the thighs are thawed.")
+    S._vip_side_answer(sess, "whats for dinner?")
+    c = calls[0]
+    msgs = c["messages"]
+    kinds = [m["role"] for m in msgs]
+    prompt_ok = (len(calls) == 1 and c["system"] == S._VIP_HEAD
+                 and c["tools"] == []
+                 and str(msgs[0]["content"]).startswith(F.SUMMARY_MARKER)
+                 and msgs[1:-1] == [{"role": ("user" if i % 2 else "assistant"),
+                                     "content": f"m{i}"} for i in range(7, 10)]
+                 and msgs[-1] == {"role": "user", "content": "whats for dinner?"}
+                 and "tool_use" not in kinds and "tool_result" not in kinds
+                 and c["extra_body"].get("max_tokens") == 120
+                 and c["extra_body"].get("chat_template_kwargs", {})
+                       .get("enable_thinking") is False)
+    ack = ("note", {"text": "Merge ⚡: on it…", "from": "Merge ⚡", "ack": True})
+    note_ok = (sess.noted == [ack, ("note", {
+                   "text": "Merge ⚡: Chicken tonight — the thighs are thawed.",
+                   "from": "Merge ⚡"})]
+               and sess.rec == [("whats for dinner?",
+                                 "Chicken tonight — the thighs are thawed.")]
+               and sess.fallback == [])
+    # an empty reply: the ack went out, so a "couldn't answer" bubble follows it;
+    # nothing recorded, the old queue takes the message
+    import contextlib
+    import io
+    sess2 = Sess("")
+    with contextlib.redirect_stderr(io.StringIO()):
+        S._vip_side_answer(sess2, "whats for dinner?")
+    empty_ok = (sess2.noted == [ack, ("note", {
+                    "text": "Merge ⚡: couldn't answer on the side — queued for after this task",
+                    "from": "Merge ⚡"})]
+                and sess2.rec == [] and sess2.fallback == ["whats for dinner?"])
+    return prompt_ok and note_ok and empty_ok
+
+
+CHECKS.append(("kitchen B: side lane — compact prompt, ⚡ bubble, Q/A recorded",
+               t_vip_side_answer, False))
+
+
+def t_vip_drain_into_history():
+    """Kitchen B (2026-10-28): side-lane Q/A drains into her REAL history as
+    synthetic user/assistant turns, under the session lock — at a turn's START
+    (answers given while another session held the brain land BEFORE this
+    turn's message) and at the turn's END (a mid-turn answer lands only after
+    the turn's own messages, before `busy` clears). Order is the order he
+    lived; the list empties; a second drain is a no-op."""
+    import threading
+    import forge.session as SES
+    from forge.agent import Event
+    from forge.session import Session
+
+    sess = Session.__new__(Session)
+    sess.id, sess.workspace = "t-vip", Path(".")
+    sess.log, sess.log_base = [], 0
+    sess.cond, sess.pending = threading.Condition(), None
+    sess.busy, sess.queued, sess.nudges = False, [], []
+    sess.side_exchanges, sess.unattended = [], False
+    sess.lock = threading.Lock()
+    sess.ephemeral = True   # the finally skips save/recall/park_save
+    sess.created = sess.last_used = time.time()
+
+    class StubAgent:
+        def __init__(self):
+            self.history = []
+            self.at_start = self.at_end = None
+
+        def run(self, text, ask=None, on_delta=None):
+            self.at_start = list(self.history)       # start-of-turn view
+            self.history.append({"role": "user", "content": text})
+            # a side answer lands MID-turn — held, not in history yet
+            sess.record_side_exchange("side q", "side a")
+            self.history.append({"role": "assistant", "content": "main answer"})
+            self.at_end = list(self.history)         # end-of-turn view
+            yield Event(kind="text", text="main answer")
+            yield Event(kind="done", usage={})
+
+    sess.agent = StubAgent()
+    sess.side_exchanges = [("early q", "early a")]   # answered before the turn
+    real_begin = SES.park.begin_turn
+    SES.park.begin_turn = lambda sid, eph: None      # no brain in this test
+    try:
+        sess.run_message("main question")
+    finally:
+        SES.park.begin_turn = real_begin
+    h = sess.agent.history
+    pair = lambda q, a: [{"role": "user", "synthetic": True,
+                          "content": "(Side lane, answered while the main "
+                                     "task ran) He said: " + q},
+                         {"role": "assistant", "content": a}]
+    start_ok = sess.agent.at_start == pair("early q", "early a")
+    end_ok = (sess.agent.at_end == h[:4]             # mid-turn Q/A not yet in
+              and h[4:] == pair("side q", "side a")  # drained at turn end
+              and len(h) == 6 and sess.side_exchanges == []
+              and sess.busy is False)
+
+    # the drain holds the session lock, and a second drain is a no-op
+    class CountingLock:
+        def __init__(self):
+            self._l, self.entered = threading.Lock(), 0
+
+        def __enter__(self):
+            self._l.acquire()
+            self.entered += 1
+            return self
+
+        def __exit__(self, *a):
+            self._l.release()
+
+    sess.lock = CountingLock()
+    sess.record_side_exchange("q2", "a2")
+    sess.record_side_exchange("q3", "a3")
+    sess.drain_side_exchanges()
+    locked_ok = (sess.lock.entered == 3
+                 and h[6:] == pair("q2", "a2") + pair("q3", "a3"))
+    before = list(h)
+    sess.drain_side_exchanges()
+    return start_ok and end_ok and locked_ok and h == before
+
+
+CHECKS.append(("kitchen B: side Q/A drains into history in order, locked",
+               t_vip_drain_into_history, False))
+
+
+
+def _speed_v12_run(mode_wall, hard_max, distinct, model_s=1.0):
+    """Drive the real Agent.run with a fake brain that calls a tool every
+    model_s seconds, forever. Returns (seconds the turn ran, its notes).
+    The progress grace is shrunk to 2 s so a 5 s wall can tell the cases apart."""
+    import time as _t
+    import forge.agent as A
+    import forge.modes as M
+    from forge.agent import Agent
+    from forge.providers import Provider, Reply, ToolCall
+    from forge.tools import Tool
+    n = [0]
+
+    class Brain(Provider):
+        def complete(self, system, messages, tools, grammar=None,
+                     extra_body=None, on_delta=None):
+            _t.sleep(model_s)
+            n[0] += 1
+            return Reply(tool_calls=[ToolCall(
+                id=f"c{n[0]}", name="list_dir",
+                args={"path": f"d{n[0]}" if distinct else "same"})])
+
+    M.MODES["_v12"] = dict(M.MODES["balanced"], wall_seconds=mode_wall,
+                           max_steps=200, superego=False)
+    grace, A.PROGRESS_GRACE_S = A.PROGRESS_GRACE_S, 2
+    try:
+        tool = Tool(name="list_dir", description="list", run=lambda path="": "a b c",
+                    parameters={"type": "object",
+                                "properties": {"path": {"type": "string"}}})
+        ag = Agent(Brain(), [tool], permission_mode="auto")
+        ag.mode = "_v12"
+        ag._wall_progress_max = lambda: float(hard_max)
+        t0 = _t.time()
+        events = list(ag.run("keep listing"))
+        return _t.time() - t0, [e.text for e in events if e.kind == "note"]
+    finally:
+        M.MODES.pop("_v12", None)
+        A.PROGRESS_GRACE_S = grace
+
+
+def t_adaptive_wall_runs_on_while_progressing():
+    """2026-10-27: two build turns died at the 600 s wall mid-write while still
+    making progress. With NEW tool calls every second, a 5 s mode wall must give
+    way to the 10 s progress max — and end there with the same clean note."""
+    secs, notes = _speed_v12_run(5, 10, distinct=True)
+    ended = any("Ending this turn cleanly — the time limit" in t for t in notes)
+    return 9.5 <= secs <= 13.5 and ended
+
+
+def t_adaptive_wall_holds_without_new_progress():
+    """Same 5 s wall, but every call after the first is an exact repeat — no
+    new tool activity inside the grace, so the turn stops at the mode's own
+    wall, not the progress max."""
+    secs, notes = _speed_v12_run(5, 10, distinct=False)
+    ended = any("Ending this turn cleanly" in t for t in notes)
+    return 4.5 <= secs <= 7.5 and ended
+
+
+def t_quick_modes_never_extend():
+    """Flash/Muse are capped: the adaptive wall leaves them at their own wall."""
+    import time as _t
+    from forge.agent import Agent
+    from forge.providers import Provider
+    ag = Agent(Provider(), [], permission_mode="auto")
+    ag._wall_progress_max = lambda: 1800.0
+    ag._last_new_tool_t = _t.time()
+    ag.active_mode = "flash"
+    capped = ag._wall_limit(300) == 300
+    ag.active_mode = "balanced"
+    extends = ag._wall_limit(600) == 1800
+    ag._last_new_tool_t = _t.time() - 121
+    lapsed = ag._wall_limit(600) == 600
+    return capped and extends and lapsed
+
+
+_V12_CHAT = [
+    "cool, hold tight, back in a bit",
+    "thanks Merge, that was lovely",
+    "good morning! how are you feeling today?",
+    "haha yes exactly",
+    "ok sounds good",
+    "I'm off to make dinner, talk later",
+    "what do you think about rainy days?",
+    "nice one",
+    "love that idea",
+    "night night, sleep well",
+]
+_V12_WORK = [
+    "fix the login bug",
+    "build me a little snake game",
+    "can you write a script to rename the photos",
+    "run the tests again",
+    "check the log on the old box",
+    "look into why the render is blank",
+    "what's in ~/aidojo/shared/friday?",
+    "edit server.py so the port is 8090",
+    "how many files are over 200 MB?",
+    "try `git status` in the repo",
+]
+
+
+def t_chat_classifier_separates_chat_from_work():
+    """speed v12: the no-think classifier — ten chat lines are chat, ten work
+    lines are not, and Deep/Precise/Bug Hunt never count as chat."""
+    from forge.agent import is_chat_ask
+    chat = all(is_chat_ask(x, "balanced") for x in _V12_CHAT)
+    work = not any(is_chat_ask(x, "balanced") for x in _V12_WORK)
+    modes = not any(is_chat_ask(_V12_CHAT[0], m) for m in ("deep", "precise", "bughunt"))
+    return chat and work and modes and is_chat_ask(_V12_CHAT[0], "teach")
+
+
+def t_chat_turn_sends_no_think_until_a_tool_runs():
+    """speed v12: in a thinking mode (Teach), a chat turn's FIRST call carries
+    enable_thinking false; once a tool has run, the next call is back to the
+    mode's own (true). A work turn, and `no_think_chat: false`, keep it true.
+    And the real OpenAI-compatible provider puts the field in the body."""
+    from forge.agent import Agent
+    from forge.providers import OpenAICompatProvider, Provider, Reply, ToolCall
+    from forge.tools import Tool
+
+    def turn(msg, tool_first, flag=True):
+        seen = []
+
+        class Brain(Provider):
+            def complete(self, system, messages, tools, grammar=None,
+                         extra_body=None, on_delta=None):
+                seen.append((extra_body or {}).get("chat_template_kwargs", {})
+                            .get("enable_thinking"))
+                if tool_first and len(seen) == 1:
+                    return Reply(tool_calls=[ToolCall(id="c1", name="ping", args={})])
+                return Reply(text="sure thing")
+        ping = Tool(name="ping", description="ping", run=lambda: "pong",
+                    parameters={"type": "object", "properties": {}})
+        ag = Agent(Brain(), [ping], permission_mode="auto")
+        ag.mode = "teach"
+        ag._no_think_chat = lambda: flag
+        ag._superego_review = lambda *a, **k: ("pass", "")
+        list(ag.run(msg))
+        return seen
+    a = turn("cool, hold tight, back in a bit", False)
+    b = turn("thanks, that was lovely", True)
+    c = turn("fix the login bug", False)
+    d = turn("cool, hold tight, back in a bit", False, flag=False)
+    agent_ok = (a[:1] == [False] and b[:2] == [False, True]
+                and c[:1] == [True] and d[:1] == [True])
+
+    bodies = []
+    p = OpenAICompatProvider.__new__(OpenAICompatProvider)
+    p.model, p.max_tokens, p.base_url = "m", 16, "http://127.0.0.1:1/v1"
+    p._stream = lambda body, on_delta: bodies.append(body) or Reply(text="x")
+    p.complete("s", [{"role": "user", "content": "hi"}], [],
+               extra_body={"chat_template_kwargs": {"enable_thinking": False}})
+    p.complete("s", [{"role": "user", "content": "hi"}], [])
+    prov_ok = (bodies[0].get("chat_template_kwargs") == {"enable_thinking": False}
+               and "chat_template_kwargs" not in bodies[1])
+    return agent_ok and prov_ok
+
+
+def t_belt_and_front_do_not_move_with_the_mode():
+    """The prompt front (tool list, reasoning-effort line) must be the same in
+    every mode, even if a mode were given a restricted toolset (fixed_belt)."""
+    import tempfile
+    from forge import tools as T, modes
+    from forge.agent import Agent, _think_kwargs
+    from forge.session import Workspace
+    ag = Agent(provider=object(), tools=T.build_tools(Workspace(tempfile.mkdtemp())),
+               permission_mode="auto", superego=None)
+    ag.privacy = "normal"
+    saved = modes.MODES["flash"]["tools"]
+    modes.MODES["flash"]["tools"] = {"read_file", "list_dir"}   # a hypothetical restriction
+    try:
+        seen = {}
+        for m in ("balanced", "deep", "flash"):
+            ag.active_mode = m
+            seen[m] = [t["name"] for t in ag.tool_schemas]
+        ag.active_mode = "flash"
+        hint = ag._style_context()
+        kw = _think_kwargs(True), _think_kwargs(False)
+    finally:
+        modes.MODES["flash"]["tools"] = saved
+    same = seen["balanced"] == seen["deep"] == seen["flash"] and len(seen["balanced"]) > 10
+    return (same and "Tools for this style: list_dir, read_file" in hint
+            and kw[0].get("reasoning_effort") == "medium" and "reasoning_effort" not in kw[1])
+
+
+CHECKS += [
+    ("speed v12: adaptive wall runs on while new tool calls land",
+     t_adaptive_wall_runs_on_while_progressing, False),
+    ("speed v12: adaptive wall holds at the mode wall without new progress",
+     t_adaptive_wall_holds_without_new_progress, False),
+    ("speed v12: quick modes never take the adaptive wall",
+     t_quick_modes_never_extend, False),
+    ("speed v12: chat classifier separates chat from work",
+     t_chat_classifier_separates_chat_from_work, False),
+    ("speed v12: chat turn sends no-think until a tool runs",
+     t_chat_turn_sends_no_think_until_a_tool_runs, False),
+    ("fixed belt: tool list, hint and reasoning line do not move with the mode",
+     t_belt_and_front_do_not_move_with_the_mode, False),
+]
+
+
+def t_prime_restore_skipped_when_slot_still_holds():
+    """Prime (2026-10-30), cause 1: after a dashboard restart the in-memory
+    record of who holds her slot is gone, and park_restore erased a slot that
+    STILL held the chat (live, with checkpoints) to load the file — then the
+    turn re-read ~47k tokens (18:16:52). The sidecar now keeps the slot's
+    (id_task, n_prompt_tokens) from save time: /slots showing the same pair
+    means nothing ran since -> no erase, no restore. A different pair (the
+    brain restarted, another chat ran) still restores. HTTP faked."""
+    import httpx
+    from forge import park
+    d = Path(tempfile.mkdtemp())
+    posts = []
+    meta = {"model": "m.gguf", "build": "b1", "n_ctx": 131072}
+
+    class R:
+        def __init__(self, body):
+            self.status_code, self._b, self.text = 200, body, json.dumps(body)
+        def json(self):
+            return self._b
+
+    def post(url, json=None, timeout=None):
+        posts.append(url)
+        if "action=save" in url:
+            (d / json["filename"]).write_bytes(b"kv")
+            return R({"n_saved": 1240, "n_written": 2})   # generated tokens count here
+        return R({"n_restored": 1240, "n_read": 2})
+
+    slot = {"id": 0, "is_processing": False, "id_task": 41, "n_prompt_tokens": 1234}
+    saved = (park.PARK_DIR, park._where, park._slot, park._model, httpx.post, dict(park._HOLDER))
+    try:
+        park.PARK_DIR, httpx.post = d, post
+        park._where = lambda: ("http://x", 0)
+        park._slot = lambda root, n: dict(slot)
+        park._model = lambda root: dict(meta)
+        park._HOLDER.update(sid="chatA", fp=None)
+        park.park_save("chatA")
+        side = json.loads((d / "chatA.json").read_text())
+        wrote = side.get("fp") == [41, 1234]
+        # in-memory record matches /slots (not n_saved): held, nothing posted
+        posts.clear()
+        held_mem = park.begin_turn("chatA", False) is None and not posts
+        # the dashboard restarted: memory forgets, the sidecar remembers
+        park._HOLDER.update(sid=None, fp=None)
+        posts.clear()
+        skipped = park.begin_turn("chatA", False) is None and not posts
+        # the brain restarted / another chat ran: id_task differs -> restore
+        park._HOLDER.update(sid=None, fp=None)
+        slot.update(id_task=3, n_prompt_tokens=0)
+        posts.clear()
+        back = park.begin_turn("chatA", False)
+        restored = (back and back["n"] == 1240
+                    and any("action=erase" in u for u in posts)
+                    and any("action=restore" in u for u in posts))
+        # an old sidecar with no fp at all restores as before
+        (d / "chatA.json").write_text(json.dumps(meta))
+        slot.update(id_task=41, n_prompt_tokens=1234)
+        park._HOLDER.update(sid=None, fp=None)
+        posts.clear()
+        legacy = bool(park.begin_turn("chatA", False)) and any("action=restore" in u for u in posts)
+    finally:
+        (park.PARK_DIR, park._where, park._slot, park._model, httpx.post, h) = saved
+        park._HOLDER.clear(); park._HOLDER.update(h)
+    return bool(wrote and held_mem and skipped and restored and legacy)
+
+
+def _qwen_style_render(body, add_generation_prompt=True):
+    """A fixed Qwen3-style ChatML template, in Python: tool list in the system
+    block, prior assistant reasoning stripped, a thinking-off generation tail.
+    Stands in for the brain's /apply-template in the prime selftest."""
+    out = ""
+    msgs = body["messages"]
+    tools = body.get("tools") or []
+    for i, m in enumerate(msgs):
+        c = m.get("content") or ""
+        if m["role"] == "system":
+            out += "<|im_start|>system\n" + c
+            if tools:
+                out += "\n\n# Tools\n<tools>\n" + "\n".join(
+                    json.dumps(t, sort_keys=True) for t in tools) + "\n</tools>"
+            out += "<|im_end|>\n"
+        elif m["role"] == "assistant":
+            if "</think>" in c:
+                c = c.split("</think>", 1)[1].lstrip("\n")
+            out += "<|im_start|>assistant\n" + c
+            for tc in m.get("tool_calls") or []:
+                out += "\n<tool_call>\n" + json.dumps(tc["function"]) + "\n</tool_call>"
+            out += "<|im_end|>\n"
+        elif m["role"] == "tool":
+            out += "<|im_start|>user\n<tool_response>\n" + c + "\n</tool_response><|im_end|>\n"
+        else:
+            out += f"<|im_start|>{m['role']}\n" + c + "<|im_end|>\n"
+    if add_generation_prompt:
+        kw = body.get("chat_template_kwargs") or {}
+        out += "<|im_start|>assistant\n"
+        if not kw.get("enable_thinking", True):
+            out += "<think>\n\n</think>\n\n"
+    return out
+
+
+def t_prime_text_is_exact_prefix_of_next_turn():
+    """Prime (2026-10-30), cause 2: the slot was left holding the reply as
+    GENERATED (reasoning, generation tail), but the next turn re-renders the
+    history through the template — so it did not extend the cached tokens,
+    and a restored slot (no checkpoints) re-read everything. The primed text
+    must be an exact string PREFIX of the next turn's rendered prompt (same
+    messages + one new user message, same tools and kwargs), end with the
+    last message, carry no generation prompt; and prime() must send exactly
+    that text to /completion with n_predict 0, cache_prompt, on the slot."""
+    import httpx
+    from forge.agent import _think_kwargs
+    from forge.providers import OpenAICompatProvider, ToolCall
+    posts = []
+
+    class R:
+        def __init__(self, body):
+            self.status_code, self._b, self.text = 200, body, json.dumps(body)
+        def json(self):
+            return self._b
+
+    def post(url, json=None, timeout=None):
+        posts.append((url, json))
+        if url.endswith("/apply-template"):
+            return R({"prompt": _qwen_style_render(json)})
+        return R({"timings": {"prompt_n": 3, "prompt_ms": 10.0}, "tokens_cached": 99})
+
+    prov = OpenAICompatProvider("brain", "http://brain:8087/v1")
+    tools = [{"name": "read_file", "description": "read a file",
+              "parameters": {"type": "object", "properties": {"path": {"type": "string"}}}}]
+    hist = [{"role": "user", "content": "look at notes.md"},
+            {"role": "tool_use", "text": "", "calls": [ToolCall("c1", "read_file", {"path": "notes.md"})]},
+            {"role": "tool_result", "id": "c1", "content": "hello notes"},
+            {"role": "assistant", "content": "<think>\nreasoning\n</think>\n\nIt says hello."}]
+    kw = _think_kwargs(False)
+    real = httpx.post
+    try:
+        httpx.post = post
+        text = prov.prime_text("SYS", hist, tools, kw)
+        nxt = hist + [{"role": "user", "content": "and now?"}]
+        for k in (kw, _think_kwargs(True)):      # the next turn may think or not
+            full = _qwen_style_render({**prov._chat_body("SYS", nxt, tools),
+                                       "chat_template_kwargs": k})
+            if not full.startswith(text):
+                return False
+        tail_ok = (text.endswith("It says hello.<|im_end|>\n<|im_start|>")
+                   and "<|im_start|>assistant\n<think>" not in text[-40:]
+                   and "reasoning" not in text)
+        posts.clear()
+        t = prov.prime("SYS", hist, tools, kw, 0)
+        comp = [b for u, b in posts if u == "http://brain:8087/completion"]
+        sent = (len(comp) == 1 and comp[0]["prompt"] == text and comp[0]["n_predict"] == 0
+                and comp[0]["cache_prompt"] is True and comp[0]["id_slot"] == 0
+                and t and t["prompt_n"] == 3)
+        # a new turn began between render and send: nothing sent
+        posts.clear()
+        stood = (prov.prime("SYS", hist, tools, kw, 0, still=lambda: False) is None
+                 and not any(u.endswith("/completion") for u, _ in posts))
+    finally:
+        httpx.post = real
+    return bool(tail_ok and sent and stood)
+
+
+CHECKS += [
+    ("prime: restore skipped when the sidecar's slot ids still match /slots",
+     t_prime_restore_skipped_when_slot_still_holds, False),
+    ("prime: primed text is an exact prefix of the next turn's rendered prompt",
+     t_prime_text_is_exact_prefix_of_next_turn, False),
+]
+
+
+# ------------------------------------------------- done-check (2026-10-31)
+def _done_repo(td: str, script: str | None):
+    """A throwaway git repo (one committed file) with, optionally, a
+    FORGE-DONE.sh. The script may write OUTSIDE the repo (td/runs.log) so
+    running it never changes the repo's own state."""
+    import os
+    import subprocess
+    root = Path(td) / "proj"
+    root.mkdir()
+    (root / "work.txt").write_text("v1\n")
+    if script is not None:
+        (root / "FORGE-DONE.sh").write_text(script)
+        (root / "FORGE-DONE.sh").chmod(0o755)
+    env = {"PATH": os.environ.get("PATH", ""), "HOME": td,
+           "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
+           "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
+    for cmd in (["git", "init", "-q"], ["git", "add", "-A"],
+                ["git", "commit", "-qm", "init"]):
+        subprocess.run(cmd, cwd=root, env=env, check=True, capture_output=True)
+    return root
+
+
+def _done_turn(root, work: bool = True, extra_repos=()):
+    """One turn against `root` as the watched repo (plus extra_repos). With work=True the
+    brain first calls `poke` (a tool that is not a look-up; it changes
+    work.txt), then says it is finished; told DONE CHECK FAILED, it reports
+    honestly. Returns (events, what the brain saw per call)."""
+    from forge.agent import Agent
+    from forge.providers import Provider, Reply, ToolCall
+    from forge.tools import Tool
+    seen = []
+
+    class Brain(Provider):
+        def complete(self, system, messages, tools, grammar=None,
+                     extra_body=None, on_delta=None, id_slot=None):
+            seen.append([dict(m) for m in messages])
+            if work and len(seen) == 1:
+                return Reply(tool_calls=[ToolCall(id="c1", name="poke", args={})])
+            if any("DONE CHECK FAILED for" in str(m.get("content"))
+                   for m in messages if m.get("synthetic")):
+                return Reply(text="Not done: the project's check fails.")
+            return Reply(text="All set.")
+
+        def context_limit(self):
+            return 131_072
+
+    def poke():
+        (root / "work.txt").write_text("v2\n")
+        return "poked"
+    tool = Tool(name="poke", description="poke", run=poke,
+                parameters={"type": "object", "properties": {}})
+    ag = Agent(Brain(), [tool], permission_mode="auto")
+    ag.mode = "balanced"
+    ag.done_repos = [str(root)] + [str(r) for r in extra_repos]
+    return list(ag.run("poke it")), seen
+
+
+def t_done_check_fails_then_flags():
+    """2026-10-31: twice she committed code that broke the project's own tests
+    after checking only the file she touched. Now the harness runs the repo's
+    FORGE-DONE.sh at the end of a WORK turn that changed the repo. A failing
+    check: its output lands in her history for ONE more round ("DONE CHECK
+    FAILED for ..."), a ⛔ note with the first 3 lines follows her final text,
+    the done event carries done_check="failed" — and the script ran ONCE,
+    because she changed nothing in her second round."""
+    script = ("#!/bin/bash\necho run >> \"$(dirname \"$0\")/../runs.log\"\n"
+              "echo 'FAIL: 1 of 12 tests broke'\necho 'line two'\n"
+              "echo 'line three'\necho 'line four'\nexit 1\n")
+    with tempfile.TemporaryDirectory() as td:
+        root = _done_repo(td, script)
+        events, seen = _done_turn(root)
+        runs = (Path(td) / "runs.log").read_text().count("run") \
+            if (Path(td) / "runs.log").exists() else 0
+    notes = [e.text for e in events if e.kind == "note"]
+    texts = [i for i, e in enumerate(events) if e.kind == "text"]
+    stops = [i for i, e in enumerate(events) if e.kind == "note"
+             and e.text.startswith("⛔ Not done: proj check failed: "
+                                   "FAIL: 1 of 12 tests broke | line two | line three")]
+    dones = [e for e in events if e.kind == "done"]
+    bounce = (len(seen) == 3 and any(
+        m.get("synthetic") and "DONE CHECK FAILED for" in str(m.get("content"))
+        and "FAIL: 1 of 12 tests broke" in str(m.get("content"))
+        for m in seen[2]))
+    return (bounce and runs == 1
+            and any(n.startswith("🧪 done-check running: FORGE-DONE.sh in proj") for n in notes)
+            and len(stops) == 1 and texts and stops[0] > max(texts)   # after her final text
+            and len(dones) == 1 and dones[0].done_check == "failed")
+
+
+def t_done_check_passes_or_stays_out():
+    """2026-10-31: a green FORGE-DONE.sh -> one ✅ note, done_check="passed",
+    no extra round. No check is run when the turn ran no work tool (a chat
+    turn, repo untouched) or when the changed repo declares no FORGE-DONE.sh:
+    done_check stays "none" and nothing is said. A configured repo that
+    cannot be read (missing folder, not a git repo) is SAID, once — never the
+    same silence as "nothing to check"."""
+    ok = "#!/bin/bash\necho run >> \"$(dirname \"$0\")/../runs.log\"\necho all green\nexit 0\n"
+    with tempfile.TemporaryDirectory() as td:
+        root = _done_repo(td, ok)
+        plain = Path(td) / "plain"; plain.mkdir()                 # a folder, not a repo
+        ev, seen = _done_turn(root, extra_repos=[Path(td) / "gone", plain])
+        notes = [e.text for e in ev if e.kind == "note"]
+        passed = (len(seen) == 2 and (Path(td) / "runs.log").exists()
+                  and [n for n in notes if n.startswith("✅")] == ["✅ done-check passed (proj)"]
+                  and [e.done_check for e in ev if e.kind == "done"] == ["passed"]
+                  and notes.count(f"done-check: cannot read {Path(td) / 'gone'} (no such folder)") == 1
+                  and notes.count(f"done-check: cannot read {plain} (not a git repo)") == 1)
+    with tempfile.TemporaryDirectory() as td:
+        root = _done_repo(td, ok)
+        ev, seen = _done_turn(root, work=False)          # chat: no tools ran
+        chat = (not (Path(td) / "runs.log").exists()
+                and not any(e.kind == "note" and ("done-check" in e.text or "Not done" in e.text) for e in ev)
+                and [e.done_check for e in ev if e.kind == "done"] == ["none"])
+    with tempfile.TemporaryDirectory() as td:
+        root = _done_repo(td, None)                        # no script declared
+        ev, seen = _done_turn(root)
+        undeclared = (len(seen) == 2
+                      and not any(e.kind == "note" and "done-check" in e.text for e in ev)
+                      and [e.done_check for e in ev if e.kind == "done"] == ["none"])
+    return passed and chat and undeclared
+
+
+def t_done_check_timeout_kills_children():
+    """2026-10-31: a FORGE-DONE.sh that overruns is a failure (exit 124) and
+    its children die with it — the script runs in its own process group and
+    the group is killed, so a hung test runner cannot live on after the turn."""
+    import os
+    import forge.agent as A
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        (root / "FORGE-DONE.sh").write_text(
+            "#!/bin/bash\nsleep 300 &\necho $! > child.pid\necho started\nwait\n")
+        t0 = time.time()
+        rc, out = A._run_done_script(root, 1)
+        took = time.time() - t0
+        pid = int((root / "child.pid").read_text().strip())
+        time.sleep(0.2)
+        try:
+            os.kill(pid, 0)
+            alive = True
+        except ProcessLookupError:
+            alive = False
+        except PermissionError:
+            alive = True
+        if alive:
+            os.kill(pid, 9)        # never leave the probe's own orphan behind
+    return rc == 124 and "timed out after 1s" in out and took < 10 and not alive
+
+
+def t_tool_arg_size_cap():
+    """2026-10-31: one tool call of 117,743 chars was cut off by the token cap
+    and the turn was lost. run_command / write_file / edit_file now refuse a
+    command or content over tool_arg_max_chars (8000) with "too big (N chars,
+    max 8000)" and the write-in-parts advice; 7,000 chars still goes through.
+    The cut-off handler for JSON that never parsed is a different path."""
+    from forge.session import Workspace
+    from forge.tools import build_tools
+    d = Path(tempfile.mkdtemp())
+    T = {t.name: t for t in build_tools(Workspace(d))}
+    big_cmd = T["run_command"].run(command="echo " + "x" * 8995)          # 9000 chars
+    ok_cmd = T["run_command"].run(command="true # " + "x" * 6993)         # 7000 chars
+    big_w = T["write_file"].run(path="big.txt", content="x" * 9000)
+    ok_w = T["write_file"].run(path="ok.txt", content=("y" * 69 + "\n") * 100)   # 7000
+    big_e = T["edit_file"].run(path="ok.txt", old="y" * 69, new="z" * 9000)
+    refused = ("Error: too big (9000 chars, max 8000): write the file in parts "
+               "(first half ending at a line break, then append")
+    return (big_cmd.startswith(refused) and ok_cmd.startswith("[exit 0]")
+            and big_w.startswith(refused) and not (d / "big.txt").exists()
+            and ok_w.startswith("Created ok.txt (100 lines)")
+            and big_e.startswith(refused)
+            and (d / "ok.txt").read_text().startswith("y" * 69 + "\n"))
+
+
+CHECKS += [
+    ("done-check: failing FORGE-DONE.sh -> one more round, ⛔ note, flag failed",
+     t_done_check_fails_then_flags, False),
+    ("done-check: green -> ✅ + passed; chat turn / no script -> none; unreadable repo is said",
+     t_done_check_passes_or_stays_out, False),
+    ("done-check: a timed-out FORGE-DONE.sh fails (124) and its children are killed",
+     t_done_check_timeout_kills_children, False),
+    ("tools: command/content over tool_arg_max_chars refused, 7k allowed",
+     t_tool_arg_size_cap, False),
+]
+
+
+# ------------------------------------------------- faster side lane (2026-10-31)
+def t_side_lane_fast():
+    """2026-10-31: measured 57 s for a one-line side question (7,396-token
+    prompt read from cold while the main turn generated). Three fixes: the
+    "on it…" ack is emitted BEFORE the model call; a long running summary is
+    cut to its TAIL at side_summary_chars (4000) and only 3 exchanges ride,
+    so the prompt stays ~2k tokens; and the prompt front is the session's
+    per-turn snapshot, byte-identical across two side questions even though
+    the live history grew between them, so the brain's "side" slot (its own,
+    slot 2) re-reads only the question. The front ENDS with the message the
+    main turn is working on (it is not in history when the turn starts), so
+    "how's it going?" is answered knowing the job."""
+    import forge.fold as F
+    import forge.server as S
+    from forge.providers import SLOT_DEFAULTS, Provider, Reply
+    from forge.session import side_prefix_msgs
+
+    calls, order = [], []
+
+    class Brain(Provider):
+        def complete(self, system, messages, tools, grammar=None,
+                     extra_body=None, on_delta=None, id_slot=None):
+            order.append("model")
+            calls.append([dict(m) for m in messages])
+            return Reply(text="Six, as planned.")
+
+        def context_limit(self):
+            return 131_072
+
+    class Ag:
+        pass
+    long_summary = F.SUMMARY_MARKER + "\n" + "\n".join(
+        f"- line {i}: something decided earlier about item {i}." for i in range(400))
+    hist = [{"role": "user", "synthetic": True, "content": long_summary}] + [
+        {"role": ("user" if i % 2 else "assistant"), "content": f"m{i} " + "talk " * 300}
+        for i in range(10)]
+
+    class Sess:
+        def __init__(self):
+            self.agent = Ag()
+            self.agent.provider = Brain()
+            self.agent.history = list(hist)
+            # the turn-start snapshot: history + the message this turn works on
+            self.side_prefix = side_prefix_msgs(self.agent.history, "fix the exam runner")
+            self.noted, self.rec = [], []
+
+        def emit(self, kind, data):
+            order.append("ack" if data.get("ack") else kind)
+            self.noted.append((kind, data))
+
+        def record_side_exchange(self, q, a):
+            self.rec.append((q, a))
+
+        def run_message(self, text):
+            raise AssertionError("fell back to the queue")
+
+    sess = Sess()
+    S._vip_side_answer(sess, "when is dinner?")
+    # the live history grows mid-turn; the second question must not see it
+    sess.agent.history.append({"role": "assistant", "content": "NEW mid-turn text"})
+    S._vip_side_answer(sess, "and dessert?")
+    m1, m2 = calls
+    ack_first = order[:2] == ["ack", "model"]
+    front = m1[0]["content"]
+    summary_ok = (front.startswith(F.SUMMARY_MARKER) and len(front) <= 4000 + 60
+                  and "line 399" in front and "line 0:" not in front)      # the TAIL
+    size = sum(len(m["content"]) for m in m1) + len(S._VIP_HEAD)
+    small = (len(m1) == 1 + 3 + 1 + 1 and all(len(m["content"]) <= 830 for m in m1[1:])
+             and size // 4 < 2000)                                   # ~chars/4 tokens
+    knows_job = (m1[-2]["role"] == "user" and m1[-2]["content"].endswith("fix the exam runner")
+                 and m1[-1]["content"] == "when is dinner?")
+    same_front = (m1[:-1] == m2[:-1] and m2[-1]["content"] == "and dessert?"
+                  and not any("NEW mid-turn" in m["content"] for m in m2))
+    # the real Session wires it the same way: the snapshot at turn start
+    # takes the turn's text, so a chat with no snapshot yet still gets it
+    from forge.session import Session
+    s = Session.__new__(Session)
+    s.agent = Ag(); s.agent.history = list(hist)
+    s.snapshot_side_prefix("fix the exam runner")
+    wired = s.side_prefix == sess.side_prefix
+    slot = SLOT_DEFAULTS.get("side") == 2 and SLOT_DEFAULTS.get("helpers") == 1
+    return ack_first and summary_ok and small and knows_job and same_front and wired and slot
+
+
+CHECKS.append(("side lane: ack first, summary tail capped, frozen front, own slot",
+               t_side_lane_fast, False))
 
 if __name__ == "__main__":
     t0 = time.time()

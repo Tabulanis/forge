@@ -116,6 +116,7 @@ MODES = {
     "flash": {
         "label": "⚡ Flash", "thinking": False, "temperature": 0.7,
         "tools": None, "superego": False, "max_steps": 14, "wall_seconds": 300,
+        "wall_capped": True,   # quick modes never take the adaptive wall (speed v12)
         "nudge": "Move fast and keep it conversational. Don't reach for heavy "
                  "tooling unless it's genuinely needed — this is for quick chat "
                  "and planning. No shell commands, no file edits, no renders "
@@ -124,6 +125,7 @@ MODES = {
     "muse": {
         "label": "\U0001f3a8 Muse", "thinking": False, "temperature": 1.05,
         "tools": None, "superego": False, "max_steps": 14, "wall_seconds": 300,
+        "wall_capped": True,   # quick modes never take the adaptive wall (speed v12)
         "nudge": "Be imaginative and generative — riff, explore, follow wild "
                  "ideas, don't hedge or self-censor. This is for fiction and "
                  "brainstorming, not fact-checking; surprise beats caution here. "
